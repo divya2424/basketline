@@ -14,6 +14,6 @@ describe('architecture rules', () => {
 
   it('flags imports of another service’s code', () => {
     expect(scanSource('campaign-service', 'x.ts', "import { x } from '../../../services/product-service/src/app.ts'")).toHaveLength(1)
-    expect(scanSource('campaign-service', 'x.ts', "import { x } from '@shopsphere/platform'")).toEqual([])
+    expect(scanSource('campaign-service', 'x.ts', "import { x } from '@ecommerce-analytics/platform'")).toEqual([])
   })
 })

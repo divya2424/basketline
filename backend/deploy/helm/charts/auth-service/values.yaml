@@ -1,5 +1,5 @@
 image:
-  repository: shopsphere/auth-service
+  repository: ecommerce-analytics/auth-service
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -21,7 +21,7 @@ secrets:
 existingSecret: ""
 
 jwt:
-  secretName: shopsphere-jwt
+  secretName: ecommerce-analytics-jwt
   # Signs the tokens. No other service mounts it.
   privateKey: true
 

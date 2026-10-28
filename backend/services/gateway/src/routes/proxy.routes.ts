@@ -1,6 +1,6 @@
 import type { RequestHandler } from 'express'
 import { createProxyMiddleware } from 'http-proxy-middleware'
-import type { Logger } from '@shopsphere/platform'
+import type { Logger } from '@ecommerce-analytics/platform'
 
 export interface ServiceUrls {
   auth: string

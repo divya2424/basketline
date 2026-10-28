@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express'
-import type { CampaignStatus } from '@shopsphere/contracts'
-import { badRequest, page, readPagination, tenantHeader } from '@shopsphere/platform'
+import type { CampaignStatus } from '@ecommerce-analytics/contracts'
+import { badRequest, page, readPagination, tenantHeader } from '@ecommerce-analytics/platform'
 import type { Campaign } from '../repositories/campaign.repository.ts'
 import type { CampaignService } from '../services/campaign.service.ts'
 

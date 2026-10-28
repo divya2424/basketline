@@ -1,4 +1,4 @@
-import { badRequest } from '@shopsphere/platform'
+import { badRequest } from '@ecommerce-analytics/platform'
 import type { ClickHouse } from '../clickhouse.ts'
 import { countAttributedBasketAdditions, countEvents, sumDailyAggregates, type MetricScope } from '../repositories/metrics.repository.ts'
 

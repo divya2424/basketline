@@ -2,7 +2,7 @@ import { getRequestContext } from '../../api/requestContext.js'
 
 // Versioned key; only { productId, quantity } is stored.
 // v2: product IDs are now the API's UUIDs. One cart per tenant (store).
-const storageKey = () => `shopsphere:cart:v2:${getRequestContext().tenantId}`
+const storageKey = () => `ecommerce-analytics:cart:v2:${getRequestContext().tenantId}`
 
 export function loadCart() {
   try {

@@ -1,4 +1,4 @@
-# ShopSphere backend
+# E-commerce Analytics: backend
 
 Five Node.js + TypeScript microservices that talk to each other only through **Kafka** events, plus a small **Spark Structured Streaming** job that loads analytics events into **ClickHouse**. There are no service-to-service HTTP calls.
 
@@ -56,7 +56,7 @@ To change a service's tables:
 
 ```bash
 # edit services/<service>/src/db/schema.ts, then:
-npm run db:generate -w @shopsphere/<service>   # writes a new SQL file to services/<service>/drizzle/
+npm run db:generate -w @ecommerce-analytics/<service>   # writes a new SQL file to services/<service>/drizzle/
 npm run db:generate                            # or: every service (prints "No schema changes" when in sync)
 # commit the file; it is applied when the service starts
 ```
@@ -134,7 +134,7 @@ npm run test:e2e    # full flow through the gateway with the real Kafka broker
 
 **Analytics events.** Each event is `{eventId, eventName, timestamp, campaignId?, productId?, attributionId?, pageName?, featureName?, properties?}`.
 - **Who sent it:** every request needs a token. A signed-in user sends their access token; an anonymous visitor gets a visitor token from `POST /auth/visitor` (the storefront does this itself). The tenant and user come from that token, never from a header or the body, so nobody can send events into another tenant without a token for it.
-- **Checks on arrival:** the format (UUIDs, a known `eventName`, a `campaignId` on metric events, an `attributionId` on `click_to_basket`), the timestamp (at most 7 days old, at most 5 minutes in the future), at most 300 events per sender per minute (429 `TOO_MANY_EVENTS`, counted per analytics-service instance), and, for metric events only, that the campaign belongs to the sender's tenant and is active and not archived (else that event is rejected with `CAMPAIGN_NOT_ACTIVE`). The campaign check reads `analytics.campaigns`, which analytics-service keeps from `campaign.v1` and caches for 10 seconds, so a new campaign's events count within a few seconds of its creation. Valid events are published to `analytics.<eventName>.v1`.
+- **Checks on arrival:** the format (UUIDs, a known `eventName`, a `campaignId` on metric events, an `attributionId` on `click_to_basket`), the timestamp (at most 5 days old, at most 5 minutes in the future), at most 300 events per sender per minute (429 `TOO_MANY_EVENTS`, counted per analytics-service instance), and, for metric events only, that the campaign belongs to the sender's tenant and is active and not archived (else that event is rejected with `CAMPAIGN_NOT_ACTIVE`). The campaign check reads `analytics.campaigns`, which analytics-service keeps from `campaign.v1` and caches for 10 seconds, so a new campaign's events count within a few seconds of its creation. Valid events are published to `analytics.<eventName>.v1`.
 - **Metric events** (`impression`, `click`, `click_to_basket`) are what `/ad/...` counts. **Storefront activity** (`home_view`, `campaign_navigation`, `product_impression`, `product_click`, `add_to_cart`, `cart_view`, `cart_quantity_update`, `remove_from_cart`, `login_click`) is stored for later analysis and never changes the metrics.
 - `user_id` is the access token's user (null for a visitor); `tenant_id` is the token's tenant.
 - **Counted in ClickHouse, when the metric is read:**
@@ -153,6 +153,7 @@ npm run test:e2e    # full flow through the gateway with the real Kafka broker
   - A click credited on two different days counts once on each day.
   - **To rebuild all history,** run `ALTER TABLE analytics.campaign_daily_aggregates UPDATE computed_at = toDateTime64(0, 3, 'UTC') WHERE 1 SETTINGS mutations_sync = 1`, then run the job. The next run treats every day as changed, and the old rows keep serving `/ad` until it swaps in the recounted table.
 - **How `/ad` counts a period:** `from` is rounded down to UTC midnight. `to` is rounded up to the next midnight, unless it falls today. Days before yesterday are read from the daily aggregates (one row per day). Yesterday and today are counted from raw events, so the numbers never depend on when the job last ran. A late event for an older day appears in `/ad` after the next hourly run. The `period` in the response shows the rounded bounds.
+- **Raw events are kept for 7 days:** `analytics.events` has `TTL event_time + 7 days`, applied during background merges, so rows can linger a few hours longer. `/ad` is unaffected, since days before yesterday come from the daily aggregates, which are kept. Late events are accepted only up to 5 days old so that recounting their day (and the day before, for clicks credited to baskets) never meets expired rows. On an existing volume, run `infra/clickhouse/migrations/005_events_ttl.sql` (the command is at its top). Rebuilding all history (above) now only covers the last 7 days.
 - **Upgrading an existing ClickHouse volume:** run the commands at the top of `infra/clickhouse/migrations/004_uuid_tenants.sql`. Tenant IDs became UUIDs, so it drops the analytics tables (stored events included) and `init.sql` recreates them. Postgres needs nothing: the auth, product and campaign migrations give existing users, products and campaigns the default tenant `5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01`, and users must sign in again (older tokens have no tenant). `product.v1` and `campaign.v1` events from before the upgrade have no tenant and are ignored, so update each existing campaign once (any change republishes it) for its metric events to count.
 
 ## Kafka topics and events
@@ -201,7 +202,7 @@ On Kubernetes, the Helm charts in `deploy/helm/` set these probes and the 35 s g
 | Variable | Used by | Purpose |
 |---|---|---|
 | `DATABASE_URL` | all but analytics-service | That service's own database |
-| `CLICKHOUSE_URL` | analytics-service | e.g. `http://shopsphere:shopsphere_dev@clickhouse:8123/analytics` (the path is the database) |
+| `CLICKHOUSE_URL` | analytics-service | e.g. `http://ecommerce_analytics:ecommerce_analytics_dev@clickhouse:8123/analytics` (the path is the database) |
 | `KAFKA_BOOTSTRAP_SERVERS`, `CLICKHOUSE_HOST`, `CLICKHOUSE_USERNAME`, `CHECKPOINT_LOCATION`, `SPARK_TRIGGER_INTERVAL`, … | spark-streaming | See `streaming/README.md` |
 | `KAFKA_BROKERS` | all | e.g. `kafka:19092` |
 | `KAFKA_TOPIC_PREFIX` | all | Optional; isolates environments |

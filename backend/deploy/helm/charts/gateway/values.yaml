@@ -1,5 +1,5 @@
 image:
-  repository: shopsphere/gateway
+  repository: ecommerce-analytics/gateway
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -41,7 +41,7 @@ secrets:
 existingSecret: ""
 
 jwt:
-  secretName: shopsphere-jwt
+  secretName: ecommerce-analytics-jwt
   privateKey: false
 
 resources:

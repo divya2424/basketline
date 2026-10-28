@@ -8,7 +8,7 @@ import { createTeeTransport } from './analytics/eventTransport.js'
 import { API_BASE_URL } from './api/httpClient.js'
 import './styles/global.css'
 
-// Keep every event locally (console / __shopsphereAnalytics) and send campaign
+// Keep every event locally (console / __ecommerceAnalytics) and send campaign
 // impressions, clicks and basket additions to the analytics service.
 if (API_BASE_URL) setTransport(createTeeTransport([localCollector, createBackendTransport()]))
 

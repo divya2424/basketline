@@ -1,5 +1,5 @@
 image:
-  repository: shopsphere/spark-streaming
+  repository: ecommerce-analytics/spark-streaming
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -17,7 +17,7 @@ config:
   CHECKPOINT_LOCATION: /checkpoints/events-to-clickhouse
   CLICKHOUSE_HOST: clickhouse
   CLICKHOUSE_PORT: "8123"
-  CLICKHOUSE_USERNAME: shopsphere
+  CLICKHOUSE_USERNAME: ecommerce_analytics
   CLICKHOUSE_DATABASE: analytics
   CLICKHOUSE_TABLE: events
 

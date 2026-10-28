@@ -11,7 +11,7 @@ import {
   type EventBus,
   type Health,
   type Logger,
-} from '@shopsphere/platform'
+} from '@ecommerce-analytics/platform'
 import type { Db } from './db/client.ts'
 import { createCampaignController } from './controllers/campaign.controller.ts'
 import { campaignRoutes } from './routes/campaign.routes.ts'

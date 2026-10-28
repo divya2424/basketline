@@ -1,4 +1,4 @@
-import type { AnalyticsEventName } from '@shopsphere/contracts'
+import type { AnalyticsEventName } from '@ecommerce-analytics/contracts'
 import type { ClickHouse } from '../clickhouse.ts'
 
 /** ClickHouse DateTime64 parameter in UTC: "2026-10-28 12:00:00.000". */

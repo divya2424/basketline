@@ -13,10 +13,10 @@ SETTLE_SECONDS=${SETTLE_SECONDS:-75} # Spark loads every 30 s; let the last batc
 for rate in $RATES; do
   run_id="lt-$(date +%s)-$rate"
   echo "== $rate req/s ($((rate * 10)) events/s) for $DURATION, run $run_id" >&2
-  docker run --rm -i --network shopsphere_default \
+  docker run --rm -i --network ecommerce-analytics_default \
     -e RATE="$rate" -e READ_RATE="$READ_RATE" -e DURATION="$DURATION" -e RUN_ID="$run_id" \
     grafana/k6:1.3.0 run -q - < loadtest/analytics.js | tail -1 || true # k6 exits non-zero when a target is missed
   sleep "$SETTLE_SECONDS"
-  docker compose exec -T clickhouse clickhouse-client --user shopsphere --password shopsphere_dev \
+  docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev \
     --param_run="$run_id" --query "$(cat loadtest/freshness.sql)" < /dev/null
 done

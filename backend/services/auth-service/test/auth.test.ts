@@ -2,8 +2,8 @@ import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { decodeJwt } from 'jose'
 import { randomUUID } from 'node:crypto'
-import { closeDb, createLogger, createMemoryEventBus, verifyVisitorToken, type MemoryEventBus } from '@shopsphere/platform'
-import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@shopsphere/platform/testing'
+import { closeDb, createLogger, createMemoryEventBus, verifyVisitorToken, type MemoryEventBus } from '@ecommerce-analytics/platform'
+import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@ecommerce-analytics/platform/testing'
 import { buildAuthApp } from '../src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant, type Db } from '../src/db/client.ts'
 import { insertAccount } from '../src/repositories/account.repository.ts'
@@ -120,7 +120,7 @@ describe('registration', () => {
   })
 
   it('requires the storefront tenant as a UUID', async () => {
-    for (const tenant of ['', 'tenant_shopsphere']) {
+    for (const tenant of ['', 'tenant_ecommerce']) {
       const res = await registerRequest({ username: uniqueName(), password: PASSWORD }, tenant)
       expect(res.status).toBe(400)
       expect(res.body.error.code).toBe('TENANT_REQUIRED')

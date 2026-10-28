@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { Admin } from '@platformatic/kafka'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ANALYTICS_EVENT_NAMES, analyticsTopic, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@shopsphere/contracts'
+import { ANALYTICS_EVENT_NAMES, analyticsTopic, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@ecommerce-analytics/contracts'
 import {
   closeDb,
   createEventPublisher,
@@ -21,8 +21,8 @@ import {
   idempotentHandler,
   type Database,
   type EventBus,
-} from '@shopsphere/platform'
-import { createTestDatabase, createTestKeys } from '@shopsphere/platform/testing'
+} from '@ecommerce-analytics/platform'
+import { createTestDatabase, createTestKeys } from '@ecommerce-analytics/platform/testing'
 import { buildAnalyticsApp } from '../services/analytics-service/src/app.ts'
 import { createClickHouse } from '../services/analytics-service/src/clickhouse.ts'
 import { handleCampaignEvent } from '../services/analytics-service/src/events/campaign.consumer.ts'
@@ -53,7 +53,7 @@ let authDb: ReturnType<typeof createAuthDb>
 let authBus: EventBus
 /** What arrived on the analytics.<eventName>.v1 topics (read by Spark in production). */
 const analyticsMessages: { topic: string; envelope: EventEnvelope<AnalyticsEventPayload> }[] = []
-const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://shopsphere:shopsphere_dev@localhost:8123/analytics')
+const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://ecommerce_analytics:ecommerce_analytics_dev@localhost:8123/analytics')
 
 /** A fresh database for one service, migrated with that service's Drizzle migrations. */
 async function database<D extends Database<any>>(create: (url: string) => D, migrate: (db: D) => Promise<void>): Promise<D> {

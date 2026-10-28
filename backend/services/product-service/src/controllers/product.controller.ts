@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { badRequest, page, readPagination, tenantHeader } from '@shopsphere/platform'
+import { badRequest, page, readPagination, tenantHeader } from '@ecommerce-analytics/platform'
 import type { Product } from '../repositories/product.repository.ts'
 import type { ProductService } from '../services/product.service.ts'
 

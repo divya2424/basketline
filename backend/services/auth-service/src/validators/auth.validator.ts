@@ -1,4 +1,4 @@
-import { isNonEmptyString, isOneOf, isPlainObject, unknownKeys } from '@shopsphere/platform'
+import { isNonEmptyString, isOneOf, isPlainObject, unknownKeys } from '@ecommerce-analytics/platform'
 
 export interface RegisterInput {
   username: string

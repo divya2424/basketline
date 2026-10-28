@@ -1,6 +1,6 @@
 dependencies:
-- name: shopsphere-lib
-  repository: file://../shopsphere-lib
+- name: ecommerce-analytics-lib
+  repository: file://../ecommerce-analytics-lib
   version: 0.1.0
-digest: sha256:48b2e2ba44e2e0a13c6ee64291247ea9f7482439ed2e599ff4693669eccecf89
-generated: "2026-10-28T17:51:53.429103908Z"
+digest: sha256:7b057222328ff3a26014b5e552c06209e41b50edd46c301b3c3dd1748ebc4b74
+generated: "2026-10-28T20:31:54.767354889Z"

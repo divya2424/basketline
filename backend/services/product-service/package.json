@@ -1,5 +1,5 @@
 {
-  "name": "@shopsphere/product-service",
+  "name": "@ecommerce-analytics/product-service",
   "version": "1.0.0",
   "private": true,
   "type": "module",

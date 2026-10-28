@@ -32,16 +32,16 @@ export function Header() {
     return (
       <header className="site-header">
         <div className="container site-header__inner">
-          <Link to="/" className="brand" aria-label="ShopSphere: onboarding">
+          <Link to="/" className="brand" aria-label="E-commerce Analytics: onboarding">
             <span className="brand__mark" aria-hidden="true" />
-            ShopSphere
+            E-commerce Analytics
           </Link>
         </div>
       </header>
     )
   }
 
-  const tenantName = getRequestContext().tenantName || 'ShopSphere'
+  const tenantName = getRequestContext().tenantName || 'E-commerce Analytics'
   const isCampaignManager = user.role === ROLES.CAMPAIGN_MANAGER
   const cartLabel = `Cart, ${totalQuantity} ${totalQuantity === 1 ? 'item' : 'items'}`
   const signOut = async () => {

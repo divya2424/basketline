@@ -110,7 +110,7 @@ describe('the tenant list', () => {
     expect(logins()[0]).toMatchObject({ body: { username: 'onboarding', password: 'test', clientType: 'web' } })
     expect(logins()[0].headers.get('tenant_id')).toBe(ACME.tenantId)
     expect(getRequestContext().tenantId).toBe(ACME.tenantId)
-    expect(localStorage.getItem('shopsphere:tenant')).toBe(ACME.tenantId)
+    expect(localStorage.getItem('ecommerce-analytics:tenant')).toBe(ACME.tenantId)
     expect(getRequestContext().tenantName).toBe('Acme Store')
   })
 

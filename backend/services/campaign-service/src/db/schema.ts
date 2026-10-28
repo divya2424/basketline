@@ -1,12 +1,12 @@
 /**
  * campaign_db tables — the source of truth for the schema. After a change run
- * `npm run db:generate -w @shopsphere/campaign-service`; migrations apply on startup.
+ * `npm run db:generate -w @ecommerce-analytics/campaign-service`; migrations apply on startup.
  */
 import { relations, sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, integer, numeric, pgEnum, pgTable, text, unique, uuid, varchar } from 'drizzle-orm/pg-core'
-import { timestamptz } from '@shopsphere/platform'
+import { timestamptz } from '@ecommerce-analytics/platform'
 
-export { auditLog } from '@shopsphere/platform'
+export { auditLog } from '@ecommerce-analytics/platform'
 
 export const campaignStatus = pgEnum('campaign_status', ['draft', 'active', 'paused', 'completed'])
 

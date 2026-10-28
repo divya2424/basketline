@@ -1,5 +1,0 @@
-apiVersion: v2
-name: shopsphere-lib
-description: Templates shared by the ShopSphere service charts. Not installable on its own.
-type: library
-version: 0.1.0

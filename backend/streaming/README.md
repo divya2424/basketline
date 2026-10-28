@@ -66,7 +66,7 @@ KAFKA_STARTING_OFFSETS="$OFFSETS" docker compose up -d spark-streaming
 ```bash
 docker compose up -d --build spark-streaming
 docker compose logs -f spark-streaming          # "Processed batch_id=…"
-docker compose exec clickhouse clickhouse-client --user shopsphere --password shopsphere_dev \
+docker compose exec clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev \
   --query "SELECT event_name, uniqExact(event_id) FROM analytics.events GROUP BY event_name"
 ```
 
@@ -108,7 +108,7 @@ uv run spark-submit \
 | `SPARK_SHUFFLE_PARTITIONS` | `4` | Partitions of the `(tenant_id, event_name)` shuffle, i.e. insert streams per batch. Raise it with more cores or traffic |
 | `CHECKPOINT_LOCATION` | `./var/checkpoints/events-to-clickhouse` | Keep it stable across restarts; never share it between queries |
 | `CLICKHOUSE_HOST` / `CLICKHOUSE_PORT` / `CLICKHOUSE_SECURE` | `localhost` / `8123` / `false` | ClickHouse HTTP interface |
-| `CLICKHOUSE_USERNAME` / `CLICKHOUSE_PASSWORD` | `default` / empty | compose uses `shopsphere` / `shopsphere_dev` |
+| `CLICKHOUSE_USERNAME` / `CLICKHOUSE_PASSWORD` | `default` / empty | compose uses `ecommerce_analytics` / `ecommerce_analytics_dev` |
 | `CLICKHOUSE_DATABASE` / `CLICKHOUSE_TABLE` | `analytics` / `events` | |
 | `CLICKHOUSE_INSERT_BATCH_SIZE` | `5000` | Rows per insert, which bounds memory per Spark partition |
 
@@ -118,7 +118,7 @@ Delete the checkpoint and restart. The job starts again from the earliest offset
 
 ```bash
 docker compose stop spark-streaming && docker compose rm -f spark-streaming
-docker volume rm shopsphere_spark-checkpoints
+docker volume rm ecommerce-analytics_spark-checkpoints
 docker compose up -d spark-streaming
 ```
 

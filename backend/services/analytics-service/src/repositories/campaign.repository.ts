@@ -3,7 +3,7 @@
  * date from campaign.v1 events. ReplacingMergeTree(version) keeps the newest
  * version, so replays and out-of-order events are harmless.
  */
-import type { CampaignState } from '@shopsphere/contracts'
+import type { CampaignState } from '@ecommerce-analytics/contracts'
 import type { ClickHouse } from '../clickhouse.ts'
 
 export async function upsertCampaignState(clickhouse: ClickHouse, campaign: CampaignState, version: number): Promise<void> {

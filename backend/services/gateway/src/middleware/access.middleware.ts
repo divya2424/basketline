@@ -5,7 +5,7 @@
  */
 import type { RequestHandler } from 'express'
 import type { CryptoKey } from 'jose'
-import { forbidden, notFound, unauthorized, verifyAccessToken, verifyEventToken, type AccessTokenClaims } from '@shopsphere/platform'
+import { forbidden, notFound, unauthorized, verifyAccessToken, verifyEventToken, type AccessTokenClaims } from '@ecommerce-analytics/platform'
 import type { AccessService } from '../services/access.service.ts'
 
 /** 'events': an access token or a visitor token (anonymous storefront visitors). */

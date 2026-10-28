@@ -40,10 +40,10 @@ The gateway limits each client IP to 300 requests/min (120 for event posts, 10 v
 RATE_LIMIT_PER_MINUTE=100000000 EVENTS_RATE_LIMIT_PER_MINUTE=100000000 VISITOR_RATE_LIMIT_PER_MINUTE=100000000 \
   docker compose up -d gateway
 RATES="50 100 150" READ_RATE=0 loadtest/run.sh                 # ingestion ladder + freshness
-docker run --rm -i --network shopsphere_default -e RATE=0 -e READ_RATE=10 \
+docker run --rm -i --network ecommerce-analytics_default -e RATE=0 -e READ_RATE=10 \
   grafana/k6:1.3.0 run -q - < loadtest/analytics.js            # dashboard reads only
 docker compose up -d gateway                                   # back to the default limits
-docker compose exec -T clickhouse clickhouse-client --user shopsphere --password shopsphere_dev \
+docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev \
   --multiquery < loadtest/cleanup.sql
 ```
 

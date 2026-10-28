@@ -1,7 +1,7 @@
 import cors from 'cors'
 import { rateLimit } from 'express-rate-limit'
 import type { CryptoKey } from 'jose'
-import { createBaseApp, createHealth, errorHandler, notFoundHandler, pingDb, type Health, type Logger } from '@shopsphere/platform'
+import { createBaseApp, createHealth, errorHandler, notFoundHandler, pingDb, type Health, type Logger } from '@ecommerce-analytics/platform'
 import type { Db } from './db/client.ts'
 import { accessMiddleware } from './middleware/access.middleware.ts'
 import { proxyRoutes, type ServiceUrls } from './routes/proxy.routes.ts'

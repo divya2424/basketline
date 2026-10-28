@@ -4,8 +4,8 @@ export function Footer() {
   return (
     <footer className="site-footer">
       <div className="container site-footer__inner">
-        <p className="site-footer__brand">ShopSphere</p>
-        <p>© {year} ShopSphere. All rights reserved.</p>
+        <p className="site-footer__brand">E-commerce Analytics</p>
+        <p>© {year} E-commerce Analytics. All rights reserved.</p>
         <p className="site-footer__disclaimer">
           Disclaimer: product information, prices and campaigns shown on this site are sample data for demonstration
           only. No real orders can be placed.

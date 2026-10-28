@@ -1,13 +1,17 @@
-import { ANALYTICS_EVENT_TYPE, analyticsTopic, METRIC_EVENT_NAMES, type AnalyticsEventPayload } from '@shopsphere/contracts'
-import { AppError, isOneOf, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@shopsphere/platform'
+import { ANALYTICS_EVENT_TYPE, analyticsTopic, METRIC_EVENT_NAMES, type AnalyticsEventPayload } from '@ecommerce-analytics/contracts'
+import { AppError, isOneOf, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@ecommerce-analytics/platform'
 import type { ClickHouse } from '../clickhouse.ts'
 import { findActiveCampaigns } from '../repositories/campaign.repository.ts'
 import type { IncomingEvent } from '../validators/analytics.validator.ts'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
-/** Late arrivals older than this are rejected (keeps reports stable). */
-export const MAX_EVENT_AGE_MS = 7 * 24 * HOUR
+/**
+ * Late arrivals older than this are rejected (keeps reports stable). ClickHouse
+ * keeps raw events for 7 days (init.sql TTL); a late event has its day, and the
+ * clicks of the day before, recounted from raw events, so this leaves them a day of margin.
+ */
+export const MAX_EVENT_AGE_MS = 5 * 24 * HOUR
 /** Allowed client clock skew. */
 export const MAX_CLOCK_SKEW_MS = 5 * MINUTE
 /** Events one user or visitor may send per minute (per instance); more is not a shopper. */

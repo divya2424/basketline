@@ -1,5 +1,5 @@
-import { ANALYTICS_EVENT_NAMES, analyticsTopic, TOPICS } from '@shopsphere/contracts'
-import { createBusFromEnv, createHealth, createLogger, handleShutdown, intEnv, loadPublicKey, requireEnv, secretEnv } from '@shopsphere/platform'
+import { ANALYTICS_EVENT_NAMES, analyticsTopic, TOPICS } from '@ecommerce-analytics/contracts'
+import { createBusFromEnv, createHealth, createLogger, handleShutdown, intEnv, loadPublicKey, requireEnv, secretEnv } from '@ecommerce-analytics/platform'
 import { buildAnalyticsApp } from './app.ts'
 import { createClickHouse } from './clickhouse.ts'
 import { handleCampaignEvent } from './events/campaign.consumer.ts'

@@ -1,6 +1,6 @@
-# ShopSphere — Storefront & Campaign Analytics (frontend)
+# E-commerce Analytics: frontend
 
-A React + Vite storefront connected to the ShopSphere backend (`../backend`). It includes:
+A React + Vite storefront connected to the E-commerce Analytics backend (`../backend`). It includes:
 - a product catalog and campaign carousel loaded from the API;
 - a shopping cart;
 - sign-in against the auth service;
@@ -73,14 +73,14 @@ The app opens on the onboarding page (`/`), open to everyone (no sign-in). A ten
   - **Open store** and **Analytics** switch the app to that tenant, sign in as its `onboarding` user, and reload at `/store` or `/analytics`;
   - **Log in** opens the sign-in dialog for that tenant, to sign in as any of its users, then opens its store; Cancel stays on the onboarding page.
 
-**Header.** On the onboarding page it shows only the ShopSphere brand. Inside a tenant the brand is the tenant's name, followed by Home and (for campaign managers) Analytics, the user's name, **Logout**, which ends the session and returns to the onboarding page, and the cart. There is no Login button: signing in always starts from a tenant's row.
+**Header.** On the onboarding page it shows only the E-commerce Analytics brand. Inside a tenant the brand is the tenant's name, followed by Home and (for campaign managers) Analytics, the user's name, **Logout**, which ends the session and returns to the onboarding page, and the cart. There is no Login button: signing in always starts from a tenant's row.
 
-The chosen tenant (and its name, for the header) is kept in `localStorage` (`shopsphere:tenant`, `shopsphere:tenant-name`) and takes precedence over `VITE_TENANT_ID` until you pick another. Each store has its own cart. A tenant created with the CLI has no `onboarding` user, so use **Log in** for it.
+The chosen tenant (and its name, for the header) is kept in `localStorage` (`ecommerce-analytics:tenant`, `ecommerce-analytics:tenant-name`) and takes precedence over `VITE_TENANT_ID` until you pick another. Each store has its own cart. A tenant created with the CLI has no `onboarding` user, so use **Log in** for it.
 
 ## Sign-in and roles
 
 A tenant row's **Log in** opens a modal with a username field and a password field, and signs in to that tenant against the auth service.
-- **Session:** it's kept in `sessionStorage` (`shopsphere:session:v3`: profile, role, access token and its expiry, and the tenant it belongs to; never the password), so it lasts until the tab closes. A session of another tenant isn't restored: after switching stores, you sign in again.
+- **Session:** it's kept in `sessionStorage` (`ecommerce-analytics:session:v3`: profile, role, access token and its expiry, and the tenant it belongs to; never the password), so it lasts until the tab closes. A session of another tenant isn't restored: after switching stores, you sign in again.
 - **Expiry:** the token expires after 30 minutes, and the app then signs out automatically.
 - **Logout:** it ends the session on the server too.
 
@@ -90,7 +90,7 @@ Only `campaign-manager` users see the **Analytics** link. Anyone else who opens 
 
 ## Analytics events
 
-Components call `trackEvent()` (or `track()` from `useAnalytics()` inside an `<AnalyticsWrapper>`). Every event is kept locally: run `__shopsphereAnalytics.getEvents()` in the browser console.
+Components call `trackEvent()` (or `track()` from `useAnalytics()` inside an `<AnalyticsWrapper>`). Every event is kept locally: run `__ecommerceAnalytics.getEvents()` in the browser console.
 
 | Event | Emitted when |
 |---|---|
@@ -112,7 +112,7 @@ When `VITE_API_BASE_URL` is set, every event is also sent to `POST /analytics/ev
 
 Add to cart is never an ad click itself, even on a campaign card: without an earlier card click on that product it sends only `add_to_cart`.
 
-Each click is credited to at most one basket addition. Clicks are remembered in `sessionStorage` (`shopsphere:ad-clicks:v1`). Sending never blocks or breaks shopping: failures are logged and dropped.
+Each click is credited to at most one basket addition. Clicks are remembered in `sessionStorage` (`ecommerce-analytics:ad-clicks:v1`). Sending never blocks or breaks shopping: failures are logged and dropped.
 
 ## Campaign carousel
 
@@ -132,7 +132,7 @@ src/
   features/catalog/   CatalogProvider: products + active campaigns from the API
   features/products/  ProductCard, ProductGrid; productData.js = sample data (seed + tests)
   features/campaigns/ CampaignCarousel; campaignData.js = sample data (seed + tests)
-  features/cart/      CartContext, CartPage (cart saved in localStorage: shopsphere:cart:v2)
+  features/cart/      CartContext, CartPage (cart saved in localStorage: ecommerce-analytics:cart:v2)
   features/analytics/ dashboard and the /ad metrics client
   features/auth/      sign-in, session, LoginModal, RequireRole
   pages/HomePage.jsx

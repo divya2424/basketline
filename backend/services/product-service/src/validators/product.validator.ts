@@ -1,4 +1,4 @@
-import { isNonEmptyString, isPlainObject, isPrice, unknownKeys } from '@shopsphere/platform'
+import { isNonEmptyString, isPlainObject, isPrice, unknownKeys } from '@ecommerce-analytics/platform'
 
 const FIELDS = ['name', 'description', 'price', 'image', 'category'] as const
 

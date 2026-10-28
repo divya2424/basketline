@@ -11,8 +11,8 @@
  * session restore, so the very first request after a reload is authenticated.
  */
 export const DEFAULT_TENANT_ID = '5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01'
-const TENANT_KEY = 'shopsphere:tenant'
-const TENANT_NAME_KEY = 'shopsphere:tenant-name'
+const TENANT_KEY = 'ecommerce-analytics:tenant'
+const TENANT_NAME_KEY = 'ecommerce-analytics:tenant-name'
 
 function saved(key) {
   try {

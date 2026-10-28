@@ -1,4 +1,4 @@
-import { TOPICS } from '@shopsphere/contracts'
+import { TOPICS } from '@ecommerce-analytics/contracts'
 import {
   closeDb,
   createBusFromEnv,
@@ -10,7 +10,7 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
-} from '@shopsphere/platform'
+} from '@ecommerce-analytics/platform'
 import { buildAuthApp } from './app.ts'
 import { createAuthDb, migrateAuthDb } from './db/client.ts'
 

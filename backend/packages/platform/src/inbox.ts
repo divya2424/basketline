@@ -1,4 +1,4 @@
-import type { EventEnvelope } from '@shopsphere/contracts'
+import type { EventEnvelope } from '@ecommerce-analytics/contracts'
 import type { EventHandler } from './bus.ts'
 import type { Database, Transaction } from './db.ts'
 import { processedEvents } from './tables.ts'

@@ -2,7 +2,7 @@
  * Remembers the latest campaign ad click per product (sessionStorage), so a
  * later add-to-cart can be credited to it. Each click is credited once.
  */
-const KEY = 'shopsphere:ad-clicks:v1'
+const KEY = 'ecommerce-analytics:ad-clicks:v1'
 export const ATTRIBUTION_WINDOW_MS = 24 * 60 * 60 * 1000
 
 function read() {

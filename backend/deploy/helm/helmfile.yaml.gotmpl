@@ -19,7 +19,7 @@ helmDefaults:
 releases:
 {{- range list "gateway" "auth-service" "product-service" "campaign-service" "analytics-service" "spark-streaming" }}
   - name: {{ . }}
-    namespace: shopsphere
+    namespace: ecommerce-analytics
     chart: ./charts/{{ . }}
     values:
       - environments/{{ $.Environment.Name }}/{{ . }}.yaml

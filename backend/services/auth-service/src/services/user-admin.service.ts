@@ -4,8 +4,8 @@
  * to publish once that transaction has committed.
  */
 import { randomUUID } from 'node:crypto'
-import { STANDARD_USER, type Role } from '@shopsphere/contracts'
-import { conflict, event, isUniqueViolation, notFound, writeAudit, type NewEvent } from '@shopsphere/platform'
+import { STANDARD_USER, type Role } from '@ecommerce-analytics/contracts'
+import { conflict, event, isUniqueViolation, notFound, writeAudit, type NewEvent } from '@ecommerce-analytics/platform'
 import type { DbOrTx } from '../db/client.ts'
 import { endOpenSessionsForUser, type Session } from '../repositories/session.repository.ts'
 import { deactivateUser, findUserByUsername, insertUser, updateUserRole, type User } from '../repositories/user.repository.ts'

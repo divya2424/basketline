@@ -1,4 +1,4 @@
-import { TOPICS } from '@shopsphere/contracts'
+import { TOPICS } from '@ecommerce-analytics/contracts'
 import {
   closeDb,
   createBusFromEnv,
@@ -10,7 +10,7 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
-} from '@shopsphere/platform'
+} from '@ecommerce-analytics/platform'
 import { buildCampaignApp } from './app.ts'
 import { createCampaignDb, migrateCampaignDb } from './db/client.ts'
 import { handleProductEvent } from './events/product.consumer.ts'

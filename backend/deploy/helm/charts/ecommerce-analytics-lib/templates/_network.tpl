@@ -1,16 +1,16 @@
-{{- define "shopsphere.service" -}}
+{{- define "ecommerce-analytics.service" -}}
 {{- if .Values.port }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "shopsphere.fullname" . }}
+  name: {{ include "ecommerce-analytics.fullname" . }}
   labels:
-    {{- include "shopsphere.labels" . | nindent 4 }}
+    {{- include "ecommerce-analytics.labels" . | nindent 4 }}
 spec:
   type: {{ (.Values.service).type | default "ClusterIP" }}
   selector:
-    {{- include "shopsphere.selectorLabels" . | nindent 4 }}
+    {{- include "ecommerce-analytics.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.port }}
@@ -18,16 +18,16 @@ spec:
 {{- end }}
 {{- end -}}
 
-{{- define "shopsphere.ingress" -}}
+{{- define "ecommerce-analytics.ingress" -}}
 {{- with .Values.ingress }}
 {{- if .enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "shopsphere.fullname" $ }}
+  name: {{ include "ecommerce-analytics.fullname" $ }}
   labels:
-    {{- include "shopsphere.labels" $ | nindent 4 }}
+    {{- include "ecommerce-analytics.labels" $ | nindent 4 }}
   {{- with .annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -49,7 +49,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "shopsphere.fullname" $ }}
+                name: {{ include "ecommerce-analytics.fullname" $ }}
                 port:
                   name: http
     {{- end }}
@@ -57,21 +57,21 @@ spec:
 {{- end }}
 {{- end -}}
 
-{{- define "shopsphere.hpa" -}}
+{{- define "ecommerce-analytics.hpa" -}}
 {{- with .Values.autoscaling }}
 {{- if .enabled }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "shopsphere.fullname" $ }}
+  name: {{ include "ecommerce-analytics.fullname" $ }}
   labels:
-    {{- include "shopsphere.labels" $ | nindent 4 }}
+    {{- include "ecommerce-analytics.labels" $ | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "shopsphere.fullname" $ }}
+    name: {{ include "ecommerce-analytics.fullname" $ }}
   minReplicas: {{ .minReplicas }}
   maxReplicas: {{ .maxReplicas }}
   metrics:
@@ -86,19 +86,19 @@ spec:
 {{- end -}}
 
 {{/* Node drains and cluster upgrades take down one pod at a time, once there's more than one. */}}
-{{- define "shopsphere.pdb" -}}
+{{- define "ecommerce-analytics.pdb" -}}
 {{- if or (gt (int .Values.replicaCount) 1) (.Values.autoscaling).enabled }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "shopsphere.fullname" . }}
+  name: {{ include "ecommerce-analytics.fullname" . }}
   labels:
-    {{- include "shopsphere.labels" . | nindent 4 }}
+    {{- include "ecommerce-analytics.labels" . | nindent 4 }}
 spec:
   maxUnavailable: 1
   selector:
     matchLabels:
-      {{- include "shopsphere.selectorLabels" . | nindent 6 }}
+      {{- include "ecommerce-analytics.selectorLabels" . | nindent 6 }}
 {{- end }}
 {{- end -}}

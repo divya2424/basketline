@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { EVENTS, type EventEnvelope, type EventPayloads, type EventType } from '@shopsphere/contracts'
+import { EVENTS, type EventEnvelope, type EventPayloads, type EventType } from '@ecommerce-analytics/contracts'
 import type { EventBus } from './bus.ts'
 import type { Logger } from './logger.ts'
 

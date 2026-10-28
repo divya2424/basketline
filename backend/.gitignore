@@ -1,5 +1,5 @@
 node_modules/
 keys/
 *.log
-# Built by `helm dependency build` from charts/shopsphere-lib.
+# Built by `helm dependency build` from charts/ecommerce-analytics-lib.
 deploy/helm/charts/*/charts/

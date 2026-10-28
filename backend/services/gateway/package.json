@@ -1,5 +1,5 @@
 {
-  "name": "@shopsphere/gateway",
+  "name": "@ecommerce-analytics/gateway",
   "version": "1.0.0",
   "private": true,
   "type": "module",

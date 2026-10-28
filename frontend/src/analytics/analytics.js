@@ -9,8 +9,8 @@ let transport = localCollector
 
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   // Lets you inspect captured events from the browser console:
-  //   __shopsphereAnalytics.getEvents()
-  window.__shopsphereAnalytics = localCollector
+  //   __ecommerceAnalytics.getEvents()
+  window.__ecommerceAnalytics = localCollector
 }
 
 export function setTransport(nextTransport) {

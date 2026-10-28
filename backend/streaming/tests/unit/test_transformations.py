@@ -70,7 +70,7 @@ def test_parse_events_drops_records_that_cannot_be_stored(spark):
         envelope(eventId="evt-1"),
         envelope(eventName=""),
         envelope(tenantId=None),
-        envelope(tenantId="tenant_shopsphere"),
+        envelope(tenantId="tenant_ecommerce"),
         envelope(timestamp=None),
     )
     rows = parse_events(df).collect()

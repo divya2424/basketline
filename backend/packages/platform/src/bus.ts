@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises'
-import { isEnvelope, type EventEnvelope } from '@shopsphere/contracts'
+import { isEnvelope, type EventEnvelope } from '@ecommerce-analytics/contracts'
 import type { Logger } from './logger.ts'
 
 export interface BusMessage {

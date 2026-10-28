@@ -1,5 +1,5 @@
-import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@shopsphere/platform'
-import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, METRIC_EVENT_NAMES, type AnalyticsEventName } from '@shopsphere/contracts'
+import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@ecommerce-analytics/platform'
+import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, METRIC_EVENT_NAMES, type AnalyticsEventName } from '@ecommerce-analytics/contracts'
 
 export const MAX_EVENTS_PER_REQUEST = 100
 

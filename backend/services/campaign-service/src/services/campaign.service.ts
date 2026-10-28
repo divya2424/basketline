@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { CampaignStatus } from '@shopsphere/contracts'
+import type { CampaignStatus } from '@ecommerce-analytics/contracts'
 import {
   badRequest,
   conflict,
@@ -11,7 +11,7 @@ import {
   writeAudit,
   type NewEvent,
   type PublishEvents,
-} from '@shopsphere/platform'
+} from '@ecommerce-analytics/platform'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   deleteAssociation,

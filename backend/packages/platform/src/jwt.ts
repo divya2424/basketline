@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { importPKCS8, importSPKI, jwtVerify, SignJWT, type CryptoKey } from 'jose'
-import { ROLES, type Role } from '@shopsphere/contracts'
+import { ROLES, type Role } from '@ecommerce-analytics/contracts'
 import { isUuid } from './checks.ts'
 
 export const JWT_ALGORITHM = 'ES256'
-export const JWT_ISSUER = 'shopsphere-auth'
-export const JWT_AUDIENCE = 'shopsphere-api'
+export const JWT_ISSUER = 'ecommerce-analytics-auth'
+export const JWT_AUDIENCE = 'ecommerce-analytics-api'
 export const ACCESS_TOKEN_TTL_SECONDS = 30 * 60
 /** Visitor tokens are only accepted by event ingestion: any other API rejects this audience. */
-export const VISITOR_AUDIENCE = 'shopsphere-events'
+export const VISITOR_AUDIENCE = 'ecommerce-analytics-events'
 export const VISITOR_TOKEN_TTL_SECONDS = 30 * 60
 
 export interface AccessTokenClaims {

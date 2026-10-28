@@ -32,6 +32,11 @@ PARTITION BY toYYYYMM(event_time)
 -- Tenant first, then event: every query filters on tenant_id + event_name
 -- (+ campaign_id and a time range), so it reads only that slice of the table.
 ORDER BY (tenant_id, event_name, campaign_id, event_time, event_id)
+-- Raw events are deleted 7 days after they happened (during background merges,
+-- so they may linger a few hours longer). /ad reads days before yesterday from
+-- campaign_daily_aggregates, which keeps them. analytics-service accepts events
+-- at most 5 days old, so a recounted day still has all of its raw events.
+TTL toDateTime(event_time) + INTERVAL 7 DAY
 -- campaign_id is Nullable (storefront activity may have no campaign).
 -- The deduplication window makes an identical re-sent insert (as when the Spark
 -- job replays a batch after a crash) a no-op.

@@ -4,12 +4,12 @@ There is one Helm chart per service, and each service is its **own Helm release*
 
 ```
 deploy/helm/
-  helmfile.yaml.gotmpl      the six releases (namespace shopsphere)
+  helmfile.yaml.gotmpl      the six releases (namespace ecommerce-analytics)
   environments/local/       per-release values for one environment (copy it for staging, production)
   charts/
-    shopsphere-lib/         library chart: the templates every service chart shares
+    ecommerce-analytics-lib/         library chart: the templates every service chart shares
     gateway/  auth-service/  product-service/  campaign-service/  analytics-service/  spark-streaming/
-      Chart.yaml            the chart's version and its dependency on shopsphere-lib
+      Chart.yaml            the chart's version and its dependency on ecommerce-analytics-lib
       values.yaml           everything you can set for this service
       templates/manifests.yaml
 ```
@@ -22,8 +22,8 @@ The releases don't wait for each other. A service whose database, Kafka or Click
 - **Images in a registry the cluster can pull from.** From `backend/`:
 
   ```bash
-  docker build --build-arg SERVICE=gateway -t <registry>/shopsphere/gateway:<version> .   # repeat per Node service
-  docker build --target runtime -t <registry>/shopsphere/spark-streaming:<version> streaming
+  docker build --build-arg SERVICE=gateway -t <registry>/ecommerce-analytics/gateway:<version> .   # repeat per Node service
+  docker build --target runtime -t <registry>/ecommerce-analytics/spark-streaming:<version> streaming
   ```
 
 - **Postgres, Kafka and ClickHouse** must already exist; the charts don't install them. Postgres needs the roles and databases from `infra/postgres/init.sql`, and ClickHouse needs `infra/clickhouse/init.sql`. The charts expect the hosts `postgres`, `kafka:19092` and `clickhouse` (the compose names). To use other hosts, set `config.KAFKA_BROKERS` and `config.KAFKA_BOOTSTRAP_SERVERS` (Spark), the connection strings under `secrets`, and `config.CLICKHOUSE_HOST`.
@@ -33,8 +33,8 @@ The releases don't wait for each other. A service whose database, Kafka or Click
 All services verify tokens with the same key pair, so it lives in one Secret that no chart owns. That way no release depends on another release to create it:
 
 ```bash
-kubectl create namespace shopsphere
-kubectl -n shopsphere create secret generic shopsphere-jwt \
+kubectl create namespace ecommerce-analytics
+kubectl -n ecommerce-analytics create secret generic ecommerce-analytics-jwt \
   --from-file=jwt-public.pem=keys/jwt-public.pem \
   --from-file=jwt-private.pem=keys/jwt-private.pem      # from backend/; `npm run keys` creates them
 ```
@@ -53,23 +53,23 @@ helmfile -e local -l name=gateway apply --set image.tag=1.4.2            # a new
 helmfile -e local -l name=gateway diff                   # what an apply would change
 ```
 
-`apply` installs or upgrades and waits for the pods to be ready. If they never become ready, it rolls that release back. The release for each name has the same name, so `helm -n shopsphere history gateway` and `helm -n shopsphere rollback gateway` work as usual.
+`apply` installs or upgrades and waits for the pods to be ready. If they never become ready, it rolls that release back. The release for each name has the same name, so `helm -n ecommerce-analytics history gateway` and `helm -n ecommerce-analytics rollback gateway` work as usual.
 
-To remove one service, run `helmfile -e local -l name=gateway destroy`, or `helm -n shopsphere uninstall gateway`.
+To remove one service, run `helmfile -e local -l name=gateway destroy`, or `helm -n ecommerce-analytics uninstall gateway`.
 
 ### With Helm only
 
 ```bash
-helm dependency build charts/gateway       # packages shopsphere-lib into charts/gateway/charts/
-helm upgrade --install gateway charts/gateway -n shopsphere \
+helm dependency build charts/gateway       # packages ecommerce-analytics-lib into charts/gateway/charts/
+helm upgrade --install gateway charts/gateway -n ecommerce-analytics \
   -f environments/local/gateway.yaml --wait --atomic
 ```
 
-Run `helm dependency build` again after changing `charts/shopsphere-lib`. helmfile does this on every `apply`.
+Run `helm dependency build` again after changing `charts/ecommerce-analytics-lib`. helmfile does this on every `apply`.
 
 ## Environments
 
-An environment is a folder of values files, one per release, applied on top of the chart's `values.yaml`. The `local` environment uses the `docker compose build` images (`shopsphere-<service>:latest`), one replica each, and the compose development credentials. Its target is a local cluster that can reach the compose infrastructure under the names above.
+An environment is a folder of values files, one per release, applied on top of the chart's `values.yaml`. The `local` environment uses the `docker compose build` images (`ecommerce-analytics-<service>:latest`), one replica each, and the compose development credentials. Its target is a local cluster that can reach the compose infrastructure under the names above.
 
 To add production, copy the folder and register it in `helmfile.yaml.gotmpl` under `environments:` (`production: {}`). Then, in each file:
 - set `image.repository` and `image.tag`;

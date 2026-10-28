@@ -7,7 +7,7 @@
  */
 import { getRequestContext } from '../../api/requestContext.js'
 
-const SESSION_KEY = 'shopsphere:session:v3'
+const SESSION_KEY = 'ecommerce-analytics:session:v3'
 
 export function loadSession() {
   try {

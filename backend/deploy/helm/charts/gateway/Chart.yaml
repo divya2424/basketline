@@ -1,10 +1,10 @@
 apiVersion: v2
 name: gateway
-description: ShopSphere API gateway, the public HTTP entry point. Authenticates, rate-limits and proxies to the services.
+description: E-commerce Analytics API gateway, the public HTTP entry point. Authenticates, rate-limits and proxies to the services.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
-  - name: shopsphere-lib
+  - name: ecommerce-analytics-lib
     version: 0.1.0
-    repository: file://../shopsphere-lib
+    repository: file://../ecommerce-analytics-lib

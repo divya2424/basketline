@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { exportPKCS8, exportSPKI, generateKeyPair, type CryptoKey } from 'jose'
 import pg from 'pg'
-import type { Role } from '@shopsphere/contracts'
+import type { Role } from '@ecommerce-analytics/contracts'
 import { JWT_ALGORITHM, signAccessToken, signVisitorToken } from './jwt.ts'
 
 const ADMIN_URL = process.env.TEST_DATABASE_ADMIN_URL ?? 'postgres://postgres:postgres@localhost:5432/postgres'

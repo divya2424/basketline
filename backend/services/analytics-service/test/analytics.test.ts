@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createLogger, createMemoryEventBus, type EventBus, type MemoryEventBus } from '@shopsphere/platform'
-import { createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@shopsphere/platform/testing'
+import { createLogger, createMemoryEventBus, type EventBus, type MemoryEventBus } from '@ecommerce-analytics/platform'
+import { createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@ecommerce-analytics/platform/testing'
 import { buildAnalyticsApp } from '../src/app.ts'
 import { createClickHouse, type ClickHouse } from '../src/clickhouse.ts'
 import { handleCampaignEvent } from '../src/events/campaign.consumer.ts'
 
-const CLICKHOUSE = process.env.TEST_CLICKHOUSE_URL ?? 'http://shopsphere:shopsphere_dev@localhost:8123'
+const CLICKHOUSE = process.env.TEST_CLICKHOUSE_URL ?? 'http://ecommerce_analytics:ecommerce_analytics_dev@localhost:8123'
 const HOUR = 3_600_000
 const TENANT = '10000000-0000-4000-8000-000000000001'
 const OTHER_TENANT = '20000000-0000-4000-8000-000000000002'
@@ -224,7 +224,7 @@ describe('ingestion: publish to the topic for each event type', () => {
 
     const before = bus.published.length
     const res = await send([
-      { eventName: 'home_view', timestamp: ago(8 * 24 * HOUR) },
+      { eventName: 'home_view', timestamp: ago(6 * 24 * HOUR) },
       { eventName: 'home_view', timestamp: new Date(Date.now() + HOUR).toISOString() },
       { eventName: 'home_view' },
     ])

@@ -1,1 +1,1 @@
-{{ include "shopsphere.all" . }}
+{{ include "ecommerce-analytics.all" . }}

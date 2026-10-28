@@ -10,7 +10,7 @@ import {
   type AccessTokenClaims,
   type Logger,
   type PublishEvents,
-} from '@shopsphere/platform'
+} from '@ecommerce-analytics/platform'
 import { withTenant, type Db } from '../db/client.ts'
 import { findAccount } from '../repositories/account.repository.ts'
 import { endSession, findSessionState, insertSession, listSessions } from '../repositories/session.repository.ts'

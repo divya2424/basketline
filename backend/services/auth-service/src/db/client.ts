@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { sql } from 'drizzle-orm'
-import { createDb, runMigrations, type Database, type Logger, type Transaction } from '@shopsphere/platform'
+import { createDb, runMigrations, type Database, type Logger, type Transaction } from '@ecommerce-analytics/platform'
 import * as schema from './schema.ts'
 
 export const createAuthDb = (url: string, logger?: Logger) => createDb(url, schema, logger)

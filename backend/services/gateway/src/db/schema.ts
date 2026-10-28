@@ -1,12 +1,12 @@
 /**
  * gateway_db tables: the gateway's own view of session and account state,
  * maintained from auth.session.v1 / auth.user.v1 events (never by calling the
- * auth service). After a change run `npm run db:generate -w @shopsphere/gateway`.
+ * auth service). After a change run `npm run db:generate -w @ecommerce-analytics/gateway`.
  */
 import { bigint, boolean, index, pgTable, uuid } from 'drizzle-orm/pg-core'
-import { timestamptz } from '@shopsphere/platform'
+import { timestamptz } from '@ecommerce-analytics/platform'
 
-export { processedEvents } from '@shopsphere/platform'
+export { processedEvents } from '@ecommerce-analytics/platform'
 
 export const revokedSessions = pgTable(
   'revoked_sessions',

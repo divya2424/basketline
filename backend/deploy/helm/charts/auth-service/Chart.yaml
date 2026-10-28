@@ -1,0 +1,10 @@
+apiVersion: v2
+name: auth-service
+description: ShopSphere auth-service. Users, logins and tokens; the only holder of the JWT private key.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: shopsphere-lib
+    version: 0.1.0
+    repository: file://../shopsphere-lib

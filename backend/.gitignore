@@ -1,0 +1,5 @@
+node_modules/
+keys/
+*.log
+# Built by `helm dependency build` from charts/shopsphere-lib.
+deploy/helm/charts/*/charts/

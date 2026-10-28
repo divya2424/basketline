@@ -1,0 +1,141 @@
+.onboarding__header h1 {
+  margin: 0 0 4px;
+}
+
+.onboarding__header p {
+  margin: 0 0 20px;
+}
+
+.onboarding-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  max-width: 640px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.onboarding-form .form-field select {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.onboarding-form__check,
+.onboarding-form__hint,
+.onboarding-form .form-error,
+.onboarding-form .btn {
+  grid-column: 1 / -1;
+}
+
+.onboarding-form__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding-form__hint {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.onboarding-form .btn {
+  justify-self: start;
+}
+
+.onboarding-created {
+  max-width: 640px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow-wrap: anywhere;
+}
+
+.onboarding-created h2 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.onboarding-created p {
+  margin: 4px 0;
+}
+
+.onboarding__section {
+  margin-top: 32px;
+}
+
+.tenant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tenant-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.tenant-row__info {
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.tenant-row__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.tenant-row__meta {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.tenant-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tier-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+.tier-badge--pro,
+.tier-badge--enterprise {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+
+@media (max-width: 560px) {
+  .onboarding-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

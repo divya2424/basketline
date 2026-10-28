@@ -1,0 +1,77 @@
+/**
+ * identity_db tables — the source of truth for the schema. After a change run
+ * `npm run db:generate -w @shopsphere/auth-service`; migrations apply on startup.
+ */
+import { sql } from 'drizzle-orm'
+import { bigint, boolean, index, pgEnum, pgPolicy, pgTable, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { ROLES } from '@shopsphere/contracts'
+import { timestamptz } from '@shopsphere/platform'
+
+export { auditLog } from '@shopsphere/platform'
+
+export const userRole = pgEnum('user_role', ROLES)
+export const clientType = pgEnum('client_type', ['web', 'mobile'])
+export const accountTier = pgEnum('account_tier', ['free', 'pro', 'enterprise'])
+
+/** One row per tenant (storefront). Created with `cli.ts create-account`. */
+export const accounts = pgTable('accounts', {
+  tenantId: uuid('tenant_id').primaryKey(),
+  name: varchar('name', { length: 200 }).notNull(),
+  tier: accountTier('tier').notNull().default('free'),
+  createdAt: timestamptz('created_at').notNull().defaultNow(),
+  updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+})
+
+/**
+ * Row-level security on users and user_login: a row is visible (and writable)
+ * only when its tenant is the transaction's app.tenant_id, set by withTenant()
+ * in db/client.ts. Without it, no rows. nullif: a pooled connection reads ''
+ * once an earlier transaction has set and reset it.
+ */
+const tenantIsolation = () => {
+  const tenantMatches = sql`tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid`
+  return pgPolicy('tenant_isolation', { for: 'all', using: tenantMatches, withCheck: tenantMatches })
+}
+
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey(),
+    username: varchar('username', { length: 100 }).notNull(),
+    passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+    role: userRole('role').notNull().default('standard-user'),
+    // The storefront the user signed up at; carried in their tokens as "tid".
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => accounts.tenantId),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    lastLoginAt: timestamptz('last_login_at'),
+    // Bumped by role changes and disabling; orders the user's events.
+    version: bigint('version', { mode: 'number' }).notNull().default(1),
+  },
+  // Usernames are unique within a tenant, regardless of case.
+  (table) => [uniqueIndex('users_username_unique').on(table.tenantId, sql`lower(${table.username})`), tenantIsolation()],
+).enableRLS()
+
+/** One row per login (PRD: user_login). */
+export const userLogin = pgTable(
+  'user_login',
+  {
+    id: uuid('id').primaryKey(),
+    // The user's tenant.
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => accounts.tenantId),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    clientType: clientType('client_type').notNull(),
+    sessionStartTime: timestamptz('session_start_time').notNull(),
+    sessionEndTime: timestamptz('session_end_time'),
+    expiresAt: timestamptz('expires_at').notNull(),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [index('user_login_user_idx').on(table.tenantId, table.userId, table.sessionStartTime.desc()), tenantIsolation()],
+).enableRLS()

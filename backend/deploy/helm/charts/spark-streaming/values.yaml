@@ -1,0 +1,51 @@
+image:
+  repository: shopsphere/spark-streaming
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# One streaming query per checkpoint, so exactly one pod (the chart refuses other values).
+replicaCount: 1
+
+config:
+  KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+  KAFKA_GROUP_ID: events-to-clickhouse
+  # Only for a new checkpoint. To resume a reset checkpoint at known offsets, see streaming/README.md.
+  KAFKA_STARTING_OFFSETS: earliest
+  SPARK_TRIGGER_INTERVAL: 30 seconds
+  CHECKPOINT_LOCATION: /checkpoints/events-to-clickhouse
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PORT: "8123"
+  CLICKHOUSE_USERNAME: shopsphere
+  CLICKHOUSE_DATABASE: analytics
+  CLICKHOUSE_TABLE: events
+
+# The chart stores these in a Secret. Or set existingSecret to a Secret you manage with the same keys.
+secrets:
+  CLICKHOUSE_PASSWORD: ""
+existingSecret: ""
+
+# The checkpoint (Kafka offsets and dedup state). Losing it replays Kafka from
+# KAFKA_STARTING_OFFSETS. The volume outlives `helm uninstall`; delete the PVC to reset it.
+persistence:
+  mountPath: /checkpoints
+  size: 5Gi
+  storageClass: ""
+
+# The image runs Spark with --master local[2]: two cores.
+resources:
+  requests:
+    cpu: "2"
+    memory: 2Gi
+  limits:
+    memory: 3Gi
+
+runAsUser: 185
+readOnlyRootFilesystem: true
+terminationGracePeriodSeconds: 60
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

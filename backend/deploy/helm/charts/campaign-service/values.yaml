@@ -1,0 +1,48 @@
+image:
+  repository: shopsphere/campaign-service
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicaCount: 2
+port: 4003
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  KAFKA_BROKERS: kafka:19092
+  # Replicas of the topics this service creates; use 3 on a 3-broker cluster.
+  KAFKA_REPLICATION: "1"
+
+# The chart stores these in a Secret. Or set existingSecret to a Secret you manage with the same keys.
+secrets:
+  DATABASE_URL: ""
+existingSecret: ""
+
+jwt:
+  secretName: shopsphere-jwt
+  privateKey: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+runAsUser: 1000
+readOnlyRootFilesystem: true
+# More than SHUTDOWN_DRAIN_MS (5 s) + SHUTDOWN_TIMEOUT_MS (25 s).
+terminationGracePeriodSeconds: 35
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

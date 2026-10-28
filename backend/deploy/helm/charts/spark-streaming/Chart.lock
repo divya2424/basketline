@@ -1,0 +1,6 @@
+dependencies:
+- name: shopsphere-lib
+  repository: file://../shopsphere-lib
+  version: 0.1.0
+digest: sha256:48b2e2ba44e2e0a13c6ee64291247ea9f7482439ed2e599ff4693669eccecf89
+generated: "2026-10-28T17:51:53.624674621Z"

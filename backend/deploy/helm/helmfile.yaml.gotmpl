@@ -1,0 +1,26 @@
+# Every service is its own Helm release: each one installs, upgrades and rolls
+# back on its own, and none waits for another (they retry until their
+# dependencies answer, and stay unready until then).
+#
+#   all services:  helmfile -e local apply
+#   one service:   helmfile -e local -l name=gateway apply
+#
+# An environment is a folder of per-release values under environments/.
+environments:
+  local: {}
+---
+helmDefaults:
+  # Wait for the rollout, and roll back a release whose pods never become ready.
+  wait: true
+  atomic: true
+  timeout: 600
+  createNamespace: true
+
+releases:
+{{- range list "gateway" "auth-service" "product-service" "campaign-service" "analytics-service" "spark-streaming" }}
+  - name: {{ . }}
+    namespace: shopsphere
+    chart: ./charts/{{ . }}
+    values:
+      - environments/{{ $.Environment.Name }}/{{ . }}.yaml
+{{- end }}

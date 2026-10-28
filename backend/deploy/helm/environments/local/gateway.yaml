@@ -1,0 +1,8 @@
+# Images from `docker compose build` (backend/), loaded into the local cluster.
+image:
+  repository: shopsphere-gateway
+  tag: latest
+replicaCount: 1
+# The docker-compose development credentials.
+secrets:
+  DATABASE_URL: postgres://gateway_svc:gateway_svc_dev@postgres:5432/gateway_db

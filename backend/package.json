@@ -1,0 +1,45 @@
+{
+  "name": "shopsphere-backend",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --exclude test/e2e.kafka.test.ts",
+    "test:e2e": "vitest run test/e2e.kafka.test.ts",
+    "check:architecture": "node scripts/check-architecture.ts",
+    "keys": "node scripts/generate-keys.ts",
+    "verify": "npm run typecheck && npm run check:architecture && npm test",
+    "db:generate": "npm run db:generate --workspaces --if-present",
+    "seed": "node scripts/seed.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
+    "@platformatic/kafka": "^2.14.0",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "http-proxy-middleware": "^4.2.1",
+    "jose": "^6.2.13",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
+    "drizzle-kit": "^0.31.11",
+    "supertest": "^7.3.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

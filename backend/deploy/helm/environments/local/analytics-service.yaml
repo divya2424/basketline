@@ -1,0 +1,8 @@
+# Images from `docker compose build` (backend/), loaded into the local cluster.
+image:
+  repository: shopsphere-analytics-service
+  tag: latest
+replicaCount: 1
+# The docker-compose development credentials.
+secrets:
+  CLICKHOUSE_URL: http://shopsphere:shopsphere_dev@clickhouse:8123/analytics

@@ -1,0 +1,13 @@
+# Images from `docker compose build` (backend/), loaded into the local cluster.
+image:
+  repository: shopsphere-spark-streaming
+  tag: latest
+# The docker-compose development credentials.
+secrets:
+  CLICKHOUSE_PASSWORD: shopsphere_dev
+persistence:
+  size: 1Gi
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi

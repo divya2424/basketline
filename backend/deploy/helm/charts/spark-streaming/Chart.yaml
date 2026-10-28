@@ -1,0 +1,10 @@
+apiVersion: v2
+name: spark-streaming
+description: ShopSphere Spark Structured Streaming job. Writes analytics events from Kafka to ClickHouse.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: shopsphere-lib
+    version: 0.1.0
+    repository: file://../shopsphere-lib

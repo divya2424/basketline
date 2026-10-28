@@ -1,0 +1,165 @@
+name: shopsphere
+
+x-service-env: &service-env
+  NODE_ENV: production
+  KAFKA_BROKERS: kafka:19092
+  JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.9.1
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:19092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly by services (see platform/kafka.ts).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.44
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: shopsphere
+      CLICKHOUSE_PASSWORD: shopsphere_dev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports: ["8123:8123"]
+    ulimits: { nofile: { soft: 262144, hard: 262144 } }
+    volumes:
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - chdata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user shopsphere --password shopsphere_dev --query 'SELECT 1 FROM analytics.events LIMIT 1' >/dev/null"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  auth-service:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: auth-service } }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    environment:
+      <<: *service-env
+      PORT: 4001
+      DATABASE_URL: postgres://identity_svc:identity_svc_dev@postgres:5432/identity_db
+      JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  product-service:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: product-service } }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    environment:
+      <<: *service-env
+      PORT: 4002
+      DATABASE_URL: postgres://product_svc:product_svc_dev@postgres:5432/product_db
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  campaign-service:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: campaign-service } }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    environment:
+      <<: *service-env
+      PORT: 4003
+      DATABASE_URL: postgres://campaign_svc:campaign_svc_dev@postgres:5432/campaign_db
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  analytics-service:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: analytics-service } }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    environment:
+      <<: *service-env
+      PORT: 4004
+      # No Postgres: events go to Kafka, metrics are read from ClickHouse.
+      CLICKHOUSE_URL: http://shopsphere:shopsphere_dev@clickhouse:8123/analytics
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { clickhouse: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  # Reads every analytics.<eventName>.v1 topic and writes the events to ClickHouse.
+  spark-streaming:
+    build: { context: ./streaming, target: runtime }
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_GROUP_ID: events-to-clickhouse
+      # Only for a new checkpoint. Override to resume a reset checkpoint at known offsets (streaming/README.md).
+      KAFKA_STARTING_OFFSETS: ${KAFKA_STARTING_OFFSETS:-earliest}
+      SPARK_TRIGGER_INTERVAL: 30 seconds
+      CHECKPOINT_LOCATION: /checkpoints/events-to-clickhouse
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USERNAME: shopsphere
+      CLICKHOUSE_PASSWORD: shopsphere_dev
+      CLICKHOUSE_DATABASE: analytics
+      CLICKHOUSE_TABLE: events
+    volumes: ["spark-checkpoints:/checkpoints"]
+    restart: unless-stopped
+    depends_on:
+      kafka: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      # It creates the analytics topics.
+      analytics-service: { condition: service_healthy }
+
+  gateway:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: gateway } }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    environment:
+      <<: *service-env
+      PORT: 8080
+      DATABASE_URL: postgres://gateway_svc:gateway_svc_dev@postgres:5432/gateway_db
+      AUTH_SERVICE_URL: http://auth-service:4001
+      PRODUCT_SERVICE_URL: http://product-service:4002
+      CAMPAIGN_SERVICE_URL: http://campaign-service:4003
+      ANALYTICS_SERVICE_URL: http://analytics-service:4004
+      CORS_ORIGINS: http://localhost:5173
+      # Per client IP. Raised only for load tests (loadtest/README.md).
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
+      EVENTS_RATE_LIMIT_PER_MINUTE: ${EVENTS_RATE_LIMIT_PER_MINUTE:-120}
+      VISITOR_RATE_LIMIT_PER_MINUTE: ${VISITOR_RATE_LIMIT_PER_MINUTE:-10}
+    ports: ["8080:8080"]
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on:
+      auth-service: { condition: service_healthy }
+      product-service: { condition: service_healthy }
+      campaign-service: { condition: service_healthy }
+      analytics-service: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  chdata:
+  spark-checkpoints:

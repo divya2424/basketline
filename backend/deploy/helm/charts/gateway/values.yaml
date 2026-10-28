@@ -1,0 +1,68 @@
+image:
+  repository: shopsphere/gateway
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicaCount: 2
+port: 8080
+
+service:
+  type: ClusterIP
+
+# Put exactly one proxy (this Ingress controller) in front of the gateway: it trusts
+# one X-Forwarded-For hop to find the client IP for rate limiting.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  KAFKA_BROKERS: kafka:19092
+  # The other services' Services, by release name.
+  AUTH_SERVICE_URL: http://auth-service:4001
+  PRODUCT_SERVICE_URL: http://product-service:4002
+  CAMPAIGN_SERVICE_URL: http://campaign-service:4003
+  ANALYTICS_SERVICE_URL: http://analytics-service:4004
+  CORS_ORIGINS: http://localhost:5173
+  # Per client IP, counted by each pod separately: N replicas allow up to N times these.
+  RATE_LIMIT_PER_MINUTE: "300"
+  EVENTS_RATE_LIMIT_PER_MINUTE: "120"
+  VISITOR_RATE_LIMIT_PER_MINUTE: "10"
+
+# The chart stores these in a Secret. Or set existingSecret to a Secret you manage with the same keys.
+secrets:
+  DATABASE_URL: ""
+existingSecret: ""
+
+jwt:
+  secretName: shopsphere-jwt
+  privateKey: false
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 192Mi
+  limits:
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+runAsUser: 1000
+readOnlyRootFilesystem: true
+# More than SHUTDOWN_DRAIN_MS (5 s) + SHUTDOWN_TIMEOUT_MS (25 s).
+terminationGracePeriodSeconds: 35
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

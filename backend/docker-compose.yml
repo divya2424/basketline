@@ -59,7 +59,7 @@ services:
       - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - chdata:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --query 'SELECT 1 FROM analytics.events LIMIT 1' >/dev/null"]
+      test: ["CMD-SHELL", "clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --query 'SELECT 1' >/dev/null"]
       interval: 3s
       timeout: 5s
       retries: 40

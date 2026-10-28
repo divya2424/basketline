@@ -147,3 +147,25 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Python (backend/streaming has its own list too)
+__pycache__/
+*.py[cod]
+.venv/
+
+# Private keys (the JWT keys live in backend/keys/, ignored there)
+*.pem
+
+# Claude Code: personal settings (a shared .claude/settings.json stays tracked)
+.claude/settings.local.json
+
+# Agent skills (installed locally, not part of the project)
+.agents/
+skills-lock.json

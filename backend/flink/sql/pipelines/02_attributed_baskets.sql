@@ -14,13 +14,15 @@
 --
 -- A regular join, not an event-time window: each side waits in state for the
 -- other, so a basket that arrives before its click, or a click that arrives late,
--- still matches. Each side is kept 13 days after it arrives: analytics-service
+-- still matches. A click is kept 13 days after it arrives: analytics-service
 -- accepts events up to 5 days old, plus the 7-day window, plus a day because the
--- TTL runs on the wall clock, so time the job is down or behind uses it up. The
+-- TTL runs on the wall clock, so time the job is down or behind uses it up. A
+-- basket addition is kept 6 days: it only waits for a click from before it that
+-- arrives late, at most 5 days after it happened, plus the same day. The
 -- analytics topics keep 14 days, so a replay rebuilds all of it. The basket
 -- addition's client type is the one it is counted under.
 INSERT INTO serving_attributed_baskets
-SELECT /*+ STATE_TTL('b' = '13d', 'c' = '13d') */
+SELECT /*+ STATE_TTL('b' = '6d', 'c' = '13d') */
   b.event_id, c.event_id, b.tenant_id, c.campaign_id, b.product_id, b.user_id, b.user_type, b.client_type, b.event_time, c.event_time
 FROM baskets AS b
 JOIN clicks AS c

@@ -9,6 +9,12 @@ SET 'execution.checkpointing.externalized-checkpoint-retention' = 'RETAIN_ON_CAN
 SET 'state.backend.type' = 'rocksdb';
 SET 'execution.checkpointing.incremental' = 'true';
 SET 'execution.checkpointing.dir' = 'file://__CHECKPOINT_DIR__';
+-- Each checkpoint is also kept on the task manager's own disk, and a task that
+-- fails is restored from there, not from checkpoint storage: with terabytes of
+-- join state on S3, that is minutes instead of tens of minutes. A lost task
+-- manager still restores from checkpoint storage.
+SET 'execution.checkpointing.local-backup.enabled' = 'true';
+SET 'execution.state-recovery.from-local' = 'true';
 -- A topic partition without new events stops holding back the watermark after a
 -- minute, so quiet topics don't stall the session windows.
 SET 'table.exec.source.idle-timeout' = '1 min';

@@ -28,7 +28,7 @@ The backend of [Basketline](../README.md): five Node.js + TypeScript services be
   1. analytics-service validates each event and publishes it to its topic.
   2. Flink credits basket additions to ad clicks and builds sessions.
   3. ClickHouse loads the results and counts the `/ad` metrics.
-  4. Airflow archives raw events to Iceberg on S3 and backfills history.
+  4. The Flink job appends raw events to the Iceberg archive on S3; Airflow archives sessions, compacts the archive and backfills history.
 - **No build step.** Plain Express everywhere, on Node 24, which runs the `.ts` files directly.
 
 ## Services and URLs
@@ -220,7 +220,7 @@ A user's events with no gap of 6 hours or more form a session, built by Flink in
 
 | Table | Holds | Read by |
 |---|---|---|
-| `analytics.events`, `attributed_baskets`, `sessions` | Raw rows, partitioned by day, **kept 20 days** (longer than a Kafka replay reaches: 14 days of arrivals + 5 days late) | The nightly check, the archive export |
+| `analytics.events`, `attributed_baskets`, `sessions` | Raw rows, partitioned by day, **kept 20 days** (longer than a Kafka replay reaches: 14 days of arrivals + 5 days late): the newest 7 on local disk, older ones on S3 (`config/storage.xml`) | The nightly check, the sessions export |
 | `analytics.daily_campaign_aggregation` | Event counts per day, tenant and campaign, total and per client type (`SummingMergeTree`) | `/ad/:id/impressions`, `clicks`, `clickToBasket` |
 | `analytics.daily_campaign_customers_aggregation` | `uniqCombined64` sketches of the customers per day: everyone (`has_visited*`) and per metric (`customers_*`) | `/ad/:id/uniqueCustomers`, and `customers` on the others |
 | `analytics.daily_campaign_sessions_aggregation` | Sessions, converted sessions and average duration per day | `/ad/:id/sessions` |
@@ -240,7 +240,11 @@ A user's events with no gap of 6 hours or more form a session, built by Flink in
 
   Run it now with `SYSTEM REFRESH VIEW analytics.daily_campaign_aggregation_check_mv`, then `SYSTEM WAIT VIEW …`.
 - **Older days** (beyond the 20 raw ones): the `history_backfill` Airflow DAG recomputes closed months from the Iceberg archive with Spark, for one tenant or all, and swaps them in atomically. See [airflow/README.md § Backfilling history](airflow/README.md#backfilling-history).
-- **Archive:** each raw day is copied to Iceberg on S3 seven days after it and kept forever ([airflow/README.md](airflow/README.md)).
+- **Archive:** Iceberg on S3, kept forever. The Flink job appends raw events and credited basket additions as they arrive; sessions are copied nightly ([airflow/README.md](airflow/README.md)).
+- **As a cluster** (production), when one node can't hold the raw days:
+  - **Shards by tenant:** each table becomes `<table>_local` on every shard, with a `Distributed` table under the old name over them, sharded by `cityHash64(tenant_id)`, so the services' queries don't change. Every query filters on `tenant_id`, so it reads one shard. A tenant too big for one shard gets a sub-key, such as `(tenant_id, cityHash64(user_id))`.
+  - **Replicas:** two per shard, in a `Replicated` database (ClickHouse Keeper), so the schema files apply once to every node and the nightly check refreshes on one replica per shard (`02_materialized_views.sql`).
+  - **Kafka:** each shard's queue tables share their consumer groups, so the serving topics' partitions are split between shards (give those topics at least as many partitions as there are shards). Their views insert into the `Distributed` tables, not the local ones, so each row lands on its tenant's shard whichever shard read it.
 - **Freshness:** dashboards show data under a minute old. In the worst case:
   - the storefront batches events every 2 s;
   - Flink writes within about a second;
@@ -402,7 +406,7 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 | gateway | records the tenant in `deleted_tenants`: its access, visitor and shopper tokens get 401 `TENANT_DELETED` | on the event |
 | product-service, campaign-service | products, campaigns and their links | on the event |
 | analytics-service (ClickHouse) | raw events, attributed baskets, sessions, the daily tables, the campaign projection; adds the tenant to `analytics.deleted_tenants`, which the Kafka queue views filter on, so events still in flight are dropped | on the event |
-| Airflow `tenant_purge` (daily 02:00 UTC) | the tenant's rows in the Iceberg archive and the backfill tables | next run, then marked done in `deleted_tenants` |
+| Airflow `tenant_purge` (daily 02:00 UTC) | the tenant's rows in the Iceberg archive and the backfill tables | next run, and again each day for 15 days, since a Kafka replay can archive its events again (marked done in `deleted_tenants`) |
 
 The Kafka topics keep the tenant's past messages until they expire (14 days at most); nothing reads them back into a deleted tenant.
 

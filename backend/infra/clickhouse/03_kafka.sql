@@ -88,8 +88,8 @@ SETTINGS kafka_broker_list = 'kafka:19092',
          kafka_format = 'JSONEachRow',
          kafka_flush_interval_ms = 15000;
 
--- session_id: the same (tenant, user, start) always gives the same ID.
+-- session_id: the same (tenant, user, start) always gives the same ID (00_functions.sql).
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.sessions_queue_mv TO analytics.sessions
-AS SELECT reinterpretAsUUID(MD5(concat(toString(tenant_id), toString(user_id), toString(session_start)))) AS session_id, *
+AS SELECT sessionId(tenant_id, user_id, session_start) AS session_id, *
 FROM analytics.sessions_queue
 WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);

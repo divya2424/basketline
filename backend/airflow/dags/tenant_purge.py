@@ -1,8 +1,9 @@
 """Daily: deletes deleted tenants' rows from the Iceberg archive (jobs/purge_tenants.py).
 
 Deleting a tenant on the platform removes its data from every service and from
-ClickHouse at once; its archived files are rewritten here, after the night's
-archive export. Trigger it by hand to purge sooner.
+ClickHouse at once; its archived files are rewritten here, and again on every
+run while a replay of Kafka could archive its events again (purge_tenants.py).
+Trigger it by hand to purge sooner.
 """
 
 from datetime import timedelta

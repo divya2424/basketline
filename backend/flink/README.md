@@ -34,14 +34,18 @@ The job is split by role into files under `sql/`. [`run.sh`](run.sh) assembles t
 sql/
   settings.sql                              checkpointing, state backend, time zone
   connectors/                               one file per external table (CREATE TABLE … WITH connector)
-    analytics_events.source.sql             Kafka analytics.<eventName>.v1 (read)
+    analytics_events.source.sql             Kafka analytics.<eventName>.v1 and analytics.heartbeat.v1 (read)
+    archive.catalog.sql                     the Iceberg archive (write)
     serving_events.sink.sql                 Kafka serving.events.v1 (write)
-    serving_attributed_baskets.sink.sql     Kafka serving.attributed_baskets.v1 (write)
+    serving_attributed_baskets.sink.sql     Kafka serving.attributed_baskets.v1 (write; read back for the archive)
+    serving_sessions.sink.sql               Kafka serving.sessions.v1 (write)
   views/                                    transformations; numbered, since each builds on the ones before
-    01_parsed.sql  02_events.sql  03_clicks_and_baskets.sql
-  pipelines/                                one INSERT per file; run.sh wraps them all in one statement set
-    01_serving_events.sql  02_attributed_baskets.sql
+    01_parsed.sql  02_events.sql  03_clicks_and_baskets.sql  04_sessions.sql
+  pipelines/                                the INSERTs; run.sh wraps them all in one statement set
+    01_serving_events.sql  02_attributed_baskets.sql  03_sessions.sql  04_archive.sql
 ```
+
+**The archive.** `04_archive.sql` appends raw events (from the `events` view) and credited basket additions (read back from their serving topic) to the Iceberg archive, committed at each checkpoint, so archiving scales with the job. The tables are the ones `airflow/jobs/export_archive.py` creates (partitioned by day and tenant bucket); sessions are still copied nightly from ClickHouse, where they get their `session_id`. The catalog comes from the environment: `ARCHIVE_JDBC_URI` and S3 keys locally (`docker-compose.yml`), Glue and the IAM role on AWS (`run.sh`).
 
 **Why one job and not one per pipeline.** In one statement set, Flink reads the Kafka topics once and feeds every pipeline from that read. One checkpoint also covers the offsets, the join state and every sink together, so they recover as a unit. Separate jobs would read Kafka twice and checkpoint separately. Split a pipeline into its own job only when it needs its own failure domain or scaling.
 
@@ -76,7 +80,12 @@ Flink writes each match (one row per basket addition and candidate click). **The
 
 **Why 7 days.** Retail media networks credit purchases days after a click (Amazon Ads and Walmart Connect use 14-day windows); 24 hours missed shoppers who come back later. The window is one constant in [`02_attributed_baskets.sql`](sql/pipelines/02_attributed_baskets.sql); a per-tenant window would keep candidates for the longest one and filter per tenant in ClickHouse.
 
-**State size.** Each side is kept for **13 days after it arrives** (`STATE_TTL`): analytics-service accepts events up to 5 days old (`MAX_EVENT_AGE_MS`), the window adds 7, and one day of slack covers the job being down or behind, since the TTL counts wall-clock time, not event time. So a pair that can match is always both in state. At most 13 days of clicks and basket additions are held, in RocksDB on the checkpoint volume (incremental checkpoints copy only what changed). The analytics topics keep 14 days, so a replay can rebuild all of it.
+**State size.** Kept only as long as a match is still possible (`STATE_TTL`), since this join is most of the job's state:
+- **Clicks: 13 days after they arrive.** analytics-service accepts events up to 5 days old (`MAX_EVENT_AGE_MS`), the window adds 7, and one day of slack covers the job being down or behind, since the TTL counts wall-clock time, not event time.
+- **Basket additions: 6 days.** A basket addition only waits for a click from before it that arrives late, and a click arrives at most 5 days after it happened; plus the same day of slack.
+- Only clicks that can be credited are held (on a campaign, with a product, by a known user: `views/03_clicks_and_baskets.sql`).
+
+So a pair that can match is always both in state. The state is in RocksDB, checkpointed incrementally (only what changed is copied). Each checkpoint is also kept on the task manager's disk, so a failed task restores locally (`settings.sql`). The analytics topics keep 14 days, so a replay can rebuild all of it.
 
 ## Sessions
 

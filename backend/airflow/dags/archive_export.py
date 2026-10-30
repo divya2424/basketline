@@ -1,5 +1,11 @@
-"""Nightly: copies the raw events of the day seven days ago from ClickHouse to the
-Iceberg archive (jobs/export_archive.py), one task per table.
+"""Nightly: copies the sessions of the day seven days ago from ClickHouse to the
+Iceberg archive (jobs/export_archive.py).
+
+Only sessions: the Flink job appends raw events and credited basket additions to
+the archive as they arrive (flink/sql/pipelines/04_archive.sql). Sessions get
+their session_id in ClickHouse (03_kafka.sql), and are one row per session, so a
+nightly copy stays small. export_archive.py still copies any table's day, to
+repair the archive from ClickHouse by hand.
 
 Seven days, because analytics-service accepts events up to 5 days late: the day
 is complete from midnight five days after it, and the extra day lets events
@@ -38,7 +44,7 @@ def archive_export():
         # ds is the run's date (UTC); the day exported is seven days before it.
         return f"{JOBS_PYTHON} {EXPORT} --table {table} --day {{{{ macros.ds_add(ds, -7) }}}}"
 
-    export.expand(table=["events", "attributed_baskets", "sessions"])
+    export.expand(table=["sessions"])
 
 
 archive_export()

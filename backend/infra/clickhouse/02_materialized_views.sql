@@ -66,6 +66,10 @@ GROUP BY day, tenant_id, campaign_id;
 -- recounted with their latest click; a basket that got a new candidate marks the
 -- days and campaigns of all its candidates as changed, so a campaign that lost
 -- the credit is corrected down (to 0 if it has nothing else that day).
+-- On a cluster, each shard checks its own tenants' days from its local tables,
+-- and the view must refresh on one replica per shard: in a Replicated database,
+-- ClickHouse coordinates that (a refresh on every replica would append each
+-- correction once per replica).
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_aggregation_check_mv
 REFRESH EVERY 1 DAY OFFSET 30 MINUTE APPEND
 TO analytics.daily_campaign_aggregation
@@ -94,14 +98,17 @@ exact AS
     FROM
     (
         SELECT toDate(event_time) AS day, tenant_id, assumeNotNull(campaign_id) AS campaign_id,
-               toInt64(uniqExactIf(event_id, event_name = 'impression')) AS i,
-               toInt64(uniqExactIf(event_id, event_name = 'impression' AND client_type = 'web')) AS iw,
-               toInt64(uniqExactIf(event_id, event_name = 'impression' AND client_type = 'mobile')) AS im,
-               toInt64(uniqExactIf(event_id, event_name = 'click')) AS c,
-               toInt64(uniqExactIf(event_id, event_name = 'click' AND client_type = 'web')) AS cw,
-               toInt64(uniqExactIf(event_id, event_name = 'click' AND client_type = 'mobile')) AS cm,
+               toInt64(countIf(event_name = 'impression')) AS i,
+               toInt64(countIf(event_name = 'impression' AND client_type = 'web')) AS iw,
+               toInt64(countIf(event_name = 'impression' AND client_type = 'mobile')) AS im,
+               toInt64(countIf(event_name = 'click')) AS c,
+               toInt64(countIf(event_name = 'click' AND client_type = 'web')) AS cw,
+               toInt64(countIf(event_name = 'click' AND client_type = 'mobile')) AS cm,
                toInt64(0) AS b, toInt64(0) AS bw, toInt64(0) AS bm
-        FROM analytics.events
+        -- FINAL: copies of an event share every sort key column, so they merge into
+        -- one row as the day is read, in sort order, with no set of event IDs in
+        -- memory (uniqExact would hold one per event: gigabytes for a busy day).
+        FROM analytics.events FINAL
         WHERE event_name IN ('impression', 'click') AND campaign_id IS NOT NULL
           AND event_time >= (SELECT min(day) FROM changed)
           AND (toDate(event_time), tenant_id, assumeNotNull(campaign_id)) IN (SELECT day, tenant_id, campaign_id FROM changed)

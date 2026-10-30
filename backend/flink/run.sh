@@ -11,6 +11,18 @@ set -euo pipefail
 # Used only when there is no checkpoint yet (earliest-offset, latest-offset, group-offsets).
 : "${KAFKA_STARTUP_MODE:=earliest-offset}"
 : "${CHECKPOINT_DIR:=/checkpoints}"
+# The Iceberg archive (sql/connectors/archive.catalog.sql): Glue and the IAM role,
+# or, with ARCHIVE_JDBC_URI set, a JDBC catalog and S3 keys (locally).
+: "${ARCHIVE_WAREHOUSE:=s3://ad-insights-archive}"
+: "${ARCHIVE_NAMESPACE:=archive}"
+if [ -n "${ARCHIVE_JDBC_URI:-}" ]; then
+  archive_options="'catalog-impl' = 'org.apache.iceberg.jdbc.JdbcCatalog', 'uri' = '$ARCHIVE_JDBC_URI', 'jdbc.user' = '$ARCHIVE_JDBC_USER', 'jdbc.password' = '$ARCHIVE_JDBC_PASSWORD', 's3.endpoint' = '$ARCHIVE_S3_ENDPOINT', 's3.path-style-access' = 'true', 's3.access-key-id' = '$ARCHIVE_S3_ACCESS_KEY_ID', 's3.secret-access-key' = '$ARCHIVE_S3_SECRET_ACCESS_KEY', 'client.region' = '${ARCHIVE_S3_REGION:-us-east-1}'"
+else
+  archive_options="'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog'"
+fi
+# & and | are special in the sed replacements below.
+archive_options=${archive_options//&/\\&}
+archive_options=${archive_options//|/\\|}
 export FLINK_LOG_DIR=${FLINK_LOG_DIR:-/tmp/flink-log}
 REST=http://localhost:8081
 mkdir -p "$FLINK_LOG_DIR"
@@ -43,7 +55,10 @@ sql=/opt/job/sql
     -e "s|__TOPIC_PREFIX__|$KAFKA_TOPIC_PREFIX|g" \
     -e "s|__KAFKA_GROUP_ID__|$KAFKA_GROUP_ID|g" \
     -e "s|__KAFKA_STARTUP_MODE__|$KAFKA_STARTUP_MODE|g" \
-    -e "s|__CHECKPOINT_DIR__|$CHECKPOINT_DIR|g" >> "$job"
+    -e "s|__CHECKPOINT_DIR__|$CHECKPOINT_DIR|g" \
+    -e "s|__ARCHIVE_WAREHOUSE__|$ARCHIVE_WAREHOUSE|g" \
+    -e "s|__ARCHIVE_NAMESPACE__|$ARCHIVE_NAMESPACE|g" \
+    -e "s|__ARCHIVE_CATALOG_OPTIONS__|$archive_options|g" >> "$job"
 /opt/flink/bin/sql-client.sh -f "$job"
 
 # Flink restarts failed tasks itself (from the last checkpoint); this loop only

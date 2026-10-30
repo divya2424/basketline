@@ -53,12 +53,18 @@ services:
       CLICKHOUSE_USER: basketline
       CLICKHOUSE_PASSWORD: basketline_dev
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      # The cold volume of the raw tables (infra/clickhouse/config/storage.xml).
+      CLICKHOUSE_COLD_S3_ENDPOINT: http://archive-storage:8333/ad-insights-archive/clickhouse-cold/
+      CLICKHOUSE_COLD_S3_ACCESS_KEY_ID: archive
+      CLICKHOUSE_COLD_S3_SECRET_ACCESS_KEY: archive_dev
+      CLICKHOUSE_COLD_S3_USE_ENV_CREDENTIALS: "false"
     ports: ["8123:8123"]
     ulimits: { nofile: { soft: 262144, hard: 262144 } }
     volumes:
       # Tables, then materialized views, then the Kafka tables for the Flink job's
       # serving topics: the files run in name order, on a new volume only.
       - ./infra/clickhouse:/docker-entrypoint-initdb.d:ro
+      - ./infra/clickhouse/config/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
       - chdata:/var/lib/clickhouse
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user basketline --password basketline_dev --query 'SELECT 1' >/dev/null"]
@@ -122,6 +128,13 @@ services:
       # Only when there is no checkpoint yet (flink/README.md).
       KAFKA_STARTUP_MODE: ${KAFKA_STARTUP_MODE:-earliest-offset}
       CHECKPOINT_DIR: /checkpoints
+      # The Iceberg archive: the same catalog as airflow's PYICEBERG_CATALOG__ARCHIVE__*.
+      ARCHIVE_JDBC_URI: jdbc:postgresql://postgres:5432/iceberg_catalog_db
+      ARCHIVE_JDBC_USER: iceberg_svc
+      ARCHIVE_JDBC_PASSWORD: iceberg_svc_dev
+      ARCHIVE_S3_ENDPOINT: http://archive-storage:8333
+      ARCHIVE_S3_ACCESS_KEY_ID: archive
+      ARCHIVE_S3_SECRET_ACCESS_KEY: archive_dev
     # The Flink web UI: job graph, checkpoints, backpressure.
     ports: ["8081:8081"]
     volumes: ["flink-checkpoints:/checkpoints"]
@@ -129,6 +142,8 @@ services:
     depends_on:
       kafka: { condition: service_healthy }
       clickhouse: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      archive-storage: { condition: service_healthy }
       # It creates the analytics and serving topics.
       analytics-service: { condition: service_healthy }
 

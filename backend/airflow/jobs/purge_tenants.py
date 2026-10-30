@@ -6,8 +6,13 @@ A tenant deleted on the platform (TenantDeleted) is recorded in ClickHouse's
 analytics.deleted_tenants by analytics-service, which deletes its ClickHouse
 rows at once. Its archived rows are deleted here: each table's delete is one
 Iceberg commit (rewriting only the files that hold the tenant's rows, which are
-in its tenant bucket), then the tenant is marked purged. Safe to run again: a
-purged tenant is skipped, and deleting rows that are gone changes nothing.
+in its tenant bucket), then the tenant is marked purged. Safe to run again:
+deleting rows that are gone changes nothing.
+
+The Flink job appends to the archive as events arrive, and a replay of Kafka
+(after a checkpoint reset) appends the tenant's events again while Kafka still
+keeps them. So a tenant is purged again on every run until its deletion is
+older than Kafka's retention; after that it is skipped.
 """
 
 import datetime as dt
@@ -20,12 +25,18 @@ from pyiceberg.expressions import EqualTo
 
 ARCHIVE_TABLES = ["events", "attributed_baskets", "sessions"]
 BACKFILL_TABLES = ["event_totals", "customer_days", "sessions"]
+# The analytics topics' retention (14 days, analytics-service) plus a day: until
+# then a replay can bring a deleted tenant's events back into the archive.
+REPLAYABLE_DAYS = 15
 
 
 def pending(clickhouse) -> list[tuple[str, str, dt.datetime]]:
-    """(tenant_id, name, deleted_at) of the deleted tenants not purged from the archive yet."""
+    """(tenant_id, name, deleted_at) of the deleted tenants not purged from the archive
+    yet, or deleted recently enough that a replay may have archived their events again."""
     return clickhouse.query(
-        "SELECT toString(tenant_id), name, deleted_at FROM deleted_tenants FINAL WHERE archive_purged_at IS NULL ORDER BY deleted_at"
+        "SELECT toString(tenant_id), name, deleted_at FROM deleted_tenants FINAL"
+        " WHERE archive_purged_at IS NULL OR deleted_at > now64(3, 'UTC') - toIntervalDay({days:UInt32}) ORDER BY deleted_at",
+        parameters={"days": REPLAYABLE_DAYS},
     ).result_rows
 
 

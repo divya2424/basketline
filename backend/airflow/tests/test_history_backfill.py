@@ -39,7 +39,7 @@ from export_archive import iceberg_table  # noqa: E402
 
 # The schema without its Kafka tables (03_kafka.sql), so the test database consumes no topics.
 SCHEMA_DIR = Path(os.environ.get("CLICKHOUSE_SCHEMA_DIR", "/opt/airflow/clickhouse"))
-SCHEMA_FILES = ["01_tables.sql", "02_materialized_views.sql"]
+SCHEMA_FILES = ["00_functions.sql", "01_tables.sql", "02_materialized_views.sql"]
 CASES = json.loads((Path(__file__).parent / "fixtures" / "attribution_cases.json").read_text())["cases"]
 # The attribution cases' reference time; every month here is long closed.
 REF = dt.datetime(2026, 8, 10, 12, tzinfo=dt.UTC)

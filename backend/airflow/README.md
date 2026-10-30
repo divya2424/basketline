@@ -1,11 +1,14 @@
 # Basketline: Airflow batch jobs (the Iceberg archive and history backfills)
 
-ClickHouse keeps raw events and credited basket additions for 20 days; the `/ad` daily totals keep every day. Airflow copies each raw day to an **Iceberg archive on S3**, which keeps them forever at object-storage prices and can be queried with Athena (or Spark, Trino, Snowflake, DuckDB) without touching ClickHouse.
+ClickHouse keeps raw events, credited basket additions and sessions for 20 days; the `/ad` daily totals keep every day. The **Iceberg archive on S3** keeps them forever at object-storage prices, and can be queried with Athena (or Spark, Trino, Snowflake, DuckDB) without touching ClickHouse.
 
 ```
-ClickHouse events, attributed_baskets ──(nightly, day D-7)──► jobs/export_archive.py ──► Iceberg archive.events, archive.attributed_baskets
-  (20 days)                                                     PyIceberg                  S3 + Glue catalog (forever)
+Flink job ──(as they arrive, a commit per checkpoint)──► Iceberg archive.events, archive.attributed_baskets
+ClickHouse sessions ──(nightly, day D-7)──► jobs/export_archive.py ──► Iceberg archive.sessions
+                                                                         S3 + Glue catalog (forever)
 ```
+
+The big tables are written by the Flink job (`flink/sql/pipelines/04_archive.sql`), so archiving scales with the job, not with one Python process. Sessions get their `session_id` in ClickHouse and are one row per session, so they are still copied nightly. The Flink job appends: a copy of an event (redelivered, or replayed after a checkpoint reset) is appended again, so readers keep one row per `event_id`, as the history backfill does.
 
 | | Locally (`docker-compose.yml`) | On AWS |
 |---|---|---|
@@ -20,28 +23,30 @@ ClickHouse events, attributed_baskets ──(nightly, day D-7)──► jobs/exp
 Dockerfile             apache/airflow + the jobs' own virtualenv (/opt/jobs), so their pins never meet Airflow's
 requirements.txt       the jobs' dependencies (PyIceberg, pyarrow, clickhouse-connect)
 dags/                  scheduling only: which job, which day, retries
-  archive_export.py      nightly 01:00 UTC: exports day D-6 of each table
-  archive_maintenance.py monthly, AWS only: Athena OPTIMIZE + VACUUM
+  archive_export.py      nightly 01:00 UTC: exports day D-7 of sessions
+  archive_maintenance.py daily, AWS only: Athena OPTIMIZE + VACUUM
   history_backfill.py    on demand: recompute closed months of the daily tables from the archive
   tenant_purge.py        daily 02:00 UTC: delete deleted tenants' rows from the archive (jobs/purge_tenants.py)
 jobs/                  the work, as plain scripts that also run without Airflow
-  export_archive.py
+  export_archive.py      copies one day of a table from ClickHouse; also creates the archive's tables
   backfill/              spark_backfill.py (Spark) and load_backfill.py (ClickHouse staging and swap)
 s3-lifecycle.json      storage classes for the archive bucket on AWS
 tests/                 the jobs against the running stack
 ```
 
-## The nightly export
+## The nightly export (sessions)
 
-**Which day.** Each run exports the day seven days before its date. analytics-service accepts events up to 5 days late, so the day is complete from midnight five days after it; the extra day lets the last of those events reach ClickHouse even when Flink or ClickHouse is behind. ClickHouse keeps 20 days, so a failed export can be retried for almost two weeks. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
+**Which day.** Each run exports the sessions of the day seven days before its date. analytics-service accepts events up to 5 days late, so the day is complete from midnight five days after it; the extra day lets the last of those events reach ClickHouse even when Flink or ClickHouse is behind. ClickHouse keeps 20 days, so a failed export can be retried for almost two weeks. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
 
 **Safe to re-run.** `export_archive.py --table T --day D` deletes day D from the Iceberg table and appends ClickHouse's rows for D **in one commit**. A retry or a backfill replaces the day instead of duplicating it, and a run that fails half-way commits nothing. It reads with `FINAL`, so copies ClickHouse hasn't merged away yet are archived once. It refuses a day ClickHouse no longer keeps, since that would replace the archived day with nothing.
 
 **Columns.** The tables follow ClickHouse's columns. A new one (`client_type`, `user_type`) is added at the end of an existing Iceberg table. A dropped one (`anonymous_id`, before every visitor had a `user_id`) stays, NULL from then on, since dropping it would break reading older files.
 
-**Table layout.** Both tables are partitioned by `day(event_time)` and `bucket(16, tenant_id)`: a query for a date range reads only those days, and a tenant's query reads one bucket of each. IDs are stored as strings (Athena has no UUID type), times as `timestamptz` in UTC, and the files are Parquet with zstd.
+**Table layout.** The tables are partitioned by `day(event_time)` and `bucket(16, tenant_id)`: a query for a date range reads only those days, and a tenant's query reads one bucket of each. IDs are stored as strings (Athena has no UUID type), times as `timestamptz` in UTC, and the files are Parquet with zstd.
 
-**Files.** Each append writes one file per partition, so the job appends in batches of 500,000 rows: a day of up to 500,000 rows gets one file per partition, and a bigger day one per partition per batch, which the monthly `OPTIMIZE` merges.
+**Files.** The Flink job commits once a minute, a file per partition it wrote to; the daily `OPTIMIZE` merges the last 7 days' small files. The export appends in batches of 500,000 rows, one file per partition per batch.
+
+**Repairing a day.** `export_archive.py` copies any table's day from ClickHouse while ClickHouse still keeps it (20 days), replacing what the archive holds for that day. Use it for events or credited basket additions if the Flink job's archive writes were off.
 
 ## Run it
 
@@ -50,14 +55,14 @@ docker compose up -d --build archive-storage airflow
 open http://localhost:8082                     # DAGs → archive_export; no login (local only)
 ```
 
-Export a day by hand, or re-export one (safe at any time):
+Export a day of sessions by hand, or re-export any table's day (safe at any time):
 
 ```bash
 docker compose exec airflow airflow backfill create --dag-id archive_export --from-date 2026-10-30 --to-date 2026-10-31 --reprocess-behavior completed
 docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/export_archive.py --table events --day 2026-10-24
 ```
 
-A backfill covers the runs scheduled between the two dates (the 01:00 run of 10-30 here), and each run exports the day seven days before it (10-23). Query the archive from Python:
+A backfill covers the runs scheduled between the two dates (the 01:00 run of 10-30 here), and each run exports the sessions of the day seven days before it (10-23). Query the archive from Python:
 
 ```bash
 docker compose exec airflow /opt/jobs/bin/python -c "
@@ -84,7 +89,7 @@ validate → spark_backfill (local or EMR Serverless) → prepare → check → 
 
 - **Nothing live changes before `swap`.** Without `apply`, the run is a dry run: read `prepare`'s log.
 - **Dashboards never see an empty or partial month.** Nothing is deleted from a live table. Each `REPLACE PARTITION` swaps a month's parts atomically, so a query sees the whole old month or the whole new one. The whole swap is metadata operations and takes seconds, whatever the backfill's size. For those seconds, one month can be corrected while the next isn't yet.
-- **Only closed months.** The daily tables are partitioned by month (rows stay one per day). A month can be backfilled once its last day is more than 7 days ago: events arrive at most 5 days late, and the archive holds a day from 7 days after it. No live view or nightly check writes to such a month, so a swap can't race them.
+- **Only closed months.** The daily tables are partitioned by month (rows stay one per day). A month can be backfilled once its last day is more than 7 days ago: events arrive at most 5 days late, and two days' margin covers the archive's last commits. No live view or nightly check writes to such a month, so a swap can't race them.
 - **Why Spark and ClickHouse.** Spark does the heavy part (the 7-day join and sessions over months of raw events) away from the cluster that serves dashboards. ClickHouse builds the sketches, because they must be byte-compatible with the live rows. Its part reads only Spark's reduced rows, under its own limits (`BACKFILL_MAX_THREADS`, `BACKFILL_MAX_MEMORY_BYTES`).
 - **The same rules as Flink.** A rule change must change [`02_attributed_baskets.sql`](../flink/sql/pipelines/02_attributed_baskets.sql) and `spark_backfill.py` together. [`tests/fixtures/attribution_cases.json`](tests/fixtures/attribution_cases.json) runs the same cases through both (`pnpm test:flink`, `pnpm test:backfill`).
 - **Context.** Basket additions in the first week need clicks from the week before `from`. The run refuses if the archive starts later, unless `allow_partial_context` is set. A session longer than 7 days that starts before the range is seen only from that point.

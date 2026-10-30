@@ -47,11 +47,15 @@ ORDER BY (tenant_id, event_name, campaign_id, event_time, event_id)
 -- hold events up to 19 days old: every day it writes to is still here, so the
 -- nightly check deduplicates it instead of recounting a day from a few replayed
 -- rows. The extra day is margin.
-TTL toDateTime(event_time) + INTERVAL 20 DAY
+-- After 7 days a day moves to S3 (the 'tiered' policy, config/storage.xml): the
+-- nightly check reads days that got late rows, at most 5 days old, so it reads
+-- local disk; older days are read only by rebuilds and the archive.
+TTL toDateTime(event_time) + INTERVAL 7 DAY TO VOLUME 'cold',
+    toDateTime(event_time) + INTERVAL 20 DAY
 -- campaign_id is Nullable (storefront activity may have no campaign).
 -- The deduplication window makes an identical re-sent insert a no-op.
 -- ttl_only_drop_parts: expired days are dropped as whole parts, never rewritten.
-SETTINGS allow_nullable_key = 1, non_replicated_deduplication_window = 10000, ttl_only_drop_parts = 1;
+SETTINGS allow_nullable_key = 1, non_replicated_deduplication_window = 10000, ttl_only_drop_parts = 1, storage_policy = 'tiered';
 
 -- Candidate clicks for each basket addition (add_to_cart): one row per (basket,
 -- click), written by the Flink job as events arrive
@@ -83,9 +87,10 @@ CREATE TABLE IF NOT EXISTS analytics.attributed_baskets
 ENGINE = ReplacingMergeTree
 PARTITION BY toDate(event_time)
 ORDER BY (tenant_id, campaign_id, event_time, basket_event_id, click_event_id)
--- Kept as long as events; the daily totals keep every day.
-TTL toDateTime(event_time) + INTERVAL 20 DAY
-SETTINGS ttl_only_drop_parts = 1;
+-- Kept and moved to S3 like events; the daily totals keep every day.
+TTL toDateTime(event_time) + INTERVAL 7 DAY TO VOLUME 'cold',
+    toDateTime(event_time) + INTERVAL 20 DAY
+SETTINGS ttl_only_drop_parts = 1, storage_policy = 'tiered';
 
 
 -- Each campaign's tenant and status, from campaign.v1 events (analytics-service).
@@ -241,9 +246,10 @@ CREATE TABLE IF NOT EXISTS analytics.sessions
 ENGINE = ReplacingMergeTree
 PARTITION BY toDate(session_start)
 ORDER BY (tenant_id, session_start, user_id)
--- Kept as long as the raw events; the daily session totals keep every day.
-TTL toDateTime(session_start) + INTERVAL 20 DAY
-SETTINGS ttl_only_drop_parts = 1;
+-- Kept and moved to S3 like the raw events; the daily session totals keep every day.
+TTL toDateTime(session_start) + INTERVAL 7 DAY TO VOLUME 'cold',
+    toDateTime(session_start) + INTERVAL 20 DAY
+SETTINGS ttl_only_drop_parts = 1, storage_policy = 'tiered';
 
 -- Sessions per UTC day (of the session's start), tenant and campaign seen in it:
 -- one row each. Sessions are counted with sketches of session_id, so a session

@@ -16,8 +16,8 @@ The daily tables are partitioned by month (infra/clickhouse/01_tables.sql), and
 ALTER TABLE T REPLACE PARTITION M FROM T_rebuild swaps a month's parts
 atomically: a query sees the whole old month or the whole new one, never a
 missing or partial month. Only closed months are touched (their last day is
-more than 7 days ago: events arrive at most 5 days late, and the archive holds a
-day from 7 days after it), so no live view or nightly check writes to them.
+more than 7 days ago: events arrive at most 5 days late, plus two days' margin
+for the archive's last commits), so no live view or nightly check writes to them.
 
 The recomputed rows are read from the run's Iceberg tables with icebergS3, and
 the sketches are built here, with the same functions and types as the live
@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from spark_backfill import namespace, parse_tenants, run_name  # noqa: E402
 
 TABLES = ["daily_campaign_aggregation", "daily_campaign_customers_aggregation", "daily_campaign_sessions_aggregation"]
-# Days events may still arrive for (analytics-service's 5 days), plus the two days the archive export waits.
+# Days events may still arrive for (analytics-service's 5 days), plus two days' margin for the archive's last commits.
 LATE_DAYS = 7
 # The backfill's own limits, so it can't starve the queries dashboards make.
 SETTINGS = {
@@ -114,12 +114,15 @@ def scope(r: dict) -> str:
 def source(name: str) -> tuple[str, dict]:
     """The run's Iceberg table `name` for ClickHouse, and the query settings that pin its current snapshot."""
     ns = namespace()
-    snapshot = load_catalog("archive").load_table(f"{ns}.{name}").current_snapshot()
+    metadata = load_catalog("archive").load_table(f"{ns}.{name}").metadata_location
+    table_path = metadata.split("/metadata/")[0]
     url = f"{os.environ['ARCHIVE_S3_URL'].rstrip('/')}/{ns}/{name}"
     key, secret = os.environ.get("PYICEBERG_CATALOG__ARCHIVE__S3__ACCESS_KEY_ID"), os.environ.get("PYICEBERG_CATALOG__ARCHIVE__S3__SECRET_ACCESS_KEY")
     credentials = f", '{key}', '{secret}'" if key else ""  # On AWS: ClickHouse's IAM role.
-    # The snapshot the catalog points to, not whichever ClickHouse finds newest.
-    return f"icebergS3('{url}'{credentials})", {"iceberg_snapshot_id": snapshot.snapshot_id}
+    # The metadata file the catalog points to, not whichever ClickHouse finds newest
+    # (a dropped table's files can remain at the same path). A table setting since
+    # ClickHouse 26, not a query setting.
+    return f"icebergS3('{url}'{credentials}, SETTINGS iceberg_metadata_file_path = '{metadata[len(table_path) + 1:]}')", {}
 
 
 def customers_states(user: str, metric: str, client_type: str, user_type: str) -> str:
@@ -154,7 +157,7 @@ def recomputed(run_id: str, month: int) -> dict[str, tuple[str, dict]]:
             FROM (SELECT toDate(day) AS d, toUUID(tenant_id) AS tid, toUUID(campaign_id) AS cid, assumeNotNull(toUUID(user_id)) AS uid, metric, client_type, user_type
                   FROM {customer_days} WHERE {where})
             GROUP BY d, tid, cid""", customers_settings),
-        # As daily_campaign_sessions_aggregation_mv; session_id as 03_kafka.sql derives it.
+        # As daily_campaign_sessions_aggregation_mv; session_id from sessionId (00_functions.sql), as 03_kafka.sql.
         # Iceberg columns read as Nullable, and a sketch's type includes its argument's,
         # so the IDs and times it aggregates are made non-Nullable to merge with live rows.
         "daily_campaign_sessions_aggregation": (f"""
@@ -165,7 +168,7 @@ def recomputed(run_id: str, month: int) -> dict[str, tuple[str, dict]]:
                    avgState(toInt64(dateDiff('millisecond', start, last)))
             FROM (SELECT toUUID(tenant_id) AS tid, assumeNotNull(toDateTime64(session_start, 3, 'UTC')) AS start, assumeNotNull(toDateTime64(last_event_time, 3, 'UTC')) AS last,
                          campaigns, clicked, added,
-                         assumeNotNull(reinterpretAsUUID(MD5(concat(toString(toUUID(tenant_id)), toString(toUUID(user_id)), toString(toDateTime64(session_start, 3, 'UTC')))))) AS sid
+                         assumeNotNull(sessionId(toUUID(tenant_id), toUUID(user_id), toDateTime64(session_start, 3, 'UTC'))) AS sid
                   FROM {sessions} WHERE {where})
             ARRAY JOIN campaigns AS campaign
             GROUP BY d, tid, cid""", sessions_settings),

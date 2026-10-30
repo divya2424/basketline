@@ -8,16 +8,20 @@ imagePullSecrets: []
 # One job per checkpoint, so exactly one pod (the chart refuses other values).
 replicaCount: 1
 
-# No secrets: the job only talks to Kafka. ClickHouse reads the serving topics itself (infra/clickhouse/03_kafka.sql).
+# No secrets: the job talks to Kafka, and to the archive (Glue and S3) with the pod's IAM role.
+# ClickHouse reads the serving topics itself (infra/clickhouse/03_kafka.sql).
 config:
   KAFKA_BOOTSTRAP_SERVERS: kafka:19092
   KAFKA_GROUP_ID: events-to-clickhouse
   # Only when there is no checkpoint yet (flink/README.md).
   KAFKA_STARTUP_MODE: earliest-offset
   CHECKPOINT_DIR: /checkpoints
+  # The Iceberg archive: Glue, with the pod's IAM role (no ARCHIVE_JDBC_URI, so run.sh picks Glue).
+  ARCHIVE_WAREHOUSE: s3://ad-insights-archive
+  ARCHIVE_NAMESPACE: archive
 
 # The checkpoints: Kafka offsets and the attribution join's state (up to 13 days
-# of clicks and baskets). Losing them replays Kafka from KAFKA_STARTUP_MODE.
+# of clicks and 6 of baskets). Losing them replays Kafka from KAFKA_STARTUP_MODE.
 # The volume outlives `helm uninstall`; delete the PVC to reset it.
 persistence:
   mountPath: /checkpoints

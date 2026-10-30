@@ -179,11 +179,11 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 ### Events
 
-Each event is `{eventId, eventName, timestamp, campaignId?, productId?, pageName?, featureName?, properties?}`.
+Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properties?}`. What it's about goes in `properties`: `campaignId` (required on `impression` and `click`), `productId` (what click-to-basket credits), and any other attribute. On arrival, analytics-service lifts `campaignId` and `productId` out of `properties` into their own fields, which attribution and the `/ad` metrics key on.
 
 - **Who sent it.** A registered user sends their access token. A visitor gets a visitor token for the UUID the client keeps for them, from `POST /auth/visitor`. The client keeps the same UUID before and after registration. The stored tenant, `userId`, `userType` and `clientType` always come from the token.
 - **Checks on arrival:**
-  - the format: UUIDs, a known `eventName`, and a `campaignId` on metric events;
+  - the format: UUIDs, a known `eventName`, and a `properties.campaignId` on metric events;
   - the timestamp: at most 5 days old, at most 5 minutes ahead;
   - the rate: 300 events per sender per minute, per instance;
   - for metric events, an active, unarchived campaign of the sender's tenant (else `CAMPAIGN_NOT_ACTIVE`). The check reads `analytics.campaigns`, built from `campaign.v1` and cached for 10 s.

@@ -73,11 +73,21 @@ function identityOf(auth: string) {
   return { tenantId: tid, userId: sub, userType: sid ? 'registered' : 'visitor' }
 }
 
+/** As a client sends them: campaignId and productId go inside properties. */
+const toWire = ({ campaignId, productId, properties, ...event }: TestEvent) => ({
+  eventId: randomUUID(),
+  timestamp: ago(60_000),
+  ...event,
+  ...(campaignId === undefined && productId === undefined && properties === undefined
+    ? {}
+    : { properties: { ...(campaignId === undefined ? {} : { campaignId }), ...(productId === undefined ? {} : { productId }), ...(properties as object) } }),
+})
+
 const send = (events: TestEvent[], auth = visitor, target = app, identity: object = identityOf(auth)) =>
   request(target)
     .post('/api/v1/analytics/events')
     .set('Authorization', auth)
-    .send({ ...identity, events: events.map((e) => ({ eventId: randomUUID(), timestamp: ago(60_000), ...e })) })
+    .send({ ...identity, events: events.map(toWire) })
 
 /** Applies a campaign.v1 event, as the Kafka consumer does. */
 function campaignEvent(campaignId: string, version: number, state: { status?: string; archived?: boolean; tenantId?: string } = {}) {
@@ -255,7 +265,12 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(malformed.body.error.details.errors).toEqual(
       expect.arrayContaining(['events[0].eventId must be a UUID', 'events[0].timestamp must be an ISO 8601 date-time']),
     )
-    expect((await send([{ eventName: 'click' }])).body.error.details.errors).toEqual(['events[0].campaignId must be a UUID'])
+    expect((await send([{ eventName: 'click' }])).body.error.details.errors).toEqual(['events[0].properties.campaignId must be a UUID'])
+    // The IDs belong in properties, not at the top level of the event.
+    const topLevel = { eventId: randomUUID(), timestamp: ago(60_000), eventName: 'click', campaignId: randomUUID(), productId: randomUUID() }
+    expect((await request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ ...identityOf(visitor), events: [topLevel] })).body.error.details.errors).toEqual(
+      expect.arrayContaining(['events[0]: unknown field "campaignId"', 'events[0]: unknown field "productId"']),
+    )
     // Attribution is the platform's: no click_to_basket events, and no attributionId.
     expect((await send([{ campaignId: randomUUID(), eventName: 'click_to_basket', productId: randomUUID() }])).status).toBe(400)
     expect((await send([{ eventName: 'add_to_cart', productId: randomUUID(), attributionId: randomUUID() }])).body.error.details.errors).toEqual([

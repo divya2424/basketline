@@ -73,7 +73,7 @@ function recordingSdk() {
   const clients = []
   const createClient = ({ tenantId }) => {
     const client = { tenantId, tracked: [], identities: [] }
-    client.track = (eventName, fields) => client.tracked.push({ eventName, ...fields })
+    client.sendEvent = (eventName, fields) => client.tracked.push({ eventName, ...fields })
     client.identify = ({ userId, getToken }) => client.identities.push({ userId, token: getToken() })
     client.reset = () => client.identities.push('reset')
     client.flush = async () => {}

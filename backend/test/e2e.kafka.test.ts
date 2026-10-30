@@ -184,10 +184,10 @@ describe('the full flow over Kafka', () => {
     const campaignId = campaign.body.id as string
     const now = Date.now()
     const analyticsEvents = [
-      { eventId: randomUUID(), campaignId, eventName: 'impression', timestamp: new Date(now - 3000).toISOString() },
-      { eventId: clickId, campaignId, productId: product.body.id, eventName: 'click', timestamp: new Date(now - 2000).toISOString() },
+      { eventId: randomUUID(), eventName: 'impression', timestamp: new Date(now - 3000).toISOString(), properties: { campaignId } },
+      { eventId: clickId, eventName: 'click', timestamp: new Date(now - 2000).toISOString(), properties: { campaignId, productId: product.body.id } },
       // Credited to the click by the Flink job (test/flink.kafka.test.ts); the client sends no link.
-      { eventId: randomUUID(), productId: product.body.id, eventName: 'add_to_cart', timestamp: new Date(now - 1000).toISOString() },
+      { eventId: randomUUID(), eventName: 'add_to_cart', timestamp: new Date(now - 1000).toISOString(), properties: { productId: product.body.id } },
     ]
     // Metric events count once analytics-service has seen the campaign (CampaignCreated over Kafka).
     const { result: ingest, elapsedMs: campaignLag } = await eventually(

@@ -98,14 +98,12 @@ function currentVisitor() {
   return visitor
 }
 
-function event(eventName, campaignId, extra = {}) {
+function event(eventName, campaignId, productId) {
   return {
     eventId: crypto.randomUUID(),
     eventName,
-    campaignId,
     timestamp: new Date().toISOString(),
-    properties: { loadtest_run: RUN_ID },
-    ...extra,
+    properties: { campaignId, productId, loadtest_run: RUN_ID },
   }
 }
 
@@ -114,12 +112,12 @@ function batch(campaigns) {
   const campaign = pick(campaigns)
   const campaignId = campaign.id
   const productId = pick(campaign.productIds)
-  const click = event('click', campaignId, { productId })
+  const click = event('click', campaignId, productId)
   return [
     ...Array.from({ length: 6 }, () => event('impression', campaignId)),
     click,
-    event('click', campaignId, { productId: pick(campaign.productIds) }),
-    event('add_to_cart', null, { productId }),
+    event('click', campaignId, pick(campaign.productIds)),
+    event('add_to_cart', null, productId),
   ]
 }
 

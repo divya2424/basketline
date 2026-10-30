@@ -70,18 +70,19 @@ export function createIngestionService({
   }
 
   function toMessage(event: IncomingEvent, sender: EventSender, receivedAt: string): BusMessage {
+    const { campaignId, productId, ...properties } = event.properties ?? {}
     const payload: AnalyticsEventPayload = {
       eventId: event.eventId,
       eventName: event.eventName,
-      campaignId: event.campaignId?.toLowerCase() ?? null,
-      productId: event.productId ?? null,
+      campaignId: campaignId?.toLowerCase() ?? null,
+      productId: productId ?? null,
       userId: sender.userId,
       userType: sender.userType,
       clientType: sender.clientType,
       tenantId: sender.tenantId,
       pageName: event.pageName ?? null,
       featureName: event.featureName ?? null,
-      properties: event.properties ?? {},
+      properties,
       timestamp: new Date(event.timestamp).toISOString(),
       receivedAt,
     }
@@ -110,7 +111,7 @@ export function createIngestionService({
       const isMetric = (event: IncomingEvent) => isOneOf(event.eventName, METRIC_EVENT_NAMES)
       const active = await activeCampaigns(
         sender.tenantId,
-        events.filter(isMetric).map((event) => event.campaignId!.toLowerCase()),
+        events.filter(isMetric).map((event) => event.properties!.campaignId!.toLowerCase()),
         now,
       )
 
@@ -122,7 +123,7 @@ export function createIngestionService({
           results.push({ eventId: event.eventId, status: 'rejected', reason: 'TIMESTAMP_OUT_OF_RANGE' })
           continue
         }
-        if (isMetric(event) && !active.has(event.campaignId!.toLowerCase())) {
+        if (isMetric(event) && !active.has(event.properties!.campaignId!.toLowerCase())) {
           results.push({ eventId: event.eventId, status: 'rejected', reason: 'CAMPAIGN_NOT_ACTIVE' })
           continue
         }

@@ -90,7 +90,7 @@ export function createBackendTransport({ apiUrl = import.meta.env.VITE_API_BASE_
     send(event) {
       const sdk = clientFor(getRequestContext().tenantId)
       for (const { eventName, campaignId, productId, pageName, featureName, properties } of toBackendEvents(event)) {
-        sdk.track(eventName, { campaignId, productId, pageName, featureName, properties })
+        sdk.sendEvent(eventName, { campaignId, productId, pageName, featureName, properties })
       }
     },
     /** Sends what is queued now (tests; the SDK also does it when the page is hidden). */

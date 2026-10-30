@@ -3,18 +3,21 @@ import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, METRIC_EVENT_NAMES, USER_TYPES, t
 
 export const MAX_EVENTS_PER_REQUEST = 100
 
+/**
+ * An event as clients send it. What it's about (campaignId, productId, and any
+ * attribute added later) goes in properties; ingestion lifts the two IDs out,
+ * since attribution and the /ad metrics key on them.
+ */
 export interface IncomingEvent {
   eventId: string
-  campaignId?: string | null
-  productId?: string | null
   eventName: AnalyticsEventName
   pageName?: string | null
   featureName?: string | null
   timestamp: string
-  properties?: Record<string, unknown>
+  properties?: { campaignId?: string | null; productId?: string | null; [key: string]: unknown }
 }
 
-const EVENT_FIELDS = ['eventId', 'campaignId', 'productId', 'eventName', 'pageName', 'featureName', 'timestamp', 'properties']
+const EVENT_FIELDS = ['eventId', 'eventName', 'pageName', 'featureName', 'timestamp', 'properties']
 
 function validateEvent(event: unknown, at: string): string[] {
   if (!isPlainObject(event)) return [`${at} must be an object`]
@@ -22,15 +25,16 @@ function validateEvent(event: unknown, at: string): string[] {
   const errors = unknownKeys(event, EVENT_FIELDS).map((key) => `${at}: unknown field "${key}"`)
   if (!isUuid(event.eventId)) errors.push(`${at}.eventId must be a UUID`)
   if (!isOneOf(event.eventName, EVENT_NAMES)) errors.push(`${at}.eventName must be one of ${EVENT_NAMES.join(', ')}`)
-  // The campaign metrics need a campaign; other activity may or may not have one.
-  const campaignRequired = isOneOf(event.eventName, METRIC_EVENT_NAMES)
-  if ((campaignRequired || event.campaignId != null) && !isUuid(event.campaignId)) errors.push(`${at}.campaignId must be a UUID`)
   if (!isIsoDate(event.timestamp)) errors.push(`${at}.timestamp must be an ISO 8601 date-time`)
-  if (event.productId != null && !isUuid(event.productId)) errors.push(`${at}.productId must be a UUID`)
   for (const field of ['pageName', 'featureName'] as const) {
     if (event[field] != null && !isNonEmptyString(event[field], 100)) errors.push(`${at}.${field} must be a string (max 100 characters)`)
   }
-  if (event.properties !== undefined && !isPlainObject(event.properties)) errors.push(`${at}.properties must be an object`)
+  if (event.properties !== undefined && !isPlainObject(event.properties)) return [...errors, `${at}.properties must be an object`]
+  const { campaignId, productId } = (event.properties ?? {}) as Record<string, unknown>
+  // The campaign metrics need a campaign; other activity may or may not have one.
+  const campaignRequired = isOneOf(event.eventName, METRIC_EVENT_NAMES)
+  if ((campaignRequired || campaignId != null) && !isUuid(campaignId)) errors.push(`${at}.properties.campaignId must be a UUID`)
+  if (productId != null && !isUuid(productId)) errors.push(`${at}.properties.productId must be a UUID`)
   return errors
 }
 

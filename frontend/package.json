@@ -11,7 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@divya2424/basketline-sdk": "^0.1.0",
+    "@divya2424/basketline-sdk": "^0.2.0",
     "axios": "1.20.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

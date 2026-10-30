@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EVENTS, type EventEnvelope, type EventPayloads, type EventType } from '@basketline/contracts'
-import type { EventBus } from './bus.ts'
+import type { EventBus } from '@divya2424/basketline-kafka'
 import type { Logger } from './logger.ts'
 
 export interface NewEvent<T extends EventType = EventType> {

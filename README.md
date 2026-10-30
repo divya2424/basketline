@@ -30,9 +30,11 @@ gateway (:8080) ──► auth · product · campaign · analytics services (Nod
 
 ## Quick start
 
-Requires Node 24, Docker and npm.
+Requires Node 24, Docker and npm, and a GitHub token with `read:packages`: the Kafka event bus ([`basketline-kafka`](https://github.com/divya2424/basketline-kafka)) and the SDK come from GitHub Packages.
 
 ```bash
+export NODE_AUTH_TOKEN=<GitHub token with read:packages>
+
 # Backend: everything in "Local URLs" below
 cd backend
 npm install

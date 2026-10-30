@@ -1,6 +1,6 @@
-import type { EventBus } from './bus.ts'
+import type { EventBus } from '@divya2424/basketline-kafka'
 import { listEnv, optionalEnv } from './config.ts'
-import { createKafkaEventBus, ensureTopics, type TopicSpec } from './kafka.ts'
+import { createKafkaEventBus, ensureTopics, type TopicSpec } from '@divya2424/basketline-kafka'
 import type { Logger } from './logger.ts'
 
 /** Kafka bus from KAFKA_BROKERS / KAFKA_TOPIC_PREFIX; exits on a fatal consumer error. */

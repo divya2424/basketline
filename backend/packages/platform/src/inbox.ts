@@ -1,5 +1,5 @@
 import type { EventEnvelope } from '@basketline/contracts'
-import type { EventHandler } from './bus.ts'
+import type { EventHandler } from '@divya2424/basketline-kafka'
 import type { Database, Transaction } from './db.ts'
 import { processedEvents } from './tables.ts'
 

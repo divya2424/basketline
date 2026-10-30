@@ -67,7 +67,7 @@ services:
       retries: 40
 
   auth-service:
-    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: auth-service } }
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: auth-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
     environment:
@@ -79,7 +79,7 @@ services:
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
   product-service:
-    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: product-service } }
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: product-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
     environment:
@@ -90,7 +90,7 @@ services:
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
   campaign-service:
-    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: campaign-service } }
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: campaign-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
     environment:
@@ -101,7 +101,7 @@ services:
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
   analytics-service:
-    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: analytics-service } }
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: analytics-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
     environment:
@@ -184,7 +184,7 @@ services:
       archive-storage: { condition: service_healthy }
 
   gateway:
-    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: gateway } }
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: gateway }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
     environment:
@@ -213,3 +213,9 @@ volumes:
   chdata:
   flink-checkpoints:
   archive-data:
+
+secrets:
+  # Read access to GitHub Packages for @divya2424/basketline-kafka, used only while building images:
+  # export NODE_AUTH_TOKEN=<token with read:packages> before `docker compose build` / `up --build`.
+  npm_token:
+    environment: NODE_AUTH_TOKEN

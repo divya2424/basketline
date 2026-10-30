@@ -16,17 +16,8 @@ export const TOPICS = {
   campaigns: 'campaign.v1',
 } as const
 
-export interface EventEnvelope<P = unknown> {
-  eventId: string
-  eventType: string
-  eventVersion: number
-  occurredAt: string
-  producer: string
-  aggregateId: string
-  aggregateVersion: number
-  payload: P
-}
-
+// The envelope every message carries is defined with the event bus.
+export { isEnvelope, type EventEnvelope } from '@divya2424/basketline-kafka'
 
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed'
 
@@ -136,20 +127,3 @@ export const EVENTS: Record<EventType, { topic: string; version: number }> = {
   CampaignProductRemoved: { topic: TOPICS.campaigns, version: 1 },
 }
 
-/** Basic shape check for a message read from Kafka. */
-export function isEnvelope(value: unknown): value is EventEnvelope {
-  const envelope = value as Partial<EventEnvelope> | null
-  return (
-    typeof envelope === 'object' &&
-    envelope !== null &&
-    typeof envelope.eventId === 'string' &&
-    typeof envelope.eventType === 'string' &&
-    typeof envelope.eventVersion === 'number' &&
-    typeof envelope.occurredAt === 'string' &&
-    typeof envelope.producer === 'string' &&
-    typeof envelope.aggregateId === 'string' &&
-    typeof envelope.aggregateVersion === 'number' &&
-    typeof envelope.payload === 'object' &&
-    envelope.payload !== null
-  )
-}

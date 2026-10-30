@@ -6,11 +6,11 @@
  * Open to anyone (see the README's warning): for demos, not production tenants.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantDeletedPayload, type TenantOnboardedPayload } from '@basketline/contracts'
+import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantDeletedPayload, type TenantOnboardedPayload, type TenantOriginsChangedPayload } from '@basketline/contracts'
 import { badRequest, event, notFound, type NewEvent, type PublishEvents } from '@basketline/platform'
 import { withTenant, type Db } from '../db/client.ts'
 import { newApiKey } from './shopper.service.ts'
-import { deleteAccountData, findAccount, insertAccount, listAccounts, type Account } from '../repositories/account.repository.ts'
+import { deleteAccountData, findAccount, insertAccount, listAccounts, updateAllowedOrigins, type Account } from '../repositories/account.repository.ts'
 import type { OnboardInput } from '../validators/account.validator.ts'
 import { createUser } from './user-admin.service.ts'
 
@@ -112,6 +112,26 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
       // Version 2: after TenantOnboarded (1).
       await publish([event('TenantDeleted', tenantId, 2, payload)])
       return payload
+    },
+
+    async allowedOrigins(tenantId: string): Promise<string[]> {
+      const account = await findAccount(db, tenantId)
+      if (!account) throw notFound('TENANT_NOT_FOUND', 'No such tenant')
+      return account.allowedOrigins
+    },
+
+    /**
+     * Replaces the websites whose pages may send the tenant's events (empty: any);
+     * the gateway enforces them once TenantOriginsChanged reaches it. Origins are
+     * normalized ("HTTPS://Shop.example:443/" → "https://shop.example") and deduplicated.
+     */
+    async setAllowedOrigins(tenantId: string, origins: string[]): Promise<string[]> {
+      const normalized = [...new Set(origins.map((origin) => new URL(origin).origin))]
+      const updated = await updateAllowedOrigins(db, tenantId, normalized)
+      if (!updated) throw notFound('TENANT_NOT_FOUND', 'No such tenant')
+      const payload: TenantOriginsChangedPayload = { tenantId, origins: updated.origins, version: updated.version, changedAt: updated.changedAt.toISOString() }
+      await publish([event('TenantOriginsChanged', tenantId, updated.version, payload)])
+      return updated.origins
     },
   }
 }

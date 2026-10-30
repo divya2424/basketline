@@ -118,6 +118,8 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | GET | `/auth/api-keys` | campaign manager | The tenant's API keys: `{items: [{prefix, name, createdAt, revokedAt}]}`, never the keys |
 | POST | `/auth/api-keys` | campaign manager | `{name}` → 201 `{key, prefix, name, createdAt}`: a new key, shown only here |
 | DELETE | `/auth/api-keys/:prefix` | campaign manager | Revokes the key (404 if no active key has that prefix) |
+| GET | `/auth/allowed-origins` | campaign manager | The tenant's allowed websites: `{origins: ["https://shop.example", …]}`; empty means any website |
+| PUT | `/auth/allowed-origins` | campaign manager | `{origins: [...]}` replaces the list (at most 20; each `http(s)://host[:port]`, no path or wildcard). Normalized and deduplicated; publishes `TenantOriginsChanged` |
 | POST | `/auth/register` | anyone | `{username, password, visitorToken?}` → a standard user in the `tenant_id` header's tenant |
 | POST | `/auth/login` | anyone | `{username, password, clientType: web\|mobile}` → `{accessToken, expiresIn: 1800, user, session}`. Rate limited |
 | POST | `/auth/visitor` | anyone | `{userId?, clientType?}` → `{visitorToken, expiresIn: 1800, userId}`. Valid only for `POST /analytics/events`. Rate limited per IP |
@@ -136,6 +138,12 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
   - **Same person:** each `customerId` is mapped to one Basketline `userId` on its first token: the `visitorId` passed (if it's free), else a random one. So a visitor who signs in stays one person.
   - **Where it works:** the token is accepted only by event ingestion, where it counts as `registered`.
   - **Errors:** a wrong, revoked or other tenant's key gets `401 INVALID_API_KEY`.
+  - **Allowed websites:** a tenant can list the websites its events may come from (dashboard → Integrate your site → Allowed websites, or `PUT /auth/allowed-origins`). The gateway then answers `403 ORIGIN_NOT_ALLOWED` when a browser page on another website calls `/auth/visitor` or `/analytics/events` for that tenant. It goes by the `Origin` header, which a browser always sends and a page can't change. Not checked:
+    - tenants with no list (any website, as before);
+    - Basketline's own apps (`CORS_ORIGINS`);
+    - requests without an `Origin` (vendors' servers, mobile apps), which the rate limits cover.
+
+    The gateway learns a change from `TenantOriginsChanged` (`auth.tenant.v1`), within seconds.
   - **Keys:** every tenant gets a first key at onboarding (`apiKey`, named "Default"). Its campaign managers create and revoke keys in the dashboard (`/auth/api-keys`) or with the CLI. Keys are stored hashed, so a key is shown only when it's created.
   - **The client side:** see the SDK, [divya2424/basketline-sdk](https://github.com/divya2424/basketline-sdk).
 - **Register with a visitor token:** the new user keeps the visitor's UUID, so their analytics stay one person. An invalid token, another tenant's, or a UUID that's already a user gets a random ID instead; the sign-up never fails over it. A `role` field is rejected.
@@ -251,7 +259,7 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 |---|---|---|
 | `auth.user.v1` | UserCreated, UserRoleChanged, UserDisabled | gateway (disabled accounts, stale tokens) |
 | `auth.session.v1` | SessionRevoked | gateway (rejects revoked sessions) |
-| `auth.tenant.v1` | TenantOnboarded, with the seed plan; TenantDeleted | product-service, campaign-service (seed by the planned IDs); on TenantDeleted every service deletes its own data, and the gateway rejects the tenant's tokens |
+| `auth.tenant.v1` | TenantOnboarded, with the seed plan; TenantDeleted; TenantOriginsChanged | product-service, campaign-service (seed by the planned IDs); on TenantDeleted every service deletes its own data, and the gateway rejects the tenant's tokens; the gateway keeps TenantOriginsChanged's allowed websites |
 | `product.v1` | ProductCreated, ProductUpdated, ProductDeactivated | campaign-service (its `products` table) |
 | `campaign.v1` | CampaignCreated, CampaignUpdated, CampaignProductAssociated, CampaignProductRemoved | analytics-service (`analytics.campaigns`) |
 | `analytics.<eventName>.v1` | AnalyticsEventRecorded (key = the client's `eventId`). Kept **14 days** | flink-streaming |
@@ -297,7 +305,7 @@ Compose and the Helm charts use a 35 s grace period.
 | `JWT_PUBLIC_KEY_FILE` / `JWT_PRIVATE_KEY_FILE` | all / auth-service | Verify / sign tokens |
 | `LOGIN_RATE_LIMIT` | auth-service | Attempts per IP and username per 15 minutes (default 10) |
 | `AUTH_/PRODUCT_/CAMPAIGN_/ANALYTICS_SERVICE_URL` | gateway | Where to route requests |
-| `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `EVENTS_RATE_LIMIT_PER_MINUTE`, `VISITOR_RATE_LIMIT_PER_MINUTE` | gateway | Allowed origins; per-IP limits (defaults 300, 120 and 10 per minute). The SDK's endpoints (`/auth/visitor`, `/analytics/events`) accept any origin: they take bearer tokens, never cookies |
+| `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `EVENTS_RATE_LIMIT_PER_MINUTE`, `VISITOR_RATE_LIMIT_PER_MINUTE` | gateway | Allowed origins; per-IP limits (defaults 300, 120 and 10 per minute). The SDK's endpoints (`/auth/visitor`, `/analytics/events`) accept any origin (they take bearer tokens, never cookies), unless the tenant lists allowed websites |
 | `SHOPPER_TOKEN_RATE_LIMIT_PER_MINUTE` | gateway | Shopper tokens per minute per API key (default 600); this route isn't limited per IP, since a vendor's backend calls from few IPs |
 | `PORT`, `LOG_LEVEL`, `SHUTDOWN_DRAIN_MS`, `SHUTDOWN_TIMEOUT_MS` | all | |
 | `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_STARTUP_MODE`, `CHECKPOINT_DIR`, … | flink-streaming | See [flink/README.md](flink/README.md) |
@@ -370,6 +378,7 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 | Less frequent Kafka engine flushes | `infra/clickhouse/migrations/009_kafka_flush_interval.sql` |
 | Daily tables partitioned by month (for backfills) | `infra/clickhouse/migrations/010_monthly_daily_partitions.sql` |
 | Renamed to Basketline | Docker volumes are now `basketline_*`. Before the first start, copy the old ones across: `for v in pgdata chdata flink-checkpoints archive-data; do docker run --rm -v ecommerce-analytics_$v:/from -v basketline_$v:/to alpine cp -a /from/. /to/; done`. Then, once ClickHouse is up, run `infra/clickhouse/migrations/011_basketline_user.sql` and `init.sql` (the ClickHouse user is now `basketline`). Everyone signs in again |
+| Per-tenant allowed websites | Rebuild auth-service and the gateway (`docker compose up -d --build auth-service gateway`); their migrations add `accounts.allowed_origins` and `tenant_origins` |
 | Tenants can be deleted | `infra/clickhouse/migrations/012_deleted_tenants.sql`, then `init.sql` and `kafka.sql`. Rebuild auth-service and the gateway (`docker compose up -d --build`) for their migrations |
 | Analytics topics kept 14 days | `for t in $(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list \| grep '^analytics\..*\.v1$'); do docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name $t --add-config retention.ms=1209600000; done` |
 | Serving topics kept 48 h | `kafka-configs.sh … --entity-name serving.events.v1 --add-config retention.ms=172800000` (and the other two) |
@@ -400,7 +409,8 @@ The Kafka topics keep the tenant's past messages until they expire (14 days at m
 - **Anonymous events can be faked, at a cost.** Anyone can get a visitor token. This is limited, not prevented:
   - 10 visitor tokens per IP per minute;
   - 300 events per token per minute;
-  - only active campaigns count.
+  - only active campaigns count;
+  - a tenant that lists allowed websites refuses browser pages on other sites. Scripts outside a browser can send any `Origin`, so they're held only by the limits above.
 - **Tenants are isolated in the data, not the infrastructure.** Every row and query is scoped by tenant, but tenants share the services, databases and topics.
 - **The campaign projection starts from Kafka.** On a new or rebuilt ClickHouse volume, a campaign last changed more than 7 days ago is unknown until it changes again.
 - **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.

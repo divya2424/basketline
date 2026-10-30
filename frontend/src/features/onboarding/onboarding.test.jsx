@@ -43,6 +43,7 @@ function startApi({ noOnboardingUser } = {}) {
       if (headers.get('Authorization') !== `Bearer token-${headers.get('tenant_id')}`) return jsonResponse(403, { error: { code: 'FORBIDDEN', message: 'Forbidden' } })
       return jsonResponse(200, { items: [{ prefix: 'bl_sk_AcmeKy', name: 'Default', createdAt: '2026-10-28T10:00:00.000Z', revokedAt: null }] })
     }
+    if (path === '/auth/allowed-origins' && method === 'GET') return jsonResponse(200, { origins: ['https://acme.example'] })
     const deleting = path.match(/^\/accounts\/([^/]+)$/)
     if (deleting && method === 'DELETE') {
       const account = accounts.find((a) => a.tenantId === deleting[1])
@@ -87,6 +88,8 @@ describe("a tenant's details", () => {
     expect(await within(details).findByRole('list', { name: 'API keys' })).toHaveTextContent('Default')
     expect(screen.getByLabelText('SDK setup code')).toHaveTextContent(`tenantId: '${ACME.tenantId}'`)
     expect(getRequestContext().tenantId).toBe(DEFAULT_TENANT_ID)
+    const websites = await screen.findByRole('region', { name: 'Allowed websites of Acme Store' })
+    expect(await within(websites).findByRole('list', { name: 'Allowed websites' })).toHaveTextContent('https://acme.example')
     expect(screen.getByRole('button', { name: 'Details: Acme Store' })).toHaveAttribute('aria-expanded', 'true')
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(logins()).toHaveLength(1)

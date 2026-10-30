@@ -5,7 +5,7 @@
  */
 import type { RequestHandler } from 'express'
 import type { CryptoKey } from 'jose'
-import { forbidden, notFound, unauthorized, verifyAccessToken, verifyEventToken, type AccessTokenClaims } from '@basketline/platform'
+import { forbidden, isUuid, notFound, unauthorized, verifyAccessToken, verifyEventToken, type AccessTokenClaims } from '@basketline/platform'
 import type { AccessService } from '../services/access.service.ts'
 
 /** 'events': an access token, or an events-only token: a visitor's, or a vendor's shopper's. */
@@ -18,8 +18,8 @@ export function accessFor(method: string, path: string): Access | null {
   if (['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token'].includes(path)) {
     return method === 'POST' ? 'public' : null
   }
-  // A tenant's API keys: its campaign managers only.
-  if (path === '/api/v1/auth/api-keys' || path.startsWith('/api/v1/auth/api-keys/')) return 'campaign-manager'
+  // A tenant's API keys and allowed websites: its campaign managers only.
+  if (path === '/api/v1/auth/api-keys' || path.startsWith('/api/v1/auth/api-keys/') || path === '/api/v1/auth/allowed-origins') return 'campaign-manager'
   if (path.startsWith('/api/v1/auth/')) return 'authenticated'
   // Tenant onboarding (list and create accounts) is open to anyone, by choice: see the README.
   if (path === '/api/v1/accounts') return read || method === 'POST' ? 'public' : null
@@ -34,7 +34,13 @@ export function accessFor(method: string, path: string): Access | null {
   return null
 }
 
-export function accessMiddleware(publicKey: CryptoKey, access: AccessService): RequestHandler {
+/**
+ * corsOrigins: Basketline's own apps, which may send any tenant's events. Any
+ * other browser page (it sends an Origin header) must be one of the tenant's
+ * allowed websites, if it lists any. Requests without an Origin (servers,
+ * mobile apps) aren't checked: the rate limits cover them.
+ */
+export function accessMiddleware(publicKey: CryptoKey, access: AccessService, corsOrigins: string[] = []): RequestHandler {
   return async (req, _res, next) => {
     if (req.method === 'OPTIONS') return next()
     const rule = accessFor(req.method, req.path)
@@ -70,6 +76,12 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService): R
     }
     if (rule === 'campaign-manager' && claims?.role !== 'campaign-manager') {
       throw forbidden('FORBIDDEN', 'Requires role: campaign-manager')
+    }
+    const origin = req.headers.origin
+    if (origin && !corsOrigins.includes(origin)) {
+      // The visitor-token request names its tenant in the header; an events batch's is its token's.
+      const tenant = req.path === '/api/v1/auth/visitor' ? req.headers.tenant_id : rule === 'events' ? (eventsTenant ?? claims?.tid) : undefined
+      if (isUuid(tenant)) await access.assertOriginAllowed(tenant, origin)
     }
     if (claims) req.headers.user_id = claims.sub
     next()

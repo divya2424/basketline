@@ -1,6 +1,6 @@
 import { eq, lt, sql } from 'drizzle-orm'
 import type { DbOrTx } from '../db/client.ts'
-import { deletedTenants, revokedSessions, userAccessState } from '../db/schema.ts'
+import { deletedTenants, revokedSessions, tenantOrigins, userAccessState } from '../db/schema.ts'
 
 export async function isSessionRevoked(db: DbOrTx, sessionId: string): Promise<boolean> {
   const [row] = await db.select({ sessionId: revokedSessions.sessionId }).from(revokedSessions).where(eq(revokedSessions.sessionId, sessionId))
@@ -51,4 +51,17 @@ export async function isTenantDeleted(db: DbOrTx, tenantId: string): Promise<boo
 
 export async function insertDeletedTenant(db: DbOrTx, tenant: { tenantId: string; deletedAt: string }) {
   await db.insert(deletedTenants).values({ tenantId: tenant.tenantId, deletedAt: new Date(tenant.deletedAt) }).onConflictDoNothing()
+}
+
+export async function findTenantOrigins(db: DbOrTx, tenantId: string): Promise<string[]> {
+  const [row] = await db.select({ origins: tenantOrigins.origins }).from(tenantOrigins).where(eq(tenantOrigins.tenantId, tenantId))
+  return row?.origins ?? []
+}
+
+/** Only moves forward: an older list can't replace a newer one. */
+export async function upsertTenantOrigins(db: DbOrTx, change: { tenantId: string; origins: string[]; version: number }) {
+  await db
+    .insert(tenantOrigins)
+    .values(change)
+    .onConflictDoUpdate({ target: tenantOrigins.tenantId, set: { origins: change.origins, version: change.version }, setWhere: lt(tenantOrigins.version, sql`excluded.version`) })
 }

@@ -29,6 +29,13 @@
       "when": 1793336449275,
       "tag": "0003_api_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793370514775,
+      "tag": "0004_allowed_origins",
+      "breakpoints": true
     }
   ]
 }

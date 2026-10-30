@@ -1,6 +1,6 @@
-import { unauthorized, type AccessTokenClaims, type Logger } from '@basketline/platform'
+import { forbidden, unauthorized, type AccessTokenClaims, type Logger } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
-import { deleteExpiredRevocations, findUserAccessState, isSessionRevoked, isTenantDeleted } from '../repositories/access.repository.ts'
+import { deleteExpiredRevocations, findTenantOrigins, findUserAccessState, isSessionRevoked, isTenantDeleted } from '../repositories/access.repository.ts'
 
 export function createAccessService({ db, logger }: { db: Db; logger: Logger }) {
   return {
@@ -22,6 +22,14 @@ export function createAccessService({ db, logger }: { db: Db; logger: Logger }) 
     /** Events-only tokens (visitors', shoppers') have no session; only their tenant can make them unusable. */
     async assertTenantActive(tenantId: string): Promise<void> {
       if (await isTenantDeleted(db, tenantId)) throw unauthorized('TENANT_DELETED', 'This tenant has been deleted')
+    },
+
+    /** A browser page may send a tenant's events only from one of its allowed websites, if it lists any. */
+    async assertOriginAllowed(tenantId: string, origin: string): Promise<void> {
+      const origins = await findTenantOrigins(db, tenantId)
+      if (origins.length > 0 && !origins.includes(origin)) {
+        throw forbidden('ORIGIN_NOT_ALLOWED', `${origin} isn't one of this store's allowed websites`)
+      }
     },
 
     async cleanup(): Promise<void> {

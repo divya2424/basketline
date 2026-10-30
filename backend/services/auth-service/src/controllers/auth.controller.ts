@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import { ACCESS_TOKEN_TTL_SECONDS, badRequest, notFound, page, readPagination, SHOPPER_TOKEN_TTL_SECONDS, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
 import type { Session } from '../repositories/session.repository.ts'
 import type { User } from '../repositories/user.repository.ts'
+import type { AccountService } from '../services/account.service.ts'
 import type { AuthService } from '../services/auth.service.ts'
 import type { ShopperService } from '../services/shopper.service.ts'
 
@@ -29,7 +30,7 @@ function sessionStatus(session: Session, now: number) {
   return session.expiresAt.getTime() <= now ? 'expired' : 'active'
 }
 
-export function createAuthController(service: AuthService, shoppers: ShopperService) {
+export function createAuthController(service: AuthService, shoppers: ShopperService, accounts: AccountService) {
   return {
     async register(req: Request, res: Response) {
       const user = await service.register(req.body, requireTenant(req))
@@ -56,6 +57,14 @@ export function createAuthController(service: AuthService, shoppers: ShopperServ
       const revoked = await shoppers.revokeApiKey(req.auth!.tid, req.params.prefix)
       if (revoked === 0) throw notFound('API_KEY_NOT_FOUND', 'No active API key with this prefix')
       res.status(204).end()
+    },
+
+    async allowedOrigins(req: Request, res: Response) {
+      res.json({ origins: await accounts.allowedOrigins(req.auth!.tid) })
+    },
+
+    async setAllowedOrigins(req: Request, res: Response) {
+      res.json({ origins: await accounts.setAllowedOrigins(req.auth!.tid, req.body.origins) })
     },
 
     async shopperToken(req: Request, res: Response) {

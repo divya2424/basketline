@@ -2,15 +2,17 @@ import { useEffect, useId, useState } from 'react'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
 import { ApiKeysCard } from '../integration/ApiKeysPanel.jsx'
-import { apiKeysAs } from '../integration/integrationService.js'
+import { AllowedOriginsCard } from '../integration/AllowedOriginsCard.jsx'
+import { integrationAs } from '../integration/integrationService.js'
 import { SdkSnippet } from '../integration/SdkSnippet.jsx'
 import { deleteTenant, managerTokenFor, ONBOARDING_USERNAME } from './onboardingService.js'
 
 // Module-level: a default created per render would re-run the sign-in effect forever.
-const defaultServices = { managerTokenFor, apiKeysAs, deleteTenant }
+const defaultServices = { managerTokenFor, integrationAs, deleteTenant }
 
 /**
- * One tenant's details on the onboarding page: its SDK setup, its API keys (as
+ * One tenant's details on the onboarding page: its SDK setup, its API keys and
+ * allowed websites (as
  * its onboarding campaign manager, signed in for this panel only: the app stays
  * on its current tenant) and deleting it. `services` is for tests.
  */
@@ -21,7 +23,7 @@ export function TenantDetails({ account, onDeleted, services = defaultServices }
     let cancelled = false
     services
       .managerTokenFor(account.tenantId)
-      .then((token) => !cancelled && setKeys({ status: 'ready', service: services.apiKeysAs({ tenantId: account.tenantId, token }), error: null }))
+      .then((token) => !cancelled && setKeys({ status: 'ready', service: services.integrationAs({ tenantId: account.tenantId, token }), error: null }))
       .catch((error) => !cancelled && setKeys({ status: 'error', service: null, error: error.message }))
     return () => {
       cancelled = true
@@ -48,6 +50,13 @@ export function TenantDetails({ account, onDeleted, services = defaultServices }
           <ApiKeysCard service={keys.service} />
         )}
       </section>
+
+      {keys.status === 'ready' ? (
+        <section className="tenant-details__section" aria-label={`Allowed websites of ${account.name}`}>
+          <h3>Allowed websites</h3>
+          <AllowedOriginsCard service={keys.service} />
+        </section>
+      ) : null}
 
       <DeleteTenant account={account} onDeleted={onDeleted} deleteTenant={services.deleteTenant} />
     </div>

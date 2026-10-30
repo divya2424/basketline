@@ -81,7 +81,7 @@ export function buildGateway({
     }
     next()
   })
-  app.use(accessMiddleware(publicKey, access))
+  app.use(accessMiddleware(publicKey, access, corsOrigins))
   app.use(...proxyRoutes(services, logger))
   app.use(notFoundHandler)
   app.use(errorHandler)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState } from 'react'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
 import { getRequestContext } from '../../api/requestContext.js'
+import { AllowedOriginsCard } from './AllowedOriginsCard.jsx'
 import { createApiKey, listApiKeys, revokeApiKey } from './integrationService.js'
 import { KeyReveal } from './KeyReveal.jsx'
 import { SdkSnippet } from './SdkSnippet.jsx'
@@ -125,17 +126,17 @@ export function ApiKeysCard({ service = defaultService, active = true }) {
 }
 
 /**
- * Integrating the signed-in manager's store: the SDK setup and its API keys, in
- * a section at the bottom of the dashboard, loaded only when opened.
+ * Integrating the signed-in manager's store: the SDK setup, its API keys and its
+ * allowed websites, in a section at the bottom of the dashboard, loaded only when opened.
  */
-export function ApiKeysPanel({ service = defaultService }) {
+export function ApiKeysPanel({ service = defaultService, originsService }) {
   const { tenantId } = getRequestContext()
   const [open, setOpen] = useState(false)
   return (
     <details className="integration" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="integration__summary">
         <span className="section-head__title">Integrate your site</span>
-        <span className="small muted">SDK setup and API keys</span>
+        <span className="small muted">SDK setup, API keys and allowed websites</span>
       </summary>
       <div className="integration__grid">
         <article className="integration__card">
@@ -145,6 +146,10 @@ export function ApiKeysPanel({ service = defaultService }) {
         <article className="integration__card">
           <h3>2. API keys</h3>
           <ApiKeysCard service={service} active={open} />
+        </article>
+        <article className="integration__card">
+          <h3>3. Allowed websites</h3>
+          <AllowedOriginsCard service={originsService} active={open} />
         </article>
       </div>
     </details>

@@ -3,7 +3,7 @@
  * maintained from auth.session.v1 / auth.user.v1 events (never by calling the
  * auth service). After a change run `npm run db:generate -w @basketline/gateway`.
  */
-import { bigint, boolean, index, pgTable, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core'
 import { timestamptz } from '@basketline/platform'
 
 export { processedEvents } from '@basketline/platform'
@@ -32,4 +32,11 @@ export const userAccessState = pgTable('user_access_state', {
 export const deletedTenants = pgTable('deleted_tenants', {
   tenantId: uuid('tenant_id').primaryKey(),
   deletedAt: timestamptz('deleted_at').notNull(),
+})
+
+/** Each tenant's allowed websites (TenantOriginsChanged); no row or an empty list: any. */
+export const tenantOrigins = pgTable('tenant_origins', {
+  tenantId: uuid('tenant_id').primaryKey(),
+  origins: text('origins').array().notNull(),
+  version: integer('version').notNull(),
 })

@@ -222,6 +222,43 @@ describe('revocation (from auth events, no calls to the auth service)', () => {
     expect((await request(gateway).get(`/api/v1/accounts/${tenant}`)).status).toBe(404)
   })
 
+  it("lets a browser send a tenant's events only from its allowed websites, once it lists any", async () => {
+    const tenant = randomUUID()
+    const visitor = await visitorTokenFor(keys, tenant)
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: tenant, userId: randomUUID() })
+    const events = (origin: string | null, auth = visitor.header) => {
+      const req = request(gateway).post('/api/v1/analytics/events').set('Authorization', auth)
+      return (origin ? req.set('Origin', origin) : req).send({ events: [] })
+    }
+    const visitorToken = (origin: string) => request(gateway).post('/api/v1/auth/visitor').set('Origin', origin).set('tenant_id', tenant).send({})
+    // No list yet: any website.
+    expect((await events('https://anywhere.example')).status).toBe(200)
+
+    const allow = (origins: string[], version: number) =>
+      apply({ ...authEvent('TenantOriginsChanged', tenant, version, {}), aggregateId: tenant, payload: { tenantId: tenant, origins, version, changedAt: new Date().toISOString() } })
+    await allow(['https://shop.example'], 1)
+    expect((await events('https://shop.example')).status).toBe(200)
+    expect((await events('https://shop.example', `Bearer ${shopper.token}`)).status).toBe(200)
+    expect((await visitorToken('https://shop.example')).status).toBe(200)
+    for (const res of [await events('https://copycat.example'), await events('https://copycat.example', `Bearer ${shopper.token}`), await visitorToken('https://copycat.example')]) {
+      expect(res.status).toBe(403)
+      expect(res.body.error.code).toBe('ORIGIN_NOT_ALLOWED')
+    }
+    // Basketline's own apps, and callers that aren't browsers (no Origin), aren't held to the list.
+    expect((await events('http://localhost:5173')).status).toBe(200)
+    expect((await events(null)).status).toBe(200)
+
+    // An older list arriving late doesn't replace a newer one; an empty list allows any website again.
+    await allow(['https://old.example'], 0)
+    expect((await events('https://shop.example')).status).toBe(200)
+    await allow([], 2)
+    expect((await events('https://copycat.example')).status).toBe(200)
+    // Managers read and set the list; the gateway only routes it.
+    const manager = await tokenFor(keys, 'campaign-manager', { tid: tenant })
+    expect((await request(gateway).put('/api/v1/auth/allowed-origins').set('Authorization', manager.header).send({ origins: [] })).body).toEqual({ from: 'auth', url: '/api/v1/auth/allowed-origins' })
+    expect((await request(gateway).get('/api/v1/auth/allowed-origins').set('Authorization', (await tokenFor(keys, 'standard-user', { tid: tenant })).header)).status).toBe(403)
+  })
+
   it('rejects all tokens of a disabled user', async () => {
     const user = await tokenFor(keys, 'standard-user')
     await apply(authEvent('UserDisabled', user.sub, 2, { disabledAt: new Date().toISOString() }))

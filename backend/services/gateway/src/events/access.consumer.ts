@@ -1,6 +1,6 @@
 import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
 import type { DbOrTx } from '../db/client.ts'
-import { insertDeletedTenant, insertRevokedSession, markUserDisabled, setTokensNotBefore } from '../repositories/access.repository.ts'
+import { insertDeletedTenant, insertRevokedSession, markUserDisabled, setTokensNotBefore, upsertTenantOrigins } from '../repositories/access.repository.ts'
 
 /** Applies auth.session.v1 / auth.user.v1 / auth.tenant.v1 events to the gateway's access tables. */
 export async function handleAccessEvent(db: DbOrTx, envelope: EventEnvelope): Promise<void> {
@@ -21,6 +21,9 @@ export async function handleAccessEvent(db: DbOrTx, envelope: EventEnvelope): Pr
     }
     case 'TenantDeleted':
       await insertDeletedTenant(db, envelope.payload as EventPayloads['TenantDeleted'])
+      return
+    case 'TenantOriginsChanged':
+      await upsertTenantOrigins(db, envelope.payload as EventPayloads['TenantOriginsChanged'])
       return
     default:
       return

@@ -80,3 +80,26 @@ export function validateVisitor(body: unknown): string[] {
   if (body.clientType !== undefined && !isOneOf(body.clientType, ['web', 'mobile'])) errors.push('clientType must be "web" or "mobile"')
   return errors
 }
+
+export const MAX_ALLOWED_ORIGINS = 20
+
+/** A website's origin: http(s), a host, maybe a port; no path, query or credentials. */
+function isOrigin(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length > 200) return false
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.pathname === '/' && !url.search && !url.hash && !url.username && !url.password && !value.includes('*')
+  } catch {
+    return false
+  }
+}
+
+export function validateAllowedOrigins(body: unknown): string[] {
+  if (!isPlainObject(body) || !Array.isArray(body.origins)) return ['body must be { "origins": ["https://shop.example", ...] }']
+  const errors = unknownKeys(body, ['origins']).map((key) => `unknown field "${key}"`)
+  if (body.origins.length > MAX_ALLOWED_ORIGINS) errors.push(`origins must have at most ${MAX_ALLOWED_ORIGINS} items`)
+  body.origins.forEach((origin, index) => {
+    if (!isOrigin(origin)) errors.push(`origins[${index}] must be a website origin like https://shop.example (no path)`)
+  })
+  return errors
+}

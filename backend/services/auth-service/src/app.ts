@@ -49,7 +49,8 @@ export function buildAuthApp({
 
   const publish = createEventPublisher(bus, PRODUCER, logger)
   const service = createAuthService({ db, privateKey, publicKey, publish })
-  const controller = createAuthController(service, createShopperService({ db, privateKey }))
+  const accounts = createAccountService({ db, publish })
+  const controller = createAuthController(service, createShopperService({ db, privateKey }), accounts)
 
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -66,7 +67,7 @@ export function buildAuthApp({
 
   // This service owns the session table, so its routes also reject ended sessions directly.
   app.use('/api/v1/auth', authRoutes(controller, { authenticate: authenticate(publicKey, service.checkSession), loginLimiter }))
-  app.use('/api/v1/accounts', accountRoutes(createAccountController(createAccountService({ db, publish }))))
+  app.use('/api/v1/accounts', accountRoutes(createAccountController(accounts)))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

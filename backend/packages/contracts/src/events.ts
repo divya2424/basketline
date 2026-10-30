@@ -27,6 +27,7 @@ export interface EventEnvelope<P = unknown> {
   payload: P
 }
 
+
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed'
 
 export interface ProductState {
@@ -85,6 +86,18 @@ export interface TenantDeletedPayload {
   deletedAt: string
 }
 
+/**
+ * The websites (origins, e.g. "https://shop.example") whose pages may send the
+ * tenant's events through the SDK; empty: any. The whole list each time, with a
+ * version that only grows, so the gateway keeps the newest list whatever the order.
+ */
+export interface TenantOriginsChangedPayload {
+  tenantId: string
+  origins: string[]
+  version: number
+  changedAt: string
+}
+
 /** Payload of each event type. */
 export interface EventPayloads {
   UserCreated: { userId: string; username: string; role: Role; isActive: boolean }
@@ -93,6 +106,7 @@ export interface EventPayloads {
   SessionRevoked: { sessionId: string; userId: string; revokedAt: string; expiresAt: string }
   TenantOnboarded: TenantOnboardedPayload
   TenantDeleted: TenantDeletedPayload
+  TenantOriginsChanged: TenantOriginsChangedPayload
   ProductCreated: ProductState
   ProductUpdated: ProductState
   ProductDeactivated: { productId: string; tenantId: string; deactivatedAt: string; deactivatedBy: string }
@@ -112,6 +126,7 @@ export const EVENTS: Record<EventType, { topic: string; version: number }> = {
   SessionRevoked: { topic: TOPICS.sessions, version: 1 },
   TenantOnboarded: { topic: TOPICS.tenants, version: 1 },
   TenantDeleted: { topic: TOPICS.tenants, version: 1 },
+  TenantOriginsChanged: { topic: TOPICS.tenants, version: 1 },
   ProductCreated: { topic: TOPICS.products, version: 1 },
   ProductUpdated: { topic: TOPICS.products, version: 1 },
   ProductDeactivated: { topic: TOPICS.products, version: 1 },

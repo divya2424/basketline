@@ -492,6 +492,32 @@ describe('tenant onboarding (/accounts)', () => {
     expect((await request(app).delete(`/api/v1/auth/api-keys/${added.body.prefix}`).set('Authorization', otherManager)).status).toBe(404)
   })
 
+  it("lets the tenant's managers set its allowed websites, normalized, and tells the gateway", async () => {
+    const res = await onboard({ name: 'Vendor with a website', tier: 'free', dummyUsers: true })
+    const tenant = res.body.account.tenantId as string
+    const manager = `Bearer ${(await signIn(tenant, 'onboarding')).body.accessToken}`
+    const shopper = `Bearer ${(await signIn(tenant, 'user01')).body.accessToken}`
+    const origins = () => request(app).get('/api/v1/auth/allowed-origins').set('Authorization', manager)
+    const set = (body: object, auth = manager) => request(app).put('/api/v1/auth/allowed-origins').set('Authorization', auth).send(body)
+    // None at first: any website may send the tenant's events.
+    expect((await origins()).body).toEqual({ origins: [] })
+
+    const saved = await set({ origins: ['HTTPS://Shop.Example:443/', 'https://shop.example', 'http://localhost:3000'] })
+    expect(saved.status).toBe(200)
+    expect(saved.body).toEqual({ origins: ['https://shop.example', 'http://localhost:3000'] })
+    expect((await origins()).body.origins).toEqual(['https://shop.example', 'http://localhost:3000'])
+    const changed = publishedEvents('TenantOriginsChanged').filter((event) => event.payload.tenantId === tenant)
+    expect(changed.at(-1)!.payload).toMatchObject({ origins: ['https://shop.example', 'http://localhost:3000'], version: 1 })
+    expect((await set({ origins: [] })).body.origins).toEqual([])
+    expect(publishedEvents('TenantOriginsChanged').filter((event) => event.payload.tenantId === tenant).at(-1)!.payload).toMatchObject({ origins: [], version: 2 })
+
+    const bad = await set({ origins: ['https://shop.example/checkout', 'ftp://shop.example', 'https://*.shop.example', 'shop.example'] })
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.details.errors).toHaveLength(4)
+    expect((await set({ origins: Array.from({ length: 21 }, (_, i) => `https://shop${i}.example`) })).status).toBe(400)
+    expect((await set({ origins: [] }, shopper)).status).toBe(403)
+  })
+
   it('deletes a tenant and all of its identity data when its name is typed again, then tells the other services', async () => {
     const res = await onboard({ name: 'To Delete', tier: 'free', dummyUsers: true })
     const tenant = res.body.account.tenantId as string

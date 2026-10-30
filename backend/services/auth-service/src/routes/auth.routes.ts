@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from 'express'
 import { requireRole, validate } from '@basketline/platform'
 import type { AuthController } from '../controllers/auth.controller.ts'
-import { validateApiKey, validateLogin, validateRegister, validateShopperToken, validateVisitor } from '../validators/auth.validator.ts'
+import { validateAllowedOrigins, validateApiKey, validateLogin, validateRegister, validateShopperToken, validateVisitor } from '../validators/auth.validator.ts'
 
 /** Mounted at /api/v1/auth. */
 export function authRoutes(
@@ -23,6 +23,9 @@ export function authRoutes(
   router.get('/api-keys', ...manager, controller.listApiKeys)
   router.post('/api-keys', ...manager, validate(validateApiKey), controller.createApiKey)
   router.delete('/api-keys/:prefix', ...manager, controller.revokeApiKey)
+  // The websites whose pages may send the tenant's events (the gateway enforces them).
+  router.get('/allowed-origins', ...manager, controller.allowedOrigins)
+  router.put('/allowed-origins', ...manager, validate(validateAllowedOrigins), controller.setAllowedOrigins)
 
   return router
 }

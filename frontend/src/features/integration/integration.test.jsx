@@ -22,12 +22,25 @@ function fakeService() {
   }
 }
 
+/** A fake of the allowed-websites calls, normalizing like auth-service. */
+function fakeOrigins(initial = []) {
+  let origins = [...initial]
+  return {
+    listAllowedOrigins: vi.fn(async () => [...origins]),
+    setAllowedOrigins: vi.fn(async (next) => {
+      if (next.some((origin) => !/^https?:\/\/[^/]+$/.test(origin.replace(/\/$/, '')))) throw new Error('origins[0] must be a website origin like https://shop.example (no path)')
+      origins = [...new Set(next.map((origin) => new URL(origin).origin))]
+      return [...origins]
+    }),
+  }
+}
+
 describe('ApiKeysPanel', () => {
   it('loads nothing until opened, then shows the SDK setup with this store and its keys', async () => {
     setRequestTenant(TENANT)
     const service = fakeService()
     const user = userEvent.setup()
-    render(<ApiKeysPanel service={service} />)
+    render(<ApiKeysPanel service={service} originsService={fakeOrigins()} />)
     expect(service.listApiKeys).not.toHaveBeenCalled()
 
     await user.click(screen.getByText('Integrate your site'))
@@ -40,7 +53,7 @@ describe('ApiKeysPanel', () => {
     setRequestTenant(TENANT)
     const service = fakeService()
     const user = userEvent.setup()
-    render(<ApiKeysPanel service={service} />)
+    render(<ApiKeysPanel service={service} originsService={fakeOrigins()} />)
     await user.click(screen.getByText('Integrate your site'))
     await screen.findByRole('list', { name: 'API keys' })
 
@@ -57,5 +70,33 @@ describe('ApiKeysPanel', () => {
     await waitFor(() => expect(within(list).getAllByText('Revoked')).toHaveLength(1))
     // The new key's secret stays visible until it's revoked or the page closes.
     expect(screen.getByTestId('api-key-secret')).toBeInTheDocument()
+  })
+})
+
+describe('allowed websites', () => {
+  it('warns that any website may send events until one is added, then lists, adds and removes them', async () => {
+    setRequestTenant(TENANT)
+    const origins = fakeOrigins()
+    const user = userEvent.setup()
+    render(<ApiKeysPanel service={fakeService()} originsService={origins} />)
+    expect(origins.listAllowedOrigins).not.toHaveBeenCalled()
+    await user.click(screen.getByText('Integrate your site'))
+    expect(await screen.findByText(/Any website can send events for your store/)).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Website address'), 'https://Shop.example/')
+    await user.click(screen.getByRole('button', { name: 'Add website' }))
+    const list = await screen.findByRole('list', { name: 'Allowed websites' })
+    expect(list).toHaveTextContent('https://shop.example')
+    expect(origins.setAllowedOrigins).toHaveBeenLastCalledWith(['https://Shop.example/'])
+    expect(screen.getByLabelText('Website address')).toHaveValue('')
+
+    await user.type(screen.getByLabelText('Website address'), 'https://shop.example/checkout')
+    await user.click(screen.getByRole('button', { name: 'Add website' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('must be a website origin')
+    expect(screen.getByLabelText('Website address')).toHaveValue('https://shop.example/checkout')
+
+    await user.click(screen.getByRole('button', { name: 'Remove https://shop.example' }))
+    expect(await screen.findByText(/Any website can send events for your store/)).toBeInTheDocument()
+    expect(origins.setAllowedOrigins).toHaveBeenLastCalledWith([])
   })
 })

@@ -3,7 +3,7 @@
  * `npm run db:generate -w @basketline/auth-service`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, index, pgEnum, pgPolicy, pgTable, primaryKey, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, integer, pgEnum, pgPolicy, pgTable, primaryKey, text, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { ROLES } from '@basketline/contracts'
 import { timestamptz } from '@basketline/platform'
 
@@ -18,6 +18,9 @@ export const accounts = pgTable('accounts', {
   tenantId: uuid('tenant_id').primaryKey(),
   name: varchar('name', { length: 200 }).notNull(),
   tier: accountTier('tier').notNull().default('free'),
+  /** Websites allowed to send the tenant's events from the browser (empty: any); see TenantOriginsChanged. */
+  allowedOrigins: text('allowed_origins').array().notNull().default(sql`'{}'::text[]`),
+  originsVersion: integer('origins_version').notNull().default(0),
   createdAt: timestamptz('created_at').notNull().defaultNow(),
   updatedAt: timestamptz('updated_at').notNull().defaultNow(),
 })

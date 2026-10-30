@@ -4,7 +4,7 @@
  *   tenantId     the store's tenant (a UUID): the one last opened from the onboarding
  *                page (localStorage), else VITE_TENANT_ID (always set)
  *   tenantName   that tenant's name, shown as the header's brand inside the store
- *   userId       the signed-in user's ID, or null for anonymous visitors
+ *   userId       the signed-in user's ID, or null for visitors (their events use the browser's visitor UUID)
  *   accessToken  the signed-in user's JWT, sent as Authorization: Bearer …
  *
  * AuthProvider updates the user synchronously on sign-in, sign-out and

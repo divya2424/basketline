@@ -47,7 +47,7 @@ export function buildAuthApp({
   const app = createBaseApp({ name: 'auth-service', logger, health })
 
   const publish = createEventPublisher(bus, PRODUCER, logger)
-  const service = createAuthService({ db, privateKey, publish })
+  const service = createAuthService({ db, privateKey, publicKey, publish })
   const controller = createAuthController(service)
 
   const loginLimiter = rateLimit({

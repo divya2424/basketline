@@ -1,11 +1,24 @@
 /**
  * Analytics events. analytics-service publishes each accepted event to the
- * topic for its event name; the Spark streaming job (backend/streaming) reads
- * all of them (pattern `analytics\..+\.v1`) and writes them to ClickHouse.
+ * topic for its event name; the Flink job (backend/flink) reads all of them
+ * (pattern `analytics\..+\.v1`) and writes the SERVING_TOPICS, which ClickHouse
+ * loads (infra/clickhouse/kafka.sql).
  */
 
-/** The three events the campaign metrics count. They always carry a campaignId. */
-export const METRIC_EVENT_NAMES = ['impression', 'click', 'click_to_basket'] as const
+/** The app an event was sent from; every metric is counted per client type and in total. */
+export const CLIENT_TYPES = ['web', 'mobile'] as const
+export type ClientType = (typeof CLIENT_TYPES)[number]
+
+/** Who sent an event: a registered user (access token) or a visitor (visitor token). */
+export const USER_TYPES = ['visitor', 'registered'] as const
+export type UserType = (typeof USER_TYPES)[number]
+
+/**
+ * The events the campaign metrics count. They always carry a campaignId. A click
+ * with a productId can be credited with a later add_to_cart of that product by
+ * the same user (the Flink job does the attribution; clients send no link).
+ */
+export const METRIC_EVENT_NAMES = ['impression', 'click'] as const
 /** Other storefront activity, stored for later analysis; campaignId is optional. */
 export const ACTIVITY_EVENT_NAMES = [
   'home_view',
@@ -23,6 +36,18 @@ export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
 export const ANALYTICS_EVENT_TYPE = 'AnalyticsEventRecorded'
 
+/**
+ * Written by the Flink job: every valid event as an analytics.events row, each
+ * (add_to_cart, earlier click on that product by the same user) pair as an
+ * analytics.attributed_baskets row, and each user session as an analytics.sessions row.
+ * Their names don't match `analytics\..+\.v1`, so the job never reads its own output.
+ */
+export const SERVING_TOPICS = {
+  events: 'serving.events.v1',
+  attributedBaskets: 'serving.attributed_baskets.v1',
+  sessions: 'serving.sessions.v1',
+} as const
+
 /** e.g. analytics.add_to_cart.v1 */
 export function analyticsTopic(eventName: AnalyticsEventName): string {
   return `analytics.${eventName}.v1`
@@ -34,14 +59,19 @@ export interface AnalyticsEventPayload {
   eventName: AnalyticsEventName
   campaignId: string | null
   productId: string | null
-  /** From the access token (null for a visitor), never from the request body. */
-  userId: string | null
+  /**
+   * The person, from the sender's token (never from the request body): the
+   * registered user's ID, or the visitor's UUID, which the client keeps when the
+   * visitor registers. Every event has one.
+   */
+  userId: string
+  userType: UserType
+  /** From the sender's token: the app it signed in with, or asked a visitor token for. */
+  clientType: ClientType
   /** The tenant (UUID), from the sender's access or visitor token. */
   tenantId: string
   pageName: string | null
   featureName: string | null
-  /** For click_to_basket: the eventId of the click it is credited to. */
-  attributionId: string | null
   properties: Record<string, unknown>
   /** When it happened (client clock), ISO 8601. */
   timestamp: string

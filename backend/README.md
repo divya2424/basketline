@@ -1,6 +1,6 @@
 # E-commerce Analytics: backend
 
-Five Node.js + TypeScript microservices that talk to each other only through **Kafka** events, plus a small **Spark Structured Streaming** job that loads analytics events into **ClickHouse**. There are no service-to-service HTTP calls.
+Five Node.js + TypeScript microservices that talk to each other only through **Kafka** events, plus a **Flink SQL** job that credits basket additions to ad clicks and loads analytics events into **ClickHouse** (through Kafka), and an **Airflow** job that archives the raw events to **Iceberg** on S3 (`airflow/`). There are no service-to-service HTTP calls.
 
 ```
                    ┌──────────── gateway :8080 ────────────┐
@@ -11,12 +11,12 @@ Five Node.js + TypeScript microservices that talk to each other only through **K
    identity_db        product_db          campaign_db             │ publish           ▲ /ad counts (SQL)
      │  publish          │  publish          ▲ consume  │ publish   ▼                   │
      ▼                   ▼                   │          ▼         analytics.<event>.v1  ClickHouse
- auth.user.v1      product.v1 ─────────────── ┘    campaign.v1    (12 topics) ──► spark-streaming ──┘
+ auth.user.v1      product.v1 ─────────────── ┘    campaign.v1    (12 topics) ──► flink-streaming ──┘
  auth.session.v1 ──────────────────────────► gateway (gateway_db: revoked sessions)
 ```
 
 - **Separate databases.** Each service has its own Postgres database **and its own login**. The login can't connect to any other service's database. analytics-service is the exception: it stores nothing and only reads ClickHouse.
-- **Analytics pipeline.** analytics-service validates each event and publishes it to the topic for its event type. The Spark job (`streaming/`) writes all of them to ClickHouse, and the `/ad` metrics are counted there.
+- **Analytics pipeline.** analytics-service validates each event and publishes it to the topic for its event type. The Flink job (`flink/`) credits each basket addition to its click and writes both to the `serving.*` topics, which ClickHouse loads; the `/ad` metrics are counted there.
 - **Local copies of other services' data.** A service that needs another's data keeps a local *projection* built from that service's events. For example, the campaign service keeps a `products` table (with each product's tenant, creators and timestamps), checks product IDs against it, and never calls the product service.
 - **Plain Express in every service.**
 - Requires Node 24, which runs the `.ts` files directly; there is no build step.
@@ -40,7 +40,7 @@ services/<service>/
     events/           Kafka consumers that update local projections
     db/schema.ts      the service's tables: the source of truth for its schema
     db/client.ts      creates the Drizzle client and runs migrations
-streaming/            the PySpark job (package event_pipeline) that writes analytics topics to ClickHouse
+flink/                the Flink SQL job: analytics topics → validated events + click→basket attribution + user sessions → serving topics
 loadtest/             k6 load test for the analytics path (p99 latency and freshness); results in loadtest/README.md
 deploy/helm/          Kubernetes: one Helm chart and release per service, helmfile to deploy all or one (deploy/helm/README.md)
 infra/                Postgres and ClickHouse init scripts
@@ -67,7 +67,7 @@ npm run db:generate                            # or: every service (prints "No s
 cd backend
 npm install
 npm run keys                                   # ES256 key pair → keys/ (git-ignored)
-docker compose up -d --build                   # Postgres, Kafka, ClickHouse, 4 services, Spark job, gateway on :8080
+docker compose up -d --build                   # Postgres, Kafka, ClickHouse, 4 services, Flink job, gateway on :8080
 
 # Create the storefront's account (tenant): its UUID is VITE_TENANT_ID in
 # ../frontend/.env.example. Tiers: free (default), pro, enterprise.
@@ -100,6 +100,8 @@ Rows in `users` and `user_login` are visible only to their own tenant, enforced 
 ```bash
 npm run verify      # typecheck + architecture check + unit/integration tests
 npm run test:e2e    # full flow through the gateway with the real Kafka broker
+npm run test:flink  # attribution rules and sessions through Kafka → Flink → ClickHouse (needs flink-streaming and analytics-service up too)
+npm run test:airflow # the Airflow jobs: Iceberg export and customer rebuild (needs archive-storage up too, and uv)
 ```
 
 **Frontend.** Set `VITE_API_BASE_URL=http://localhost:8080/api/v1` and `VITE_ANALYTICS_MODE=live` in `frontend/.env`. The gateway allows CORS from `http://localhost:5173` (`CORS_ORIGINS`).
@@ -108,9 +110,9 @@ npm run test:e2e    # full flow through the gateway with the real Kafka broker
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| POST | `/auth/register` | anyone | `{username, password}`, with the storefront's `tenant_id` header (a UUID; else 400 `TENANT_REQUIRED`). Always `standard-user`; a `role` field is rejected. The user belongs to that tenant. |
-| POST | `/auth/login` | anyone | `{username, password, clientType: web\|mobile}`, with the storefront's `tenant_id` header (usernames are unique per tenant) → `{accessToken, tokenType, expiresIn: 1800, user, session}`. The token carries the user's tenant (`tid`). Rate limited. |
-| POST | `/auth/visitor` | anyone | With the storefront's `tenant_id` header → `{visitorToken, tokenType, expiresIn: 1800}`: an anonymous visitor's token for that tenant. It only works for `POST /analytics/events`. Rate limited per IP (`VISITOR_RATE_LIMIT_PER_MINUTE`). |
+| POST | `/auth/register` | anyone | `{username, password}`, with the storefront's `tenant_id` header (a UUID; else 400 `TENANT_REQUIRED`). Always `standard-user`; a `role` field is rejected. The user belongs to that tenant. An optional `visitorToken` (the visitor token the client used before signing up, for this tenant) makes the visitor's UUID the user's ID, so their analytics stay one person; an invalid one, another tenant's, or a UUID that is already a user gets a random ID, never failing the sign-up. |
+| POST | `/auth/login` | anyone | `{username, password, clientType: web\|mobile}`, with the storefront's `tenant_id` header (usernames are unique per tenant) → `{accessToken, tokenType, expiresIn: 1800, user, session}`. The token carries the user's tenant (`tid`) and `clientType` (`client`). Rate limited. |
+| POST | `/auth/visitor` | anyone | With the storefront's `tenant_id` header and an optional body `{userId, clientType}` (the UUID the client keeps for this visitor in this store; `web` or `mobile`, default `web`) → `{visitorToken, tokenType, expiresIn: 1800, userId}`: a visitor's token for that tenant, whose ID is that `userId` (else a random one), so the visitor counts as one customer across tokens, and stays the same person after registering. It only works for `POST /analytics/events`. Rate limited per IP (`VISITOR_RATE_LIMIT_PER_MINUTE`). |
 | POST | `/auth/logout` | signed in | Sets `session_end_time` and publishes `SessionRevoked`. |
 | GET | `/auth/me` | signed in | Current user. |
 | GET | `/auth/sessions` | signed in | The user's sessions, newest first; `?limit&offset`. |
@@ -125,35 +127,48 @@ npm run test:e2e    # full flow through the gateway with the real Kafka broker
 | DELETE | `/campaigns/:id` | campaign-manager | Archives the campaign (soft delete). |
 | GET / POST | `/campaigns/:id/products` | GET anyone, POST manager | POST `{productIds: [...]}`, of the campaign's own tenant only (another tenant's product is unknown: 409 `PRODUCT_NOT_YET_AVAILABLE`). |
 | DELETE | `/campaigns/:id/products/:productId` | campaign-manager | Removes one product. |
-| POST | `/analytics/events` | access or visitor token | `{events: [...]}`, 1–100 per request. Returns `accepted`/`rejected` for each event; 429 `TOO_MANY_EVENTS` past 300 events per sender per minute; 503 `EVENTS_NOT_DELIVERED` if Kafka is down. |
-| GET | `/ad/:campaignId/clicks` \| `impressions` \| `clickToBasket` | campaign manager | `?from&to` (default: last 30 days, max 366) → `{campaignId, metric, count, period}`, counted in ClickHouse over the manager's own tenant's events only (the token's `tid`; a `tenant_id` header is ignored). An unknown campaign has `count: 0`. |
+| POST | `/analytics/events` | access or visitor token | `{tenantId, userId, userType, events: [...]}`, 1–100 events per request: the tenant, user and user type the token was issued for (`registered` for an access token, `visitor` for a visitor token). Any difference from the token, or a `tenant_id` header for another tenant, rejects the whole batch with 403 `IDENTITY_MISMATCH` before anything is published. Returns `accepted`/`rejected` for each event; 429 `TOO_MANY_EVENTS` past 300 events per sender per minute; 503 `EVENTS_NOT_DELIVERED` if Kafka is down. |
+| GET | `/ad/:campaignId/clicks` \| `impressions` \| `clickToBasket` \| `uniqueCustomers` \| `sessions` | campaign manager | `?from&to` (default: last 30 days, max 366) → `{campaignId, metric, count, customers?, <the metric's columns>, period}`: `count` is the total, and the columns are the daily tables' for that metric. `/clicks` → `total_clicks`, `total_web_clicks`, `total_mobile_clicks`, plus `customers` (the people who clicked) and `customers_clicks`, `customers_web_clicks`, `customers_mobile_clicks`, `customers_registered_clicks`, `customers_visitor_clicks`; the same for `/impressions` (people who saw it) and `/clickToBasket` (people who added a product to the cart after clicking it in the ad). `/uniqueCustomers` → `has_visited`, `has_visited_in_web`, `has_visited_in_mobile`, `has_visited_in_both`, `has_visited_registered`, `has_visited_visitor`. `/sessions` → `total_sessions` (= `count`), `total_converted_sessions`, `avg_session_duration_ms`. Counted in ClickHouse over the manager's own tenant's events only (the token's `tid`; a `tenant_id` header is ignored). An unknown campaign has `count: 0`. |
 
 **Errors** use one format: `{ "error": { "code", "message", "requestId", "details"? } }`. Validation failures return `400 VALIDATION_FAILED` with `details.errors: string[]`.
 
 **Product not yet known to the campaign service.** If a product was created moments ago, the campaign service may not have received its event yet. Creating a campaign with it then returns **409 `PRODUCT_NOT_YET_AVAILABLE` with `Retry-After: 5`**; retry and it will succeed.
 
-**Analytics events.** Each event is `{eventId, eventName, timestamp, campaignId?, productId?, attributionId?, pageName?, featureName?, properties?}`.
-- **Who sent it:** every request needs a token. A signed-in user sends their access token; an anonymous visitor gets a visitor token from `POST /auth/visitor` (the storefront does this itself). The tenant and user come from that token, never from a header or the body, so nobody can send events into another tenant without a token for it.
-- **Checks on arrival:** the format (UUIDs, a known `eventName`, a `campaignId` on metric events, an `attributionId` on `click_to_basket`), the timestamp (at most 5 days old, at most 5 minutes in the future), at most 300 events per sender per minute (429 `TOO_MANY_EVENTS`, counted per analytics-service instance), and, for metric events only, that the campaign belongs to the sender's tenant and is active and not archived (else that event is rejected with `CAMPAIGN_NOT_ACTIVE`). The campaign check reads `analytics.campaigns`, which analytics-service keeps from `campaign.v1` and caches for 10 seconds, so a new campaign's events count within a few seconds of its creation. Valid events are published to `analytics.<eventName>.v1`.
-- **Metric events** (`impression`, `click`, `click_to_basket`) are what `/ad/...` counts. **Storefront activity** (`home_view`, `campaign_navigation`, `product_impression`, `product_click`, `add_to_cart`, `cart_view`, `cart_quantity_update`, `remove_from_cart`, `login_click`) is stored for later analysis and never changes the metrics.
-- `user_id` is the access token's user (null for a visitor); `tenant_id` is the token's tenant.
-- **Counted in ClickHouse, when the metric is read:**
+**Analytics events.** Each event is `{eventId, eventName, timestamp, campaignId?, productId?, pageName?, featureName?, properties?}`.
+- **Who sent it:** every request needs a token. A registered user sends their access token; a visitor (not registered) gets a visitor token for the UUID the client keeps for them from `POST /auth/visitor` (the storefront does this itself). The client sends the same UUID for the person before and after they register. It also sends the tenant, user and user type its token was issued for, and a batch whose identity doesn't match its token is rejected whole (403 `IDENTITY_MISMATCH`). What is stored still comes from the token: tenant, `userId`, `userType` (`visitor` or `registered`) and client type (`clientType`, web or mobile), so nobody can send events into another tenant, or as someone else, without a token for it.
+- **Checks on arrival:** the format (UUIDs, a known `eventName`, a `campaignId` on metric events), the timestamp (at most 5 days old, at most 5 minutes in the future), at most 300 events per sender per minute (429 `TOO_MANY_EVENTS`, counted per analytics-service instance), and, for metric events only, that the campaign belongs to the sender's tenant and is active and not archived (else that event is rejected with `CAMPAIGN_NOT_ACTIVE`). The campaign check reads `analytics.campaigns`, which analytics-service keeps from `campaign.v1` and caches for 10 seconds, so a new campaign's events count within a few seconds of its creation. Valid events are published to `analytics.<eventName>.v1`.
+- **Metric events** (`impression`, `click`) are what `/ad/...` counts, with click-to-basket derived from `click` and `add_to_cart` (below). **Storefront activity** (`home_view`, `campaign_navigation`, `product_impression`, `product_click`, `add_to_cart`, `cart_view`, `cart_quantity_update`, `remove_from_cart`, `login_click`) is stored for later analysis and never changes the metrics.
+- **Click-to-basket is the platform's, not the client's.** Clients send plain `add_to_cart` events; there is no `click_to_basket` event and no link to a click (both are rejected). The Flink job keeps each user's clicks and credits an `add_to_cart` of product P to that user's **latest** `click` on P in the **7 days** before it (last click; a person keeps their UUID when they register, so a click made as a visitor counts after signing in). Either event may arrive first, up to 5 days late. Flink writes every candidate click to `analytics.attributed_baskets`, and ClickHouse credits the latest (see `flink/README.md`).
+- **Counted in ClickHouse:**
   - an event sent twice counts once (`uniqExact(event_id)`);
-  - a `click_to_basket` counts only if `attributionId` names a `click` on the same campaign, for the same product (if the click had one), by the same user (if both were signed in), within 24 hours after the click, and only once per click and product.
+  - a credited basket addition counts once per click and product (`uniqExact(click_event_id, product_id)`), so adding the same product twice after one click counts once.
+- **User sessions:** a user's events with no 6-hour gap between them, built by Flink (`analytics.sessions`, one row per session) and counted per campaign seen in `analytics.daily_campaign_sessions_aggregation`. A session is written about 7 hours after its last event, so `/ad/:id/sessions` runs that far behind; see `flink/README.md`, "Sessions".
 - Events for unknown or inactive campaigns are stored, but nothing on the dashboard shows them.
 - Counts are **per tenant**: `analytics.events` is sorted by `(tenant_id, event_name, campaign_id, event_time, event_id)`, and every metric query filters by the caller's tenant, so it reads only that tenant's slice. Tenant IDs are UUIDs everywhere.
-- Counts update after Spark's next micro-batch, within about 30 seconds. They are **event totals, not unique customers**.
-- **Daily aggregates:** `analytics.campaign_daily_aggregates` has one row per UTC `day`, `tenant_id` and `campaign_id`, with `total_ad_impressions`, `total_ad_clicks` and `total_click_to_basket`, counted by the rules above. `(tenant_id, campaign_id, day)` is unique: every job run rebuilds the table and swaps it in atomically, so there is never more than one row per key. Query it directly, e.g. `SELECT * FROM analytics.campaign_daily_aggregates WHERE tenant_id = toUUID('5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01')`.
+- **Dashboards show data under a minute old, at the lowest cost.** The worst case adds up as follows:
+  - the storefront sends events in batches every 2 s;
+  - Flink writes each one to its serving topic within about a second;
+  - ClickHouse stores what it reads at least every 15 s (`kafka_flush_interval_ms`);
+  - `/ad` reuses a count for 15 s (`METRICS_CACHE_MS`);
+  - the dashboard fetches again every 20 s.
+
+  That's about 55 s at worst. Measured before these intervals were relaxed, receipt to stored took a median of 1.6–4.7 s on an idle laptop; not load-tested yet. They are **event totals**; unique customers are counted separately (below).
+- **Daily totals: `analytics.daily_campaign_aggregation`**, which `/ad` reads for clicks, impressions and click-to-basket. It has one row per UTC `day`, `tenant_id` and `campaign_id`, with each count in total and per client type: `total_impressions`, `total_web_impressions`, `total_mobile_impressions`, the same for `clicks` and `click_to_basket` (a basket addition counts under its own client type), counted by the rules above. The nightly check corrects every column. Each insert and correction is stored as a row until background merges add them into one, so query it with `sum()` (or `FINAL`). For example: `SELECT day, sum(total_clicks) FROM analytics.daily_campaign_aggregation WHERE tenant_id = toUUID('5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01') GROUP BY day ORDER BY day`.
   - **The day is when the user acted:** `event_time`, the event's own `timestamp`. Neither the Kafka time nor the time the event was stored is used.
-  - **The job runs every hour at :05**, in two ClickHouse refreshable materialized views that run in order:
-    1. `campaign_daily_changes_mv` lists the days, per tenant and campaign, that got rows stored (`ingested_at`) since the last run, today included.
-    2. `campaign_daily_aggregates_mv` recounts just those days from raw events: distinct impressions and clicks, and basket additions credited per day. Every unchanged row is kept as it was.
-  - **Late and reprocessed events are included:** they're stored with a new `ingested_at`, so the next run recounts the day they belong to. One late event costs one day of one campaign, a small range read on the events sort key. A late click also recounts the next day, for baskets credited to it. If the job is down for a while, the next run catches up, because "since the last run" is read from the newest `computed_at`.
-  - **Run it now:** `SYSTEM REFRESH VIEW` then `SYSTEM WAIT VIEW` on `analytics.campaign_daily_changes_mv` and `analytics.campaign_daily_aggregates_mv`, in that order.
-  - A click credited on two different days counts once on each day.
-  - **To rebuild all history,** run `ALTER TABLE analytics.campaign_daily_aggregates UPDATE computed_at = toDateTime64(0, 3, 'UTC') WHERE 1 SETTINGS mutations_sync = 1`, then run the job. The next run treats every day as changed, and the old rows keep serving `/ad` until it swaps in the recounted table.
-- **How `/ad` counts a period:** `from` is rounded down to UTC midnight. `to` is rounded up to the next midnight, unless it falls today. Days before yesterday are read from the daily aggregates (one row per day). Yesterday and today are counted from raw events, so the numbers never depend on when the job last ran. A late event for an older day appears in `/ad` after the next hourly run. The `period` in the response shows the rounded bounds.
-- **Raw events are kept for 7 days:** `analytics.events` has `TTL event_time + 7 days`, applied during background merges, so rows can linger a few hours longer. `/ad` is unaffected, since days before yesterday come from the daily aggregates, which are kept. Late events are accepted only up to 5 days old so that recounting their day (and the day before, for clicks credited to baskets) never meets expired rows. On an existing volume, run `infra/clickhouse/migrations/005_events_ttl.sql` (the command is at its top). Rebuilding all history (above) now only covers the last 7 days.
+- **Unique customers: `analytics.daily_campaign_customers_aggregation`**, read by `/ad/:id/uniqueCustomers`. A customer is someone who saw or clicked the campaign: their `user_id`, the same UUID whether they came as a visitor or registered (the client keeps it; the storefront keeps a visitor's in localStorage, one per store). Unique counts can't be added across days, so each day holds a `uniqCombined64` sketch and a period merges its days' sketches: someone active on several days counts once, still one small range read. It is exact up to a few thousand customers and within about 1% above. A copy of an event adds a customer already counted, so duplicates need no check. It has one row per day, tenant and campaign, with five sketches: `has_visited` (everyone), `has_visited_in_web`, `has_visited_in_mobile`, `has_visited_registered` and `has_visited_visitor` (by `user_type`). Someone on web and mobile, or seen as a visitor and then registered, counts once in `has_visited` and in each column they appear in. `/ad` derives `has_visited_in_both` as web + mobile − total (it can't be counted as events arrive, since one person's web and mobile events come in different batches).
+  - **Per metric:** the same table holds the customers behind impressions, clicks and click-to-basket (`customers_<metric>` and its `_web_`, `_mobile_`, `_registered_` and `_visitor_` splits), which `/ad/:id/<metric>` returns as `customers` and those columns. Click-to-basket customers come from `attributed_baskets` (the customer who added to the cart, for the campaign of their latest click).
+  - **Limits:** clearing storage, another browser or private mode makes a new visitor. Sketches can't be corrected by subtraction: in the rare case that a basket addition's candidate clicks (the same product clicked in two campaigns) are stored in different batches, its customer stays in both campaigns' click-to-basket customers, while the event count is corrected nightly. A visitor who signs in to an account created elsewhere (not by registering with its visitor token) stays a separate person. Query it with `uniqCombined64Merge(has_visited)`. On a volume from before `user_type`, reset and replay (below).
+  - **Live:** two materialized views (`daily_campaign_aggregation_events_mv`, `daily_campaign_aggregation_baskets_mv`) add each batch stored in `events` and `attributed_baskets` to its day as it lands. Today's totals are therefore current, and a late event counts for its own day at once. A copy within one batch counts once; a copy in a later batch (a retry, or a replay after a restart) counts twice until the nightly check.
+  - **Nightly check, at 00:30 UTC** (`daily_campaign_aggregation_check_mv`, a refreshable view): for every closed day (before today) and campaign that got rows in the last 26 hours, it recounts exactly from raw events and appends the difference as one row, for example −1 click. Basket additions are recounted with their latest click: one that got a new candidate marks every candidate's campaign as changed, so a campaign that lost the credit is corrected down (to 0 if it had nothing else that day). Past days are exact after it runs, and a day that is already right gets nothing. Each day is recounted about once, the night after it ends, and again only if late events arrive for it. If a night's run fails, those days keep their live counts, which are off only by the rare duplicates.
+  - **Run the check now:** `SYSTEM REFRESH VIEW analytics.daily_campaign_aggregation_check_mv`, then `SYSTEM WAIT VIEW analytics.daily_campaign_aggregation_check_mv`.
+  - **Older days:** the check reaches only the 14 days whose raw events ClickHouse holds. To correct older months (after a bug fix or a rule change), for one tenant or all, run the `history_backfill` DAG. It recomputes them from the Iceberg archive with Spark and swaps the months in atomically (`airflow/README.md`, "Backfilling history").
+  - **Partitions:** the three daily tables are partitioned by month (`toYYYYMM(day)`), rows still one per day, so a closed month can be swapped whole. On an existing volume, run `infra/clickhouse/migrations/010_monthly_daily_partitions.sql` (the commands are at its top).
+  - **How many duplicates there are:** `SELECT toDate(event_time) AS day, count() - uniqExact(event_id) AS copies FROM analytics.events WHERE event_name IN ('impression', 'click') GROUP BY day ORDER BY day`, before background merges remove them. That is how far today's live count can be above the exact one.
+  - The table is a `SummingMergeTree`, partitioned by year and sorted by `(tenant_id, campaign_id, day)`. Any period is one small range read, whatever the day's event volume.
+- **How `/ad` counts a period:** whole UTC days. `from` is rounded down to midnight and `to` up to the next midnight, so a period ending now includes all of today. The `period` in the response shows the rounded bounds.
+- **Raw events are kept for 14 days:** `analytics.events`, `analytics.attributed_baskets` and `analytics.sessions` are partitioned by day, with `TTL event_time + 14 days` and `ttl_only_drop_parts`, so an expired day is dropped as whole parts, never rewritten. `/ad` is unaffected, since it reads the daily totals, which are kept. Each raw day is also copied to the Iceberg archive six days after it ends and kept there forever (`airflow/README.md`). Late events are accepted only up to 5 days old, so the nightly check never recounts a day whose raw events have expired. The days beyond that are slack for a nightly job that failed to run. On an existing volume, run `infra/clickhouse/migrations/008_raw_daily_partitions.sql` (the commands are at its top).
+- **Adding the archive to an existing `pgdata` volume:** `init.sql` runs only on a new volume, so create Airflow's and the Iceberg catalog's logins and databases once: `docker compose exec postgres psql -U postgres -c "CREATE ROLE airflow_svc LOGIN PASSWORD 'airflow_svc_dev'" -c "CREATE ROLE iceberg_svc LOGIN PASSWORD 'iceberg_svc_dev'" -c 'CREATE DATABASE airflow_db OWNER airflow_svc' -c 'CREATE DATABASE iceberg_catalog_db OWNER iceberg_svc' -c 'REVOKE CONNECT ON DATABASE airflow_db, iceberg_catalog_db FROM PUBLIC' -c 'GRANT CONNECT ON DATABASE airflow_db TO airflow_svc' -c 'GRANT CONNECT ON DATABASE iceberg_catalog_db TO iceberg_svc'`.
+- **Upgrading from the hourly `campaign_daily_aggregates` job:** run the commands at the top of `infra/clickhouse/migrations/007_daily_campaign_aggregation.sql`. It fills the new table with every day counted so far and drops the old job.
 - **Upgrading an existing ClickHouse volume:** run the commands at the top of `infra/clickhouse/migrations/004_uuid_tenants.sql`. Tenant IDs became UUIDs, so it drops the analytics tables (stored events included) and `init.sql` recreates them. Postgres needs nothing: the auth, product and campaign migrations give existing users, products and campaigns the default tenant `5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01`, and users must sign in again (older tokens have no tenant). `product.v1` and `campaign.v1` events from before the upgrade have no tenant and are ignored, so update each existing campaign once (any change republishes it) for its metric events to count.
 
 ## Kafka topics and events
@@ -167,7 +182,8 @@ All events share one envelope: `{eventId, eventType, eventVersion, occurredAt, p
 | `auth.tenant.v1` | TenantOnboarded (keyed by tenant ID; carries the random seed plan: product IDs and the 2 campaigns' IDs and products) | product-service (creates the products), campaign-service (creates the campaigns). Both insert by the planned IDs, so a redelivered event creates nothing twice. |
 | `product.v1` | ProductCreated, ProductUpdated, ProductDeactivated | campaign-service (its `products` table) |
 | `campaign.v1` | CampaignCreated, CampaignUpdated, CampaignProductAssociated, CampaignProductRemoved | analytics-service (`analytics.campaigns`: each campaign's tenant, and which campaigns metric events may count for) |
-| `analytics.<eventName>.v1` (12 topics, one per event name, e.g. `analytics.click.v1`) | AnalyticsEventRecorded; `aggregateId` and key = the client's `eventId`; `payload` = `{eventId, eventName, campaignId, productId, userId, tenantId, pageName, featureName, attributionId, properties, timestamp, receivedAt}` | spark-streaming (→ ClickHouse) |
+| `analytics.<eventName>.v1` (one per event name, e.g. `analytics.click.v1`) | AnalyticsEventRecorded; `aggregateId` and key = the client's `eventId`; `payload` = `{eventId, eventName, campaignId, productId, userId, userType, clientType, tenantId, pageName, featureName, properties, timestamp, receivedAt}`. Kept **14 days** (`retention.ms`, set by analytics-service when it creates a topic): Flink keeps clicks 12 days, so a replay can rebuild all of it. Topics created before this keep 7 days until changed: `for t in $(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list \| grep '^analytics\..*\.v1$'); do docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name $t --add-config retention.ms=1209600000; done`. `analytics.click_to_basket.v1` holds only events from before attribution moved to Flink. | flink-streaming (→ `serving.*` → ClickHouse) |
+| `serving.events.v1`, `serving.attributed_baskets.v1`, `serving.sessions.v1` | Written by flink-streaming: each valid event as an `analytics.events` row, each (basket addition, candidate click) as an `analytics.attributed_baskets` row, and each session as an `analytics.sessions` row (JSON). Created by analytics-service with 48-hour retention (`retention.ms`): they only bridge Flink and ClickHouse, and a replay starts from the analytics topics. Topics created before this keep 7 days until changed: `docker compose exec kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name serving.events.v1 --add-config retention.ms=172800000` (and the same for `serving.attributed_baskets.v1`) | ClickHouse (Kafka engine tables in `infra/clickhouse/kafka.sql`) |
 
 **How the Node consumers handle messages:**
 - The gateway records each `eventId` in `processed_events`, so a redelivered message is applied only once.
@@ -203,7 +219,9 @@ On Kubernetes, the Helm charts in `deploy/helm/` set these probes and the 35 s g
 |---|---|---|
 | `DATABASE_URL` | all but analytics-service | That service's own database |
 | `CLICKHOUSE_URL` | analytics-service | e.g. `http://ecommerce_analytics:ecommerce_analytics_dev@clickhouse:8123/analytics` (the path is the database) |
-| `KAFKA_BOOTSTRAP_SERVERS`, `CLICKHOUSE_HOST`, `CLICKHOUSE_USERNAME`, `CHECKPOINT_LOCATION`, `SPARK_TRIGGER_INTERVAL`, … | spark-streaming | See `streaming/README.md` |
+| `METRICS_CACHE_MS` | analytics-service | How long an `/ad` count is reused for the same tenant, campaign, metric and days (default 15000; 0 turns it off). Viewers of one campaign then cost one ClickHouse query per interval. Each instance has its own cache |
+| `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_STARTUP_MODE`, `CHECKPOINT_DIR`, … | flink-streaming | See `flink/README.md` |
+| `PYICEBERG_CATALOG__ARCHIVE__*`, `CLICKHOUSE_URL` | airflow | The archive's Iceberg catalog and S3; see `airflow/README.md` |
 | `KAFKA_BROKERS` | all | e.g. `kafka:19092` |
 | `KAFKA_TOPIC_PREFIX` | all | Optional; isolates environments |
 | `KAFKA_REPLICATION` | all | Replication factor for created topics (default 1) |
@@ -226,13 +244,41 @@ docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-se
 docker compose start campaign-service
 ```
 
-The consumer groups are `campaign-service` and `gateway`. To reload ClickHouse from Kafka instead, see `streaming/README.md`. Topics keep events for Kafka's retention period, 7 days by default; set `retention.ms=-1` on the topics if full replays must always be possible.
+The consumer groups are `campaign-service`, `gateway`, and analytics-service's `analytics-service` (campaign status). To reload ClickHouse from Kafka, see below. Topics keep events for their retention period: 14 days for the analytics topics, Kafka's 7-day default for the others; set `retention.ms=-1` on the topics if full replays must always be possible.
 
 When the events have expired, or a consumer needs fields that older events lack, product-service can republish every product's current state instead (same versions, so it changes nothing else):
 
 ```bash
 docker compose exec product-service node services/product-service/src/cli.ts republish
 ```
+
+## Resetting and replaying ClickHouse
+
+ClickHouse holds only what Flink and analytics-service derived from Kafka, so it can be rebuilt from the topics, for example after a schema change. Only what Kafka still keeps (14 days of analytics events) comes back.
+
+```bash
+ch() { docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery "$@"; }
+kg() { docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "$@" < /dev/null; }
+docker compose stop flink-streaming analytics-service
+ch -q "DROP DATABASE analytics SYNC" < /dev/null
+# ClickHouse reads only what Flink writes from now on, not the old rows.
+kg --group clickhouse-events --topic serving.events.v1 --reset-offsets --to-latest --execute
+kg --group clickhouse-attributed-baskets --topic serving.attributed_baskets.v1 --reset-offsets --to-latest --execute
+kg --group clickhouse-sessions --topic serving.sessions.v1 --reset-offsets --to-latest --execute
+# Rebuilds analytics.campaigns from campaign.v1.
+kg --group analytics-service --topic campaign.v1 --reset-offsets --to-earliest --execute
+ch < infra/clickhouse/init.sql
+# analytics-service creates the serving topics kafka.sql reads (serving.sessions.v1 on its first start).
+docker compose up -d --build --wait analytics-service
+ch < infra/clickhouse/kafka.sql
+# No checkpoint: Flink replays every analytics topic from the earliest offset.
+docker compose run --rm --no-deps --entrypoint sh flink-streaming -c 'rm -rf /checkpoints/*'
+docker compose up -d --build flink-streaming
+```
+
+Sessions come back as the replay's watermark passes them: those that ended more than about 7 hours before the newest replayed event at once, the rest as new events arrive.
+
+Once the counts stop changing, run the nightly check so closed days are exact (`SYSTEM REFRESH VIEW analytics.daily_campaign_aggregation_check_mv`). Lost: days Kafka no longer keeps, rows written straight into ClickHouse (tests), and campaigns whose last `campaign.v1` event has expired (update each once to republish it).
 
 ## Known limitations
 
@@ -252,4 +298,4 @@ docker compose exec product-service node services/product-service/src/cli.ts rep
   docker compose up -d --build auth-service
   ```
 - **Upgrading an existing setup:** Postgres no longer creates `analytics_db`. An existing `pgdata` volume still has it, unused; drop it with `docker compose exec postgres psql -U postgres -c 'DROP DATABASE analytics_db'`. Events stored there before this change aren't moved to ClickHouse.
-- **Not implemented this round:** `CampaignMetricUpdated` events, OpenAPI files, refresh tokens, a time-series endpoint, and retention (TTL) for `analytics.events`.
+- **Not implemented this round:** `CampaignMetricUpdated` events, OpenAPI files, refresh tokens, and a time-series endpoint.

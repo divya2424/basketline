@@ -11,7 +11,7 @@ export function analyticsRoutes(ingestion: IngestionController, authenticateEven
   return router
 }
 
-/** Mounted at /api/v1/ad: GET /:campaignId/clicks | impressions | clickToBasket, for campaign managers. */
+/** Mounted at /api/v1/ad: GET /:campaignId/clicks | impressions | clickToBasket | uniqueCustomers, for campaign managers. */
 export function adMetricRoutes(metrics: MetricsController, authenticate: RequestHandler): Router {
   const router = Router()
   router.param('campaignId', uuidParam)

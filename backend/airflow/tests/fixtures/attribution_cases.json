@@ -1,0 +1,95 @@
+{
+  "description": "Click-to-basket cases run through both implementations of the rule: the live Flink job (test/flink.kafka.test.ts) and the history backfill (airflow/tests/test_history_backfill.py). Each case gets its own user, products and campaigns, named here by letter: user U or V, product P or Q, campaign A or B, tenant T (the test's) or O (another). 'at' is hours relative to the test's reference time. 'credits' maps each basket addition to the click it must be credited to, or null. 'publishLast' events are published after the others (Flink only: arrival order).",
+  "cases": [
+    {
+      "name": "plain",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A" },
+        { "id": "b", "event": "add_to_cart", "at": -2 }
+      ],
+      "credits": { "b": "c" }
+    },
+    {
+      "name": "six days after the click",
+      "events": [
+        { "id": "c", "event": "click", "at": -144, "campaign": "A" },
+        { "id": "b", "event": "add_to_cart", "at": -1 }
+      ],
+      "credits": { "b": "c" }
+    },
+    {
+      "name": "the click is published after the basket addition",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A" },
+        { "id": "b", "event": "add_to_cart", "at": -2 }
+      ],
+      "publishLast": ["c"],
+      "credits": { "b": "c" }
+    },
+    {
+      "name": "clicked as a visitor, then registered (same UUID)",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A", "userType": "visitor" },
+        { "id": "b", "event": "add_to_cart", "at": -2, "userType": "registered" }
+      ],
+      "credits": { "b": "c" }
+    },
+    {
+      "name": "the latest of two campaigns' clicks wins",
+      "events": [
+        { "id": "c1", "event": "click", "at": -5, "campaign": "A" },
+        { "id": "c2", "event": "click", "at": -4, "campaign": "B" },
+        { "id": "b", "event": "add_to_cart", "at": -3 }
+      ],
+      "credits": { "b": "c2" }
+    },
+    {
+      "name": "more than 7 days after the click",
+      "events": [
+        { "id": "c", "event": "click", "at": -192, "campaign": "A" },
+        { "id": "b", "event": "add_to_cart", "at": -1 }
+      ],
+      "credits": { "b": null }
+    },
+    {
+      "name": "before the click",
+      "events": [
+        { "id": "c", "event": "click", "at": -2, "campaign": "A" },
+        { "id": "b", "event": "add_to_cart", "at": -3 }
+      ],
+      "credits": { "b": null }
+    },
+    {
+      "name": "another product",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A", "product": "P" },
+        { "id": "b", "event": "add_to_cart", "at": -2, "product": "Q" }
+      ],
+      "credits": { "b": null }
+    },
+    {
+      "name": "another user",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A", "user": "U" },
+        { "id": "b", "event": "add_to_cart", "at": -2, "user": "V" }
+      ],
+      "credits": { "b": null }
+    },
+    {
+      "name": "the click belongs to another tenant",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A", "tenant": "O" },
+        { "id": "b", "event": "add_to_cart", "at": -2 }
+      ],
+      "credits": { "b": null }
+    },
+    {
+      "name": "the click named no product",
+      "events": [
+        { "id": "c", "event": "click", "at": -3, "campaign": "A", "product": null },
+        { "id": "b", "event": "add_to_cart", "at": -2 }
+      ],
+      "credits": { "b": null }
+    }
+  ]
+}

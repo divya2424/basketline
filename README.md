@@ -11,7 +11,7 @@ frontend (React + Vite, :5173)
 gateway (:8080) ──► auth · product · campaign · analytics services (Node.js + TypeScript)
                         │ Kafka events between services, one Postgres database each
                         ▼
-                    analytics.<event>.v1 topics ──► Spark Structured Streaming ──► ClickHouse ──► /ad metrics
+                    analytics.<event>.v1 topics ──► Flink SQL (click→basket attribution) ──► serving topics ──► ClickHouse ──► /ad metrics
 ```
 
 ## Repository layout
@@ -20,7 +20,7 @@ gateway (:8080) ──► auth · product · campaign · analytics services (Nod
 |---|---|---|
 | [`frontend/`](frontend/) | The storefront, tenant onboarding and the campaign analytics dashboard (React 19, Vite, Vitest) | [frontend/README.md](frontend/README.md) |
 | [`backend/`](backend/) | The gateway and four microservices, Kafka contracts, Postgres and ClickHouse schemas | [backend/README.md](backend/README.md) |
-| [`backend/streaming/`](backend/streaming/) | The PySpark job that loads analytics events from Kafka into ClickHouse | [streaming/README.md](backend/streaming/README.md) |
+| [`backend/flink/`](backend/flink/) | The Flink SQL job that credits basket additions to ad clicks and loads analytics events into ClickHouse | [flink/README.md](backend/flink/README.md) |
 | [`backend/loadtest/`](backend/loadtest/) | The k6 load test for the analytics path (p99 latency and freshness) | [loadtest/README.md](backend/loadtest/README.md) |
 | [`backend/deploy/helm/`](backend/deploy/helm/) | Kubernetes deployment: a Helm chart per service, helmfile | [helm/README.md](backend/deploy/helm/README.md) |
 
@@ -29,7 +29,7 @@ gateway (:8080) ──► auth · product · campaign · analytics services (Nod
 Requires Node 24, Docker, and npm.
 
 ```bash
-# Backend: Postgres, Kafka, ClickHouse, the services, the Spark job and the gateway on :8080
+# Backend: Postgres, Kafka, ClickHouse, the services, the Flink job and the gateway on :8080
 cd backend
 npm install
 npm run keys                 # the JWT signing keys, in backend/keys/ (git-ignored)
@@ -51,7 +51,8 @@ To create accounts and users from the command line, or to load the sample catalo
 ```bash
 cd backend && npm run verify                 # typecheck, architecture check, tests (needs postgres, kafka, clickhouse running)
 cd backend && npm run test:e2e               # full flow through the gateway with real Kafka
-cd backend/streaming && docker build --target test .   # Spark job (or locally with Java 17: uv sync && uv run pytest)
+cd backend && npm run test:flink              # Flink job's attribution rules (needs the compose stack up)
+cd backend && npm run test:airflow            # Iceberg export job (needs the compose stack up, and uv)
 cd frontend && npm test                      # no backend needed
 ```
 
@@ -73,11 +74,13 @@ The app used to be called ShopSphere. Every technical name now uses `ecommerce-a
 cd backend
 docker compose -p shopsphere down          # stops the old stack; its volumes are kept
 docker compose up --no-start               # creates the new stack's volumes
-for v in pgdata chdata spark-checkpoints; do
+for v in pgdata chdata; do
   docker run --rm -v shopsphere_$v:/from -v ecommerce-analytics_$v:/to alpine cp -a /from/. /to/
 done
 docker compose up -d --build
 # Once everything works: docker volume rm shopsphere_pgdata shopsphere_chdata shopsphere_spark-checkpoints
+# The Flink job starts with a new checkpoint volume. A copied ClickHouse volume also needs
+# backend/infra/clickhouse/migrations/006_flink.sql (the commands are at its top).
 ```
 
 **Kubernetes.**

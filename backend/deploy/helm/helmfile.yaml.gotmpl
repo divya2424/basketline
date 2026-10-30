@@ -16,11 +16,22 @@ helmDefaults:
   timeout: 600
   createNamespace: true
 
+repositories:
+  - name: apache-airflow
+    url: https://airflow.apache.org
+
 releases:
-{{- range list "gateway" "auth-service" "product-service" "campaign-service" "analytics-service" "spark-streaming" }}
+{{- range list "gateway" "auth-service" "product-service" "campaign-service" "analytics-service" "flink-streaming" }}
   - name: {{ . }}
     namespace: ecommerce-analytics
     chart: ./charts/{{ . }}
     values:
       - environments/{{ $.Environment.Name }}/{{ . }}.yaml
 {{- end }}
+  # The batch jobs (backend/airflow), on the official chart.
+  - name: airflow
+    namespace: ecommerce-analytics
+    chart: apache-airflow/airflow
+    version: 1.22.0
+    values:
+      - environments/{{ .Environment.Name }}/airflow.yaml

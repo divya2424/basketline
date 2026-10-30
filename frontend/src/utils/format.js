@@ -21,3 +21,12 @@ export const EMPTY_VALUE = '—'
 export function formatPercent(value) {
   return value === null ? EMPTY_VALUE : `${value.toFixed(2)}%`
 }
+
+/** A duration for people: "45 s", "12 min", "1 h 5 min". */
+export function formatDuration(ms) {
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} min`
+  return `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ''}`
+}

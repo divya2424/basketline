@@ -1,23 +1,54 @@
 /**
  * Sends every tracked event to POST /analytics/events. Campaign activity also
- * produces the three events the campaign metrics count:
+ * produces the two events the campaign metrics count:
  *
  *   campaign_impression (carousel slide shown)        → impression (sent instead)
  *   product_click on a campaign card (opens the       → + click     (an ad click)
  *     product's page)
- *   add_to_cart of a product clicked in a campaign    → + click_to_basket, credited
- *     within 24h (same browser session)                   to that click; without a
- *                                                          click, no metric event
+ *
+ * add_to_cart is sent as it is: the backend credits it to this user's latest
+ * click on the product in the last 7 days (click-to-basket), so the browser
+ * keeps no record of clicks.
  *
  * Failures are reported by trackEvent and never affect the shopper.
  */
 import { randomEventId } from './analytics.js'
 import { apiRequest } from '../api/httpClient.js'
 import { getRequestContext } from '../api/requestContext.js'
-import { createAttributionStore } from './attributionStore.js'
 
 /** Visitor tokens last 30 minutes; a new one is fetched a little before. */
 export const VISITOR_TOKEN_RENEW_MS = 25 * 60 * 1000
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** IDs for stores whose ID can't be kept in localStorage (private mode): kept for this page. */
+const pageIds = new Map()
+
+/**
+ * This browser's lasting visitor UUID for one store (tenant): the userId of its
+ * events while not signed in, so a visitor counts as one customer across visits.
+ * One per store, so stores can't link a shopper.
+ */
+export function anonymousId(tenantId) {
+  const key = `ecommerce-analytics:anonymous-id:${tenantId}`
+  try {
+    const stored = localStorage.getItem(key)
+    if (UUID.test(stored ?? '')) return stored
+    const id = randomEventId()
+    localStorage.setItem(key, id)
+    return id
+  } catch {
+    if (!pageIds.has(tenantId)) pageIds.set(tenantId, randomEventId())
+    return pageIds.get(tenantId)
+  }
+}
+
+/** A visitor token for this browser's visitor UUID in the store: { userId, token }. */
+export async function requestVisitorToken(tenantId, request = apiRequest) {
+  const userId = anonymousId(tenantId)
+  const body = await request('/auth/visitor', { method: 'POST', body: { userId, clientType: 'web' } })
+  return { userId, token: body.visitorToken }
+}
 
 /** The event as the backend stores it: campaignId/productId as columns, the rest as properties. */
 function activity(event) {
@@ -46,7 +77,7 @@ function base(event, extra) {
 }
 
 /** Frontend event → the backend events to send. Exported for tests. */
-export function toBackendEvents(event, attribution) {
+export function toBackendEvents(event) {
   const { campaignId, productId } = event.properties
   switch (event.eventName) {
     case 'campaign_impression':
@@ -56,19 +87,7 @@ export function toBackendEvents(event, attribution) {
 
     case 'product_click': {
       if (!campaignId || !productId) return [activity(event)]
-      const click = base(event, { eventName: 'click', productId })
-      attribution.recordClick({ clickId: click.eventId, campaignId, productId, at: event.timestamp })
-      return [activity(event), click]
-    }
-
-    case 'add_to_cart': {
-      if (!productId) return [activity(event)]
-      const out = [activity(event)]
-      const click = attribution.takeClick(productId, event.timestamp)
-      if (click) {
-        out.push(base(event, { eventName: 'click_to_basket', campaignId: click.campaignId, productId, attributionId: click.clickId }))
-      }
-      return out
+      return [activity(event), base(event, { eventName: 'click', productId })]
     }
 
     default:
@@ -77,30 +96,40 @@ export function toBackendEvents(event, attribution) {
 }
 
 /**
- * Posts a batch of events. A signed-in user's access token is used as is; an
- * anonymous visitor gets a visitor token for the store's tenant (POST
- * /auth/visitor), reused until shortly before it expires. The backend takes the
- * tenant and user from the token, so events can't be sent for another tenant.
+ * Posts a batch of events, with the tenant, user and user type its token was
+ * issued for: the backend rejects a batch whose identity doesn't match its
+ * token. A signed-in user's access token is used as is (registered); a visitor
+ * gets a visitor token for its UUID in the store (POST /auth/visitor), reused
+ * until shortly before it expires.
  */
 export function createEventSender(request = apiRequest) {
-  let visitor = null // { tenantId, renewAt, token: Promise<string> }
+  let visitor = null // { tenantId, renewAt, visit: Promise<{ userId, token }> }
 
   function visitorToken(tenantId) {
     if (visitor?.tenantId !== tenantId || visitor.renewAt <= Date.now()) {
-      const token = request('/auth/visitor', { method: 'POST' }).then((body) => body.visitorToken)
-      visitor = { tenantId, renewAt: Date.now() + VISITOR_TOKEN_RENEW_MS, token }
+      const visit = requestVisitorToken(tenantId, request)
+      visitor = { tenantId, renewAt: Date.now() + VISITOR_TOKEN_RENEW_MS, visit }
       // A failed request is retried with the next batch.
-      token.catch(() => {
-        if (visitor?.token === token) visitor = null
+      visit.catch(() => {
+        if (visitor?.visit === visit) visitor = null
       })
     }
-    return visitor.token
+    return visitor.visit
   }
 
   return async (events) => {
-    const { tenantId, accessToken } = getRequestContext()
-    const headers = accessToken ? undefined : { Authorization: `Bearer ${await visitorToken(tenantId)}` }
-    return request('/analytics/events', { method: 'POST', body: { events }, keepalive: true, headers })
+    const { tenantId, userId, accessToken } = getRequestContext()
+    // Signed in: the HTTP client adds the access token.
+    if (accessToken) {
+      return request('/analytics/events', { method: 'POST', body: { tenantId, userId, userType: 'registered', events }, keepalive: true })
+    }
+    const visit = await visitorToken(tenantId)
+    return request('/analytics/events', {
+      method: 'POST',
+      body: { tenantId, userId: visit.userId, userType: 'visitor', events },
+      keepalive: true,
+      headers: { Authorization: `Bearer ${visit.token}` },
+    })
   }
 }
 
@@ -111,10 +140,9 @@ export function createEventSender(request = apiRequest) {
  * shared IPs. Each send() returns the promise of the request that carries its events.
  */
 export function createBackendTransport({
-  attribution = createAttributionStore(),
   send = createEventSender(),
   batchSize = 20,
-  flushAfterMs = 1000,
+  flushAfterMs = 2000,
 } = {}) {
   let queue = []
   let delivered = null
@@ -139,7 +167,7 @@ export function createBackendTransport({
 
   return {
     send(event) {
-      const events = toBackendEvents(event, attribution)
+      const events = toBackendEvents(event)
       if (events.length === 0) return undefined
       delivered ??= new Promise((resolve, reject) => {
         settle = { resolve, reject }

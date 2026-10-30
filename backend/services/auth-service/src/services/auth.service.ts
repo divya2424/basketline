@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import type { CryptoKey } from 'jose'
 import {
   forbidden,
+  isUniqueViolation,
   notFound,
   signAccessToken,
   signVisitorToken,
   unauthorized,
+  verifyVisitorToken,
   writeAudit,
   type AccessTokenClaims,
   type Logger,
@@ -15,7 +17,7 @@ import { withTenant, type Db } from '../db/client.ts'
 import { findAccount } from '../repositories/account.repository.ts'
 import { endSession, findSessionState, insertSession, listSessions } from '../repositories/session.repository.ts'
 import { findUserById, findUserByUsername, setLastLogin } from '../repositories/user.repository.ts'
-import type { LoginInput, RegisterInput } from '../validators/auth.validator.ts'
+import type { LoginInput, RegisterInput, VisitorInput } from '../validators/auth.validator.ts'
 import { getDummyHash, verifyPassword } from './password.ts'
 import { createUser, sessionRevokedEvent } from './user-admin.service.ts'
 
@@ -23,18 +25,51 @@ import { createUser, sessionRevokedEvent } from './user-admin.service.ts'
  * Sign-up, sign-in and session handling. Events are published after each transaction commits.
  * Every query runs in withTenant: the storefront's tenant before sign-in, the token's tid after.
  */
-export function createAuthService({ db, privateKey, publish }: { db: Db; privateKey: CryptoKey; publish: PublishEvents }) {
+export function createAuthService({
+  db,
+  privateKey,
+  publicKey,
+  publish,
+}: {
+  db: Db
+  privateKey: CryptoKey
+  publicKey: CryptoKey
+  publish: PublishEvents
+}) {
   async function requireAccount(tenantId: string) {
     if (!(await findAccount(db, tenantId))) throw notFound('TENANT_NOT_FOUND', 'No such tenant')
   }
 
+  /** The visitor's UUID, if the token is one this service signed for the tenant; else none. */
+  async function visitorIdFor(token: string, tenantId: string): Promise<string | undefined> {
+    try {
+      const visitor = await verifyVisitorToken(token, publicKey)
+      return visitor.tid === tenantId ? visitor.sub : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   return {
-    /** Always a standard-user; roles are only changed by an operator. */
+    /**
+     * Always a standard-user; roles are only changed by an operator. With the
+     * visitor token the browser used before signing up, the user keeps that
+     * visitor's UUID as its ID, so its analytics stay one person. A UUID that is
+     * already a user (another tenant's, say) gets a random ID instead.
+     */
     async register(input: RegisterInput, tenantId: string) {
       await requireAccount(tenantId)
-      const { user, events } = await withTenant(db, tenantId, (tx) => createUser(tx, { ...input, tenantId }, null))
-      await publish(events)
-      return user
+      const visitorId = input.visitorToken ? await visitorIdFor(input.visitorToken, tenantId) : undefined
+      const create = (id?: string) => withTenant(db, tenantId, (tx) => createUser(tx, { ...input, tenantId, id }, null))
+      let created
+      try {
+        created = await create(visitorId)
+      } catch (error) {
+        if (!visitorId || !isUniqueViolation(error, 'users_pkey')) throw error
+        created = await create()
+      }
+      await publish(created.events)
+      return created.user
     },
 
     /** Verifies the password, records a new session and issues a 30-minute JWT. */
@@ -51,7 +86,7 @@ export function createAuthService({ db, privateKey, publish }: { db: Db; private
 
       const now = new Date()
       const sessionId = randomUUID()
-      const { token, expiresAt } = await signAccessToken(privateKey, { sub: user.id, sid: sessionId, role: user.role, tid: user.tenantId }, now)
+      const { token, expiresAt } = await signAccessToken(privateKey, { sub: user.id, sid: sessionId, role: user.role, tid: user.tenantId, client: input.clientType }, now)
       const session = await withTenant(db, user.tenantId, async (tx) => {
         const created = await insertSession(tx, { id: sessionId, tenantId: user.tenantId, userId: user.id, clientType: input.clientType, sessionStartTime: now, expiresAt })
         await setLastLogin(tx, user.id, now)
@@ -81,10 +116,15 @@ export function createAuthService({ db, privateKey, publish }: { db: Db; private
       return session
     },
 
-    /** A token that lets an anonymous storefront visitor send analytics events for one tenant. */
-    async visitor(tenantId: string) {
+    /**
+     * A token that lets a visitor (not registered) send analytics events for one
+     * tenant. userId is the client's UUID for the visitor, so it counts as one
+     * customer across tokens, and stays its ID when it registers.
+     */
+    async visitor(tenantId: string, { userId, clientType }: VisitorInput) {
       await requireAccount(tenantId)
-      return signVisitorToken(privateKey, tenantId)
+      const visitorId = userId?.toLowerCase() ?? randomUUID()
+      return { visitorId, ...(await signVisitorToken(privateKey, { tenantId, visitorId, client: clientType })) }
     },
 
     async me(claims: AccessTokenClaims) {

@@ -1,6 +1,6 @@
 -- End-to-end freshness of one load-test run: from analytics-service receiving an
--- event (received_at) to ClickHouse storing it (ingested_at), i.e. Kafka plus the
--- Spark micro-batch. Every event of the run is counted, not a sample.
+-- event (received_at) to ClickHouse storing it (ingested_at), i.e. Kafka, the
+-- Flink job and ClickHouse's Kafka reads. Every event of the run is counted, not a sample.
 SELECT
     {run:String} AS run_id,
     count() AS rows_stored,

@@ -1,0 +1,8 @@
+# The export job's environment (/opt/jobs in the image), kept apart from
+# Airflow's own, so these pins never conflict with Airflow's constraints.
+pyiceberg[pyarrow,sql-postgres,glue,pyiceberg-core]==0.12.0
+pyarrow==26.0.0
+clickhouse-connect==1.10.1
+# The history backfill (jobs/backfill/spark_backfill.py), in Spark local mode;
+# matches the iceberg-spark-runtime-4.1 jar in the Dockerfile.
+pyspark==4.1.4

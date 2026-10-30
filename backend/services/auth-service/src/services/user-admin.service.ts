@@ -26,14 +26,15 @@ async function requireUserForUpdate(db: DbOrTx, tenantId: string, username: stri
 
 export async function createUser(
   db: DbOrTx,
-  input: { username: string; password: string; role?: Role; tenantId: string },
+  // id: a given user ID (a visitor's UUID at sign-up), else a random one.
+  input: { username: string; password: string; role?: Role; tenantId: string; id?: string },
   actorId: string | null,
 ): Promise<AdminResult> {
   const role = input.role ?? STANDARD_USER
   let user: User
   try {
     user = await insertUser(db, {
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       username: input.username.trim(),
       passwordHash: await hashPassword(input.password),
       role,

@@ -36,8 +36,8 @@ export function createAuthController(service: AuthService) {
     },
 
     async visitor(req: Request, res: Response) {
-      const { token } = await service.visitor(requireTenant(req))
-      res.status(201).json({ visitorToken: token, tokenType: 'Bearer', expiresIn: VISITOR_TOKEN_TTL_SECONDS })
+      const { token, visitorId } = await service.visitor(requireTenant(req), req.body ?? {})
+      res.status(201).json({ visitorToken: token, tokenType: 'Bearer', expiresIn: VISITOR_TOKEN_TTL_SECONDS, userId: visitorId })
     },
 
     async login(req: Request, res: Response) {

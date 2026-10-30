@@ -10,6 +10,7 @@ import type { AddressInfo, Server } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { Admin } from '@platformatic/kafka'
 import request from 'supertest'
+import { decodeJwt } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ANALYTICS_EVENT_NAMES, analyticsTopic, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@ecommerce-analytics/contracts'
 import {
@@ -51,7 +52,7 @@ const servers: Server[] = []
 let gateway: ReturnType<typeof buildGateway>['app']
 let authDb: ReturnType<typeof createAuthDb>
 let authBus: EventBus
-/** What arrived on the analytics.<eventName>.v1 topics (read by Spark in production). */
+/** What arrived on the analytics.<eventName>.v1 topics (read by the Flink job in production). */
 const analyticsMessages: { topic: string; envelope: EventEnvelope<AnalyticsEventPayload> }[] = []
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://ecommerce_analytics:ecommerce_analytics_dev@localhost:8123/analytics')
 
@@ -184,29 +185,28 @@ describe('the full flow over Kafka', () => {
     const analyticsEvents = [
       { eventId: randomUUID(), campaignId, eventName: 'impression', timestamp: new Date(now - 3000).toISOString() },
       { eventId: clickId, campaignId, productId: product.body.id, eventName: 'click', timestamp: new Date(now - 2000).toISOString() },
-      { eventId: randomUUID(), campaignId, productId: product.body.id, eventName: 'click_to_basket', attributionId: clickId, timestamp: new Date(now - 1000).toISOString() },
+      // Credited to the click by the Flink job (test/flink.kafka.test.ts); the client sends no link.
       { eventId: randomUUID(), productId: product.body.id, eventName: 'add_to_cart', timestamp: new Date(now - 1000).toISOString() },
     ]
     // Metric events count once analytics-service has seen the campaign (CampaignCreated over Kafka).
     const { result: ingest, elapsedMs: campaignLag } = await eventually(
-      () => request(gateway).post('/api/v1/analytics/events').set('Authorization', auth).send({ events: analyticsEvents }),
-      (res) => res.body.accepted === 4,
+      () => request(gateway)
+          .post('/api/v1/analytics/events')
+          .set('Authorization', auth)
+          // The identity the token was issued for; a mismatch is rejected.
+          .send({ tenantId: decodeJwt(login.body.accessToken).tid, userId: decodeJwt(login.body.accessToken).sub, userType: 'registered', events: analyticsEvents }),
+      (res) => res.body.accepted === 3,
       20_000,
     )
-    expect(ingest.body).toMatchObject({ accepted: 4, rejected: 0 })
+    expect(ingest.body).toMatchObject({ accepted: 3, rejected: 0 })
     logger.info({ campaignLag }, 'campaign projection lag')
 
     // Retries above re-publish add_to_cart with the same eventId (stored once in ClickHouse).
     const distinct = () => new Map(analyticsMessages.map((m) => [m.envelope.eventId, m.topic]))
-    await eventually(async () => distinct().size, (count) => count >= 4)
-    expect([...distinct().values()].sort()).toEqual([
-      'analytics.add_to_cart.v1',
-      'analytics.click.v1',
-      'analytics.click_to_basket.v1',
-      'analytics.impression.v1',
-    ])
+    await eventually(async () => distinct().size, (count) => count >= 3)
+    expect([...distinct().values()].sort()).toEqual(['analytics.add_to_cart.v1', 'analytics.click.v1', 'analytics.impression.v1'])
     const click = analyticsMessages.find((m) => m.envelope.eventId === clickId)!
-    expect(click.envelope.payload).toMatchObject({ campaignId, productId: product.body.id, userId: login.body.user.id, tenantId: TENANT })
+    expect(click.envelope.payload).toMatchObject({ campaignId, productId: product.body.id, userId: login.body.user.id, userType: 'registered', tenantId: TENANT })
 
     // Logout → SessionRevoked over Kafka → the gateway refuses the token.
     expect((await request(gateway).post('/api/v1/auth/logout').set('Authorization', auth)).status).toBe(200)

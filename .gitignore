@@ -155,7 +155,7 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Python (backend/streaming has its own list too)
+# Python
 __pycache__/
 *.py[cod]
 .venv/

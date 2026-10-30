@@ -8,8 +8,8 @@ const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 /**
  * Late arrivals older than this are rejected (keeps reports stable). ClickHouse
- * keeps raw events for 7 days (init.sql TTL); a late event has its day, and the
- * clicks of the day before, recounted from raw events, so this leaves them a day of margin.
+ * keeps raw events for 14 days (init.sql TTL), and the nightly check recounts a
+ * late event's day from them, so this leaves days of margin.
  */
 export const MAX_EVENT_AGE_MS = 5 * 24 * HOUR
 /** Allowed client clock skew. */
@@ -24,8 +24,8 @@ export type IngestResult = { eventId: string; status: 'accepted' } | { eventId: 
 
 /**
  * Publishes each valid event to the Kafka topic for its event name. Nothing is
- * stored here: the Spark streaming job writes the topics to ClickHouse, which
- * also removes duplicates and works out click-to-basket attribution.
+ * stored here: the Flink job (backend/flink) credits basket additions to their
+ * click and writes both to ClickHouse, which removes duplicates.
  *
  * Metric events count toward a campaign's /ad numbers, so they are accepted only
  * for a campaign of the sender's tenant that is active and not archived (per the
@@ -48,12 +48,12 @@ export function createIngestionService({
   /** Fixed one-minute windows per sender. */
   function assertWithinLimit(sender: EventSender, count: number, now: number) {
     if (now - window.start >= MINUTE) window = { start: now, counts: new Map() }
-    const used = window.counts.get(sender.subject) ?? 0
+    const used = window.counts.get(sender.userId) ?? 0
     if (used + count > maxEventsPerMinute) {
       const retryAfter = Math.ceil((window.start + MINUTE - now) / 1000)
       throw new AppError(429, 'TOO_MANY_EVENTS', `At most ${maxEventsPerMinute} events per minute`, undefined, retryAfter)
     }
-    window.counts.set(sender.subject, used + count)
+    window.counts.set(sender.userId, used + count)
   }
 
   /** Cached per tenant and campaign: a campaign is active only for its own tenant. */
@@ -76,10 +76,11 @@ export function createIngestionService({
       campaignId: event.campaignId?.toLowerCase() ?? null,
       productId: event.productId ?? null,
       userId: sender.userId,
+      userType: sender.userType,
+      clientType: sender.clientType,
       tenantId: sender.tenantId,
       pageName: event.pageName ?? null,
       featureName: event.featureName ?? null,
-      attributionId: event.attributionId ?? null,
       properties: event.properties ?? {},
       timestamp: new Date(event.timestamp).toISOString(),
       receivedAt,

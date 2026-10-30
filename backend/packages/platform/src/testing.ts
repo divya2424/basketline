@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { exportPKCS8, exportSPKI, generateKeyPair, type CryptoKey } from 'jose'
 import pg from 'pg'
-import type { Role } from '@ecommerce-analytics/contracts'
+import type { ClientType, Role } from '@ecommerce-analytics/contracts'
 import { JWT_ALGORITHM, signAccessToken, signVisitorToken } from './jwt.ts'
 
 const ADMIN_URL = process.env.TEST_DATABASE_ADMIN_URL ?? 'postgres://postgres:postgres@localhost:5432/postgres'
@@ -50,16 +50,18 @@ export async function createTestKeys(): Promise<TestKeys> {
 export async function tokenFor(
   keys: TestKeys,
   role: Role,
-  overrides: { sub?: string; sid?: string; tid?: string; issuedAt?: Date; ttlSeconds?: number } = {},
+  overrides: { sub?: string; sid?: string; tid?: string; client?: ClientType; issuedAt?: Date; ttlSeconds?: number } = {},
 ) {
   const sub = overrides.sub ?? randomUUID()
   const sid = overrides.sid ?? randomUUID()
   const tid = overrides.tid ?? randomUUID()
-  const { token } = await signAccessToken(keys.privateKey, { sub, sid, role, tid }, overrides.issuedAt, overrides.ttlSeconds)
+  const client = overrides.client ?? 'web'
+  const { token } = await signAccessToken(keys.privateKey, { sub, sid, role, tid, client }, overrides.issuedAt, overrides.ttlSeconds)
   return { token, sub, sid, tid, header: `Bearer ${token}` }
 }
 
-export async function visitorTokenFor(keys: TestKeys, tid: string = randomUUID()) {
-  const { token } = await signVisitorToken(keys.privateKey, tid)
-  return { token, tid, header: `Bearer ${token}` }
+export async function visitorTokenFor(keys: TestKeys, tid: string = randomUUID(), client: ClientType = 'web') {
+  const sub = randomUUID()
+  const { token } = await signVisitorToken(keys.privateKey, { tenantId: tid, visitorId: sub, client })
+  return { token, sub, tid, header: `Bearer ${token}` }
 }

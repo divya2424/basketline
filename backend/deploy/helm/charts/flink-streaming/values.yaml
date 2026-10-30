@@ -1,0 +1,44 @@
+image:
+  repository: ecommerce-analytics/flink-streaming
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# One job per checkpoint, so exactly one pod (the chart refuses other values).
+replicaCount: 1
+
+# No secrets: the job only talks to Kafka. ClickHouse reads the serving topics itself (infra/clickhouse/kafka.sql).
+config:
+  KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+  KAFKA_GROUP_ID: events-to-clickhouse
+  # Only when there is no checkpoint yet (flink/README.md).
+  KAFKA_STARTUP_MODE: earliest-offset
+  CHECKPOINT_DIR: /checkpoints
+
+# The checkpoints: Kafka offsets and the attribution join's state (up to 6 days
+# of clicks and baskets). Losing them replays Kafka from KAFKA_STARTUP_MODE.
+# The volume outlives `helm uninstall`; delete the PVC to reset it.
+persistence:
+  mountPath: /checkpoints
+  size: 5Gi
+  storageClass: ""
+
+# A job manager (768 MB) and a task manager (1280 MB, 2 slots) in one container (flink/config.yaml).
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    memory: 3Gi
+
+# The flink user of the official image. Logs, the submitted SQL and RocksDB's
+# working files go to /tmp, so the root filesystem stays read-only.
+runAsUser: 9999
+readOnlyRootFilesystem: true
+terminationGracePeriodSeconds: 60
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -6,14 +6,13 @@ import { calculateClickToBasketRate, calculateCtr } from './metricMath.js'
 import { useCampaignMetrics } from './useCampaignMetrics.js'
 
 /**
- * Side-by-side view of every campaign. Counts are deliberately not summed:
- * until the backend confirms whether these are unique customers or event
- * totals, adding them across campaigns could double count.
+ * Side-by-side view of every campaign: each count with the customers behind it,
+ * and the two conversion rates. There is no totals row: one shopper can see
+ * several campaigns, so customers can't be added across them.
  */
 export function CampaignComparison({ api, campaigns, period }) {
   return (
     <div className="table-wrap">
-      <p className="muted small">Each campaign’s metrics load independently; cells show a spinner until their request finishes.</p>
       <table className="comparison-table">
         <caption className="visually-hidden">Metrics per campaign</caption>
         <thead>
@@ -22,6 +21,8 @@ export function CampaignComparison({ api, campaigns, period }) {
             <th scope="col">Impressions</th>
             <th scope="col">Clicks</th>
             <th scope="col">Click-to-basket</th>
+            <th scope="col">Unique customers</th>
+            <th scope="col">Sessions</th>
             <th scope="col">CTR</th>
             <th scope="col">Click-to-basket rate</th>
           </tr>
@@ -33,8 +34,8 @@ export function CampaignComparison({ api, campaigns, period }) {
         </tbody>
       </table>
       <p className="muted small">
-        Totals across campaigns are not shown until the API confirms that counts are comparable (unique customers vs.
-        event totals).
+        Events, with the customers behind them underneath. No totals: a shopper who saw several campaigns would be counted
+        once per campaign.
       </p>
     </div>
   )
@@ -42,14 +43,14 @@ export function CampaignComparison({ api, campaigns, period }) {
 
 function ComparisonRow({ api, campaign, period }) {
   const { metrics, retry } = useCampaignMetrics(api, campaign.id, period)
-  const { clicks, impressions, clickToBasket } = metrics
+  const { clicks, impressions, clickToBasket, uniqueCustomers, sessions } = metrics
   const failed = METRICS.filter((metric) => metrics[metric].status === 'error')
 
   return (
     <tr>
       <th scope="row">
-        {campaign.title}
-        <span className="muted small block">{campaign.id}</span>
+        <span className="comparison-table__title">{campaign.title}</span>
+        <span className="comparison-table__id">{campaign.id}</span>
         {failed.length > 0 ? (
           <Button variant="link" size="sm" onClick={() => failed.forEach(retry)}>
             Retry failed
@@ -59,6 +60,8 @@ function ComparisonRow({ api, campaign, period }) {
       <CountCell state={impressions} />
       <CountCell state={clicks} />
       <CountCell state={clickToBasket} />
+      <CountCell state={uniqueCustomers} />
+      <CountCell state={sessions} />
       <RateCell inputs={[clicks, impressions]} value={calculateCtr(clicks.value, impressions.value)} />
       <RateCell inputs={[clickToBasket, clicks]} value={calculateClickToBasketRate(clickToBasket.value, clicks.value)} />
     </tr>
@@ -74,7 +77,11 @@ function RateCell({ inputs, value }) {
       </td>
     )
   }
-  return <td>{formatPercent(value)}</td>
+  return (
+    <td>
+      <span className={`rate-pill${value === null ? ' rate-pill--empty' : ''}`}>{formatPercent(value)}</span>
+    </td>
+  )
 }
 
 function CountCell({ state }) {
@@ -86,5 +93,10 @@ function CountCell({ state }) {
     )
   }
   if (state.status === 'error') return <td className="cell-error">Unavailable</td>
-  return <td>{formatCount(state.value)}</td>
+  return (
+    <td>
+      {formatCount(state.value)}
+      {state.customers != null ? <span className="comparison-table__sub">{formatCount(state.customers)} customers</span> : null}
+    </td>
+  )
 }

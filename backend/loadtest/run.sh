@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs analytics.js once per rate in RATES (ingestion requests/s; 10 events each),
+# Runs analytics.js once per rate in RATES (ingestion requests/s; 9 events each),
 # then measures that run's freshness in ClickHouse. Run from backend/, with the
 # gateway's rate limits raised (see README.md).
 set -euo pipefail
@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 RATES=${RATES:-"100 250 500 1000"}
 DURATION=${DURATION:-60s}
 READ_RATE=${READ_RATE:-20}
-SETTLE_SECONDS=${SETTLE_SECONDS:-75} # Spark loads every 30 s; let the last batch land
+SETTLE_SECONDS=${SETTLE_SECONDS:-75} # lets a Kafka backlog drain through Flink into ClickHouse
 
 for rate in $RATES; do
   run_id="lt-$(date +%s)-$rate"

@@ -29,25 +29,33 @@ function isTopicAlreadyExists(error: unknown): boolean {
   return e?.apiId === 'TOPIC_ALREADY_EXISTS' || (Array.isArray(e?.errors) && e.errors.some(isTopicAlreadyExists))
 }
 
+/** A topic name, or a name with topic settings (e.g. retention.ms) applied when it is created. */
+export type TopicSpec = string | { name: string; configs: Record<string, string> }
+
 /**
  * Creates topics that don't exist yet. Auto-creation is disabled on the
  * broker so partition counts are explicit. 3 partitions per topic; replication
- * 1 locally (set KAFKA_REPLICATION in production).
+ * 1 locally (set KAFKA_REPLICATION in production). Settings apply only when a
+ * topic is created; an existing topic keeps its own.
  */
 export async function ensureTopics(
   options: Pick<KafkaBusOptions, 'brokers' | 'clientId' | 'topicPrefix'>,
-  topics: string[],
+  topics: TopicSpec[],
   partitions = 3,
   replicas = intEnv('KAFKA_REPLICATION', 1),
 ): Promise<void> {
   const admin = new Admin({ clientId: `${options.clientId}-admin`, bootstrapBrokers: options.brokers })
   try {
     const existing = new Set(await admin.listTopics())
-    const missing = topics.map((topic) => `${options.topicPrefix ?? ''}${topic}`).filter((topic) => !existing.has(topic))
+    const missing = topics
+      .map((topic) => (typeof topic === 'string' ? { name: topic, configs: {} } : topic))
+      .map(({ name, configs }) => ({ name: `${options.topicPrefix ?? ''}${name}`, configs }))
+      .filter(({ name }) => !existing.has(name))
     // One at a time, so a topic another service just created doesn't fail the rest.
-    for (const topic of missing) {
+    for (const { name: topic, configs } of missing) {
       try {
-        await admin.createTopics({ topics: [topic], partitions, replicas })
+        const settings = Object.entries(configs).map(([name, value]) => ({ name, value }))
+        await admin.createTopics({ topics: [topic], partitions, replicas, configs: settings })
       } catch (error) {
         if (!isTopicAlreadyExists(error)) throw error
       }

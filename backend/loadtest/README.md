@@ -6,9 +6,9 @@ Measures three p99s for the analytics path:
 |---|---|
 | **Ingestion latency** | k6 timing of `POST /api/v1/analytics/events` through the gateway: gateway → analytics-service → Kafka ack |
 | **Dashboard read latency** | k6 timing of `GET /api/v1/ad/{campaign}/{metric}?from=…` (random metric, random 7/30/90/365-day range) |
-| **End-to-end freshness** | In ClickHouse, `ingested_at − received_at` for **every** event of a run (`freshness.sql`): Kafka plus the Spark micro-batch |
+| **End-to-end freshness** | In ClickHouse, `ingested_at − received_at` for **every** event of a run (`freshness.sql`): Kafka, the Flink job and ClickHouse's Kafka reads |
 
-**Load model:** browser-like batches. Each ingestion request carries 10 events (6 impressions, 2 clicks, 1 credited click-to-basket, 1 add-to-cart), so 1M events/s is 100k requests/s. Test events go to the load-test tenant `0ad7e570-0000-4000-8000-000000000001` with `properties.loadtest_run = <run id>`, which keeps them apart from real data. They are sent by visitors, each with its own visitor token (a new one every 25 batches, below the 300 events per sender per minute), on the load-test tenant's active campaigns (seeded as `loadtest`); the dashboard scenario reads them as the `loadtest` campaign manager, whose tenant is the load-test tenant.
+**Load model:** browser-like batches. Each ingestion request carries 9 events (6 impressions, 2 clicks, 1 add-to-cart of the first click's product, which Flink credits to that click), so 1M events/s is about 111k requests/s. Test events go to the load-test tenant `0ad7e570-0000-4000-8000-000000000001` with `properties.loadtest_run = <run id>`, which keeps them apart from real data. They are sent by visitors, each with its own visitor token (a new one every 25 batches, below the 300 events per sender per minute), on the load-test tenant's active campaigns (seeded as `loadtest`); the dashboard scenario reads them as the `loadtest` campaign manager, whose tenant is the load-test tenant.
 
 ## Files
 
@@ -20,7 +20,7 @@ Measures three p99s for the analytics path:
   Targets: ingestion p99 < 500 ms, reads p99 < 1 s, errors < 1%.
 - `run.sh`: runs `analytics.js` once per rate in `RATES`, then prints that run's freshness.
 - `freshness.sql`: the freshness p99 for one run.
-- `cleanup.sql`: deletes all test events from ClickHouse. They stay in Kafka until retention ends, so a Spark checkpoint reset would load them again.
+- `cleanup.sql`: deletes all test events from ClickHouse. They stay in Kafka until retention ends, so a Flink checkpoint reset would load them again.
 
 ## Run it locally
 
@@ -51,7 +51,7 @@ Each run prints one JSON line with p50, p95 and p99 per scenario, the rate achie
 
 ## Results (2026-10-28, one laptop)
 
-The environment was Docker Desktop with 12 vCPUs and 8 GB. **Everything shared that one machine:** k6, the gateway, 4 services, Kafka, Spark (`local[2]`), ClickHouse and Postgres. These numbers describe that machine, not a production deployment.
+**These results were measured with the earlier Spark loader** (30 s micro-batches), before the Flink job (`flink/`) replaced it; re-run the ladder to measure Flink. The environment was Docker Desktop with 12 vCPUs and 8 GB. **Everything shared that one machine:** k6, the gateway, 4 services, Kafka, Spark (`local[2]`), ClickHouse and Postgres. These numbers describe that machine, not a production deployment.
 
 **Ingestion** (no reads running):
 
@@ -83,15 +83,15 @@ A 20 reads/s run gave a 5.1 s p99, but it started while ClickHouse was still sto
 - **Freshness p99 is 32–48 s while the system keeps up.** That's Spark's 30 s trigger plus the batch time. It rises to 66–97 s when Kafka builds a backlog.
 - **Running reads and ingestion together hurt ingestion.** With 20 reads/s and 100 req/s ingestion, the ingestion p99 was 3.2 s instead of 14 ms. Each `/ad` read counts yesterday and today from raw events, so it competes for ClickHouse CPU.
 
-## Getting to 1M events/s (100k requests/s)
+## Getting to 1M events/s (about 111k requests/s)
 
 This is about 1,000× what one laptop handles. These are the changes needed, in order of impact. The per-instance figures need re-measuring on dedicated machines; the laptop figures include contention from co-located services.
 
 1. **More gateway and analytics-service instances.** Each is one Node process, one core. Run many replicas behind a load balancer, or one process per core with Node's `cluster` module, sized from a per-core measurement on dedicated hardware.
-2. **Bigger batches from the client.** 50 events per request instead of 10 means 20k requests/s instead of 100k for the same 1M events/s, which cuts gateway and service work by about 5×.
+2. **Bigger batches from the client.** 50 events per request instead of 9 means 20k requests/s instead of 111k for the same 1M events/s, which cuts gateway and service work by about 5×.
 3. **A Kafka cluster.** Today there's one broker with 3 partitions per topic. 1M messages/s (~0.5 GB/s) needs several brokers and tens of partitions on the busiest topics (`analytics.impression.v1` carries 60%), plus producer batching.
-4. **A Spark cluster, and a higher batch cap.** `KAFKA_MAX_OFFSETS_PER_TRIGGER` (200k per 30 s trigger) caps Spark at about 6.7k events/s. Raise it to at least 30M per trigger and run on a cluster, not `local[2]`.
+4. **A Flink cluster.** The job runs in one container with parallelism 2. Run it with the Flink Kubernetes Operator: task managers scaled with the busiest topics' partitions, checkpoints on S3, and RocksDB state sized for 12 days of clicks and basket additions, plus open sessions.
 5. **`/ad` reads from aggregates, not raw events.** Today `/ad` scans raw events for yesterday and today. At 1M/s that's up to 170B rows, so these reads must come from the hourly aggregates (closed hours), with raw events only for the current hour.
-6. **Lower freshness, if it matters.** Freshness is bounded below by `SPARK_TRIGGER_INTERVAL`, currently 30 s.
+6. **Lower freshness, if it matters.** The intervals are now relaxed on purpose, so dashboards are under a minute old at the lowest cost (`backend/README.md`); lower them again only if a use case needs it. With Flink, events reach ClickHouse within seconds (median 1.6–4.7 s in small idle-laptop runs). Flink itself adds well under a second. The largest share is ClickHouse's Kafka engine, which stores what it has read at least every `stream_flush_interval_ms` (7.5 s by default); lower it with `kafka_flush_interval_ms` on the queue tables (`infra/clickhouse/kafka.sql`), at the cost of more, smaller inserts.
 
-**Running the same script at 1M/s:** one k6 instance generates a few thousand requests/s, so 100k/s needs distributed load. Use the [k6 operator](https://grafana.com/docs/k6/latest/testing-guides/running-distributed-tests/) on Kubernetes with `parallelism: N`; each instance runs `RATE = 100000 / N`. **Don't average the instances' p99s;** that gives a wrong number. Send all instances' raw results to one place (`k6 run --out experimental-prometheus-rw`, or Grafana Cloud k6) and compute the p99 there. Run `freshness.sql` unchanged, since ClickHouse already sees every event.
+**Running the same script at 1M/s:** one k6 instance generates a few thousand requests/s, so 111k/s needs distributed load. Use the [k6 operator](https://grafana.com/docs/k6/latest/testing-guides/running-distributed-tests/) on Kubernetes with `parallelism: N`; each instance runs `RATE = 111000 / N`. **Don't average the instances' p99s;** that gives a wrong number. Send all instances' raw results to one place (`k6 run --out experimental-prometheus-rw`, or Grafana Cloud k6) and compute the p99 there. Run `freshness.sql` unchanged, since ClickHouse already sees every event.

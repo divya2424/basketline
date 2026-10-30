@@ -48,7 +48,7 @@ npm run build                # production build into dist/
 |---|---|---|
 | `VITE_API_BASE_URL` | URL | The API gateway, e.g. `http://localhost:8080/api/v1`. Every API call goes here, and analytics events are only sent when it's set. |
 | `VITE_ANALYTICS_MODE` | `live` \| `mock` | `live` reads dashboard metrics from the API. `mock` shows demo numbers (labelled **Mock data**) for any campaign. |
-| `VITE_TENANT_ID` | UUID | The storefront's tenant, sent as the `tenant_id` header: accounts registered here and visitor tokens (which anonymous visitors' analytics events are sent with) belong to it. Defaults to `5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01`. |
+| `VITE_TENANT_ID` | UUID | The storefront's tenant, sent as the `tenant_id` header: accounts registered here and visitor tokens (which visitors' analytics events are sent with) belong to it. Defaults to `5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01`. |
 
 ## How it talks to the backend
 
@@ -62,7 +62,7 @@ Every request goes through `apiRequest()` in `src/api/httpClient.js`, which uses
 |---|---|
 | Catalog (`src/features/catalog`) | `GET /products?limit=100` and `GET /campaigns?status=active&limit=100`, once per page load. These reads are public, so visitors can browse without signing in. The home page shows a loader while they load, and an error with **Try again** if they fail. |
 | Sign-in (`src/features/auth`) | `POST /auth/login` (`clientType: "web"`) and `POST /auth/logout`. |
-| Dashboard (`src/features/analytics`) | `GET /ad/{campaignId}/clicks \| impressions \| clickToBasket?from&to` for the active campaigns, over the chosen time range. |
+| Dashboard (`src/features/analytics`) | `GET /ad/{campaignId}/clicks \| impressions \| clickToBasket \| uniqueCustomers \| sessions?from&to` for the active campaigns, over the chosen time range: each card shows the count, the customers behind it, and their web/mobile and registered/visitor splits. |
 | Analytics events (`src/analytics/backendTransport.js`) | `POST /analytics/events` |
 
 ## Onboarding tenants (the home page)
@@ -108,11 +108,11 @@ When `VITE_API_BASE_URL` is set, every event is also sent to `POST /analytics/ev
 |---|---|
 | A campaign's slide becomes visible | `impression` for that campaign (sent instead of `campaign_impression`) |
 | A click on a card in the carousel (a campaign card), which opens the product's page | `click` (an ad click) |
-| Add to cart of a product that had an ad click in the last 24 hours, anywhere in the store (this tab) | `click_to_basket`, credited to that click through `attributionId` |
+| Add to cart | only `add_to_cart`, with its `productId` |
 
-Add to cart is never an ad click itself, even on a campaign card: without an earlier card click on that product it sends only `add_to_cart`.
+The browser does no attribution: the backend credits an `add_to_cart` to the same user's latest ad click on that product in the 7 days before it, in any tab or app (click-to-basket). Add to cart is never an ad click itself, even on a campaign card. Sending never blocks or breaks shopping: failures are logged and dropped.
 
-Each click is credited to at most one basket addition. Clicks are remembered in `sessionStorage` (`ecommerce-analytics:ad-clicks:v1`). Sending never blocks or breaks shopping: failures are logged and dropped.
+**Who sent them.** Each batch carries `tenantId`, `userId` and `userType`: the signed-in user's ID with `registered`, or this browser's visitor UUID for the store with `visitor` (localStorage `ecommerce-analytics:anonymous-id:<tenant>`, or a UUID for the page when storage is blocked). The backend rejects a batch whose identity doesn't match its token. A visitor's token is asked for with that UUID (`userId`) and `clientType: web`.
 
 ## Campaign carousel
 
@@ -127,7 +127,7 @@ The carousel mixes products from all active campaigns:
 src/
   api/                httpClient (apiRequest, ApiError), requestContext (tenant, user, token)
   app/                App shell and routes
-  analytics/          trackEvent, event schema, transports (local + backend), attribution
+  analytics/          trackEvent, event schema, transports (local + backend)
   components/         layout (Header, Footer) and common (Button, Toast, Spinner, AnalyticsWrapper)
   features/catalog/   CatalogProvider: products + active campaigns from the API
   features/products/  ProductCard, ProductGrid; productData.js = sample data (seed + tests)
@@ -147,6 +147,6 @@ In development, React StrictMode mounts each component twice. Data requests are 
 - **Sample data:** `productData.js` and `campaignData.js` are no longer used by the app. They're the source for `npm run seed` in the backend, and the test fixtures.
 - **Catalog size:** the store loads up to 100 products and 100 campaigns. Pagination isn't needed at this size.
 - **Rates:** CTR = clicks ÷ impressions × 100, and click-to-basket rate = click-to-basket ÷ clicks × 100. Both are shown with 2 decimals, or `—` when the denominator is 0.
-- **What the counts mean:** they are event totals, not unique customers.
+- **What the counts mean:** impressions, clicks and click-to-basket are event totals. *Unique customers* counts the people who saw or clicked the ad, each once over the whole range (an estimate within about 1% above a few thousand). A visitor is recognised by a UUID the storefront keeps in localStorage, one per store (`anonymousId()` in `backendTransport.js`). Every card also shows its split into web and mobile; for unique customers, someone on both counts once in the total, so web + mobile can be more. Unique customers also show registered users and visitors; someone seen as a visitor who then registered with the same UUID counts in both, and once in the total.
 - **Time range:** the dashboard's *Time range* dropdown offers the last 7, 30 or 90 days or the last year (each including today), or a custom range of up to 366 days. It opens on the last 30 days. Days are UTC days, the same days as the backend's daily aggregates, and the line under the toolbar shows exactly which days are counted. A preset sends only `from` (UTC midnight of its first day), so today is counted up to now; a custom range also sends `to`, the midnight after its last day. The range logic is in `timeRange.js`.
-- **Freshness:** the backend loads events into ClickHouse in micro-batches, so dashboard counts update within about 30 seconds of an event.
+- **Freshness:** the dashboard fetches the counts again every 20 seconds while the page is visible, without a loader. With the backend's batching and its 15-second cache, the counts shown are at most about a minute old.

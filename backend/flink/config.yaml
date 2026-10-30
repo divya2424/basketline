@@ -1,0 +1,32 @@
+# One job manager and one task manager in the same container (run.sh).
+jobmanager:
+  rpc:
+    address: localhost
+    port: 6123
+  bind-host: localhost
+  memory:
+    process:
+      size: 768m
+  execution:
+    failover-strategy: region
+taskmanager:
+  host: localhost
+  bind-host: localhost
+  numberOfTaskSlots: 2
+  memory:
+    process:
+      size: 1280m
+parallelism:
+  default: 2
+rest:
+  address: localhost
+  bind-address: 0.0.0.0
+# Retry failed tasks from the last checkpoint, backing off up to a minute.
+restart-strategy:
+  type: exponential-delay
+  exponential-delay:
+    max-backoff: 1 min
+env:
+  java:
+    opts:
+      all: --add-exports=java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED --add-exports=java.security.jgss/sun.security.krb5=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.time=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED

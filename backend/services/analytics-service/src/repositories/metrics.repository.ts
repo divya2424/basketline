@@ -1,10 +1,6 @@
-import type { AnalyticsEventName } from '@ecommerce-analytics/contracts'
 import type { ClickHouse } from '../clickhouse.ts'
 
-/** ClickHouse DateTime64 parameter in UTC: "2026-10-28 12:00:00.000". */
-const toDateTime = (date: Date) => date.toISOString().replace('T', ' ').replace('Z', '')
-
-/** One tenant's campaign over [from, to). */
+/** One tenant's campaign over the UTC days [from, to); both are midnights. */
 export interface MetricScope {
   tenantId: string
   campaignId: string
@@ -12,73 +8,85 @@ export interface MetricScope {
   to: Date
 }
 
-const scopeParams = ({ tenantId, campaignId, from, to }: MetricScope) => ({ tenantId, campaignId, from: toDateTime(from), to: toDateTime(to) })
-
-async function single(clickhouse: ClickHouse, query: string, params: Record<string, unknown>): Promise<number> {
-  const result = await clickhouse.query({ query, query_params: params, format: 'JSONEachRow' })
-  const [row] = await result.json<{ count: string | number }>()
-  return Number(row?.count ?? 0)
-}
+/** The daily customers' sketch columns of one /ad metric: in total, per client type and per user type. */
+const customers = (metric: string) =>
+  ['', 'web_', 'mobile_', 'registered_', 'visitor_'].map((split) => `customers_${split}${metric}`)
 
 /**
- * Number of impression or click events in the scope.
- * uniqExact(event_id): a redelivered event counts once, even before
- * ReplacingMergeTree has merged the duplicate rows away. The WHERE clause
- * follows the table's sort key (tenant_id, event_name, campaign_id, event_time),
- * so ClickHouse reads only that slice.
+ * Per metric: the daily tables it reads, how each table's rows add up (sum of
+ * event counts, merge of sketches, or of average states), and their columns,
+ * which are also the response's fields; the first column is the total (count).
  */
-export function countEvents(clickhouse: ClickHouse, scope: MetricScope, eventName: AnalyticsEventName) {
-  return single(
-    clickhouse,
-    `SELECT uniqExact(event_id) AS count FROM events
-     WHERE tenant_id = {tenantId:UUID} AND event_name = {eventName:String} AND campaign_id = {campaignId:UUID}
-       AND event_time >= {from:DateTime64(3, 'UTC')} AND event_time < {to:DateTime64(3, 'UTC')}`,
-    { ...scopeParams(scope), eventName },
-  )
-}
-
-const AGGREGATE_COLUMNS = {
-  impressions: 'total_ad_impressions',
-  clicks: 'total_ad_clicks',
-  clickToBasket: 'total_click_to_basket',
+const DAILY_METRICS = {
+  impressions: [
+    { table: 'daily_campaign_aggregation', aggregate: 'sum', columns: ['total_impressions', 'total_web_impressions', 'total_mobile_impressions'] },
+    { table: 'daily_campaign_customers_aggregation', aggregate: 'uniqCombined64Merge', columns: customers('impressions') },
+  ],
+  clicks: [
+    { table: 'daily_campaign_aggregation', aggregate: 'sum', columns: ['total_clicks', 'total_web_clicks', 'total_mobile_clicks'] },
+    { table: 'daily_campaign_customers_aggregation', aggregate: 'uniqCombined64Merge', columns: customers('clicks') },
+  ],
+  clickToBasket: [
+    { table: 'daily_campaign_aggregation', aggregate: 'sum', columns: ['total_click_to_basket', 'total_web_click_to_basket', 'total_mobile_click_to_basket'] },
+    { table: 'daily_campaign_customers_aggregation', aggregate: 'uniqCombined64Merge', columns: customers('click_to_basket') },
+  ],
+  uniqueCustomers: [
+    {
+      table: 'daily_campaign_customers_aggregation',
+      aggregate: 'uniqCombined64Merge',
+      columns: ['has_visited', 'has_visited_in_web', 'has_visited_in_mobile', 'has_visited_registered', 'has_visited_visitor'],
+    },
+  ],
+  sessions: [
+    { table: 'daily_campaign_sessions_aggregation', aggregate: 'uniqCombined64Merge', columns: ['total_sessions', 'total_converted_sessions'] },
+    { table: 'daily_campaign_sessions_aggregation', aggregate: 'avgMerge', columns: ['avg_session_duration_ms'] },
+  ],
 } as const
 
-/**
- * A metric summed over whole UTC days in [from, to) (both at midnight), from the
- * rows the aggregates job saved: one per (tenant, campaign, day).
- */
-export function sumDailyAggregates(clickhouse: ClickHouse, { tenantId, campaignId, from, to }: MetricScope, metric: keyof typeof AGGREGATE_COLUMNS) {
-  return single(
-    clickhouse,
-    `SELECT sum(${AGGREGATE_COLUMNS[metric]}) AS count FROM campaign_daily_aggregates
-     WHERE tenant_id = {tenantId:UUID} AND campaign_id = {campaignId:UUID}
-       AND day >= {from:Date} AND day < {to:Date}`,
-    { tenantId, campaignId, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
-  )
+export type DailyMetric = keyof typeof DAILY_METRICS
+
+/** A metric's total (count), its customers (for impressions, clicks and clickToBasket), and all of its columns by name. */
+export interface MetricCount {
+  count: number
+  customers?: number
+  columns: Record<string, number>
 }
 
 /**
- * Basket additions in the scope credited to a click on the same tenant's campaign:
- * the click exists, came at most 24 hours before, was for the same product (if
- * it named one) and the same user (if both were signed in). Each click is
- * credited once per product.
+ * A metric over the days in the scope, in one query per table: event counts
+ * summed (from daily_campaign_aggregation, corrected nightly), customers'
+ * sketches merged (from daily_campaign_customers_aggregation, so a customer
+ * active on several days, on both apps, or as a visitor and then registered
+ * counts once), and sessions (from daily_campaign_sessions_aggregation).
+ * Unique customers also get has_visited_in_both: web + mobile - total. The WHERE
+ * clause follows the tables' sort key, so ClickHouse reads only that campaign's
+ * days, and the aggregates combine rows that background merges haven't combined yet.
  */
-export function countAttributedBasketAdditions(clickhouse: ClickHouse, scope: MetricScope) {
-  return single(
-    clickhouse,
-    `SELECT uniqExact(basket.attribution_id, basket.product_id) AS count
-     FROM events AS basket
-     INNER JOIN (
-       SELECT DISTINCT event_id, product_id, user_id, event_time FROM events
-       WHERE tenant_id = {tenantId:UUID} AND event_name = 'click' AND campaign_id = {campaignId:UUID}
-         -- Only clicks that can be credited for an addition in [from, to).
-         AND event_time >= {from:DateTime64(3, 'UTC')} - INTERVAL 24 HOUR AND event_time < {to:DateTime64(3, 'UTC')}
-     ) AS click ON basket.attribution_id = click.event_id
-     WHERE basket.tenant_id = {tenantId:UUID} AND basket.event_name = 'click_to_basket' AND basket.campaign_id = {campaignId:UUID}
-       AND basket.event_time >= {from:DateTime64(3, 'UTC')} AND basket.event_time < {to:DateTime64(3, 'UTC')}
-       AND basket.event_time >= click.event_time AND basket.event_time <= click.event_time + INTERVAL 24 HOUR
-       AND (click.product_id IS NULL OR click.product_id = basket.product_id)
-       AND (click.user_id IS NULL OR basket.user_id IS NULL OR click.user_id = basket.user_id)`,
-    scopeParams(scope),
+export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignId, from, to }: MetricScope, metric: DailyMetric): Promise<MetricCount> {
+  const sources = DAILY_METRICS[metric]
+  const rows = await Promise.all(
+    sources.map(async ({ table, aggregate, columns }) => {
+      const result = await clickhouse.query({
+        query: `SELECT ${columns.map((column) => `${aggregate}(${column}) AS ${column}`).join(', ')} FROM ${table}
+                WHERE tenant_id = {tenantId:UUID} AND campaign_id = {campaignId:UUID}
+                  AND day >= {from:Date} AND day < {to:Date}`,
+        query_params: { tenantId, campaignId, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+        format: 'JSONEachRow',
+      })
+      const [row = {}] = await result.json<Record<string, string | number | null>>()
+      // avgMerge of no rows is NaN (null in JSON): no sessions, so 0.
+      return columns.map((column) => [column, Number(row[column] ?? 0) || 0] as const)
+    }),
   )
+  const counts: Record<string, number> = Object.fromEntries(rows.flat())
+  if (metric === 'uniqueCustomers') {
+    // Estimates beyond a few thousand customers can make this slightly negative.
+    counts.has_visited_in_both = Math.max(0, counts.has_visited_in_web! + counts.has_visited_in_mobile! - counts.has_visited!)
+  }
+  const customerColumn = sources[1]?.columns[0]
+  return {
+    count: counts[sources[0].columns[0]]!,
+    ...(customerColumn?.startsWith('customers_') ? { customers: counts[customerColumn]! } : {}),
+    columns: counts,
+  }
 }

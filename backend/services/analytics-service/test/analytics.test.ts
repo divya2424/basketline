@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import request from 'supertest'
+import { decodeJwt } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createLogger, createMemoryEventBus, type EventBus, type MemoryEventBus } from '@ecommerce-analytics/platform'
 import { createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@ecommerce-analytics/platform/testing'
@@ -19,8 +20,9 @@ const logger = createLogger('analytics-test')
 let keys: TestKeys
 /** A campaign manager of TENANT. */
 let reader: string
-/** An anonymous visitor of TENANT. */
+/** A visitor of TENANT. */
 let visitor: string
+let visitorId: string
 let database: string
 let admin: ClickHouse
 let clickhouse: ClickHouse
@@ -41,7 +43,9 @@ async function createTestClickHouse() {
 beforeAll(async () => {
   keys = await createTestKeys()
   reader = (await tokenFor(keys, 'campaign-manager', { tid: TENANT })).header
-  visitor = (await visitorTokenFor(keys, TENANT)).header
+  const visitorToken = await visitorTokenFor(keys, TENANT)
+  visitor = visitorToken.header
+  visitorId = visitorToken.sub
   clickhouse = await createTestClickHouse()
   bus = createMemoryEventBus(logger)
   app = buildAnalyticsApp({ bus, clickhouse, logger, publicKey: keys.publicKey })
@@ -58,16 +62,21 @@ interface TestEvent {
   campaignId?: string
   eventName: string
   productId?: string
-  attributionId?: string
   timestamp?: string
   [key: string]: unknown
 }
 
-const send = (events: TestEvent[], auth = visitor, target = app) =>
+/** The identity a client sends with a batch: the one its token was issued for. */
+function identityOf(auth: string) {
+  const { sub, tid, sid } = decodeJwt(auth.replace('Bearer ', ''))
+  return { tenantId: tid, userId: sub, userType: sid ? 'registered' : 'visitor' }
+}
+
+const send = (events: TestEvent[], auth = visitor, target = app, identity: object = identityOf(auth)) =>
   request(target)
     .post('/api/v1/analytics/events')
     .set('Authorization', auth)
-    .send({ events: events.map((e) => ({ eventId: randomUUID(), timestamp: ago(60_000), ...e })) })
+    .send({ ...identity, events: events.map((e) => ({ eventId: randomUUID(), timestamp: ago(60_000), ...e })) })
 
 /** Applies a campaign.v1 event, as the Kafka consumer does. */
 function campaignEvent(campaignId: string, version: number, state: { status?: string; archived?: boolean; tenantId?: string } = {}) {
@@ -99,22 +108,16 @@ describe('ingestion: publish to the topic for each event type', () => {
     const res = await send([
       { campaignId, eventName: 'impression', properties: { position: 1 } },
       { eventId: clickId, campaignId, productId, eventName: 'click', pageName: 'home', featureName: 'product_card' },
-      { campaignId, productId, eventName: 'click_to_basket', attributionId: clickId },
-      // Activity without a campaign is fine.
+      // Activity without a campaign is fine. The Flink job credits this basket
+      // addition to the click above; the client sends no link between them.
       { productId, eventName: 'add_to_cart', properties: { quantity: 1, source: 'catalog_grid' } },
       { eventName: 'cart_view', pageName: 'cart' },
     ])
     expect(res.status).toBe(200)
-    expect(res.body).toMatchObject({ accepted: 5, rejected: 0 })
+    expect(res.body).toMatchObject({ accepted: 4, rejected: 0 })
 
     const published = bus.published.slice(before)
-    expect(published.map((m) => m.topic)).toEqual([
-      'analytics.impression.v1',
-      'analytics.click.v1',
-      'analytics.click_to_basket.v1',
-      'analytics.add_to_cart.v1',
-      'analytics.cart_view.v1',
-    ])
+    expect(published.map((m) => m.topic)).toEqual(['analytics.impression.v1', 'analytics.click.v1', 'analytics.add_to_cart.v1', 'analytics.cart_view.v1'])
     const click = published[1]!
     expect(click.key).toBe(clickId)
     expect(click.envelope).toMatchObject({ eventId: clickId, eventType: 'AnalyticsEventRecorded', producer: 'analytics-service' })
@@ -123,34 +126,56 @@ describe('ingestion: publish to the topic for each event type', () => {
       eventName: 'click',
       campaignId,
       productId,
-      userId: null,
+      userId: visitorId,
+      userType: 'visitor',
+      clientType: 'web',
       tenantId: TENANT,
       pageName: 'home',
       featureName: 'product_card',
-      attributionId: null,
       properties: {},
       timestamp: expect.any(String),
       receivedAt: expect.any(String),
     })
-    expect(published[3]!.envelope.payload).toMatchObject({ campaignId: null, properties: { quantity: 1, source: 'catalog_grid' } })
+    expect(published[2]!.envelope.payload).toMatchObject({ campaignId: null, properties: { quantity: 1, source: 'catalog_grid' } })
   })
 
-  it('takes the tenant and user from the token, never from headers or the body', async () => {
-    const { header, sub, tid } = await tokenFor(keys, 'standard-user')
+  it('takes the tenant, user and client type from the token', async () => {
+    const { header, sub, tid } = await tokenFor(keys, 'standard-user', { client: 'mobile' })
     const before = bus.published.length
     await send([{ eventName: 'home_view' }], header)
-    expect(bus.published[before]!.envelope.payload).toMatchObject({ userId: sub, tenantId: tid })
-    // A visitor has no user; a tenant_id header can't move its events to another tenant.
-    await request(app)
-      .post('/api/v1/analytics/events')
-      .set('Authorization', visitor)
-      .set('tenant_id', OTHER_TENANT)
-      .send({ events: [{ eventId: randomUUID(), eventName: 'home_view', timestamp: ago(1_000) }] })
-    expect(bus.published[before + 1]!.envelope.payload).toMatchObject({ userId: null, tenantId: TENANT })
+    expect(bus.published[before]!.envelope.payload).toMatchObject({ userId: sub, userType: 'registered', tenantId: tid, clientType: 'mobile' })
+    await send([{ eventName: 'home_view' }])
+    expect(bus.published[before + 1]!.envelope.payload).toMatchObject({ userId: visitorId, userType: 'visitor', tenantId: TENANT, clientType: 'web' })
 
     const spoofed = await send([{ eventName: 'home_view', userId: randomUUID() }])
     expect(spoofed.status).toBe(400)
     expect(spoofed.body.error.details.errors).toContain('events[0]: unknown field "userId"')
+  })
+
+  it("rejects the whole batch when the tenant, user or user type sent don't match the token", async () => {
+    const user = await tokenFor(keys, 'standard-user', { tid: TENANT })
+    const before = bus.published.length
+    const mismatches = [
+      send([{ eventName: 'home_view' }], visitor, app, { tenantId: OTHER_TENANT, userId: visitorId, userType: 'visitor' }),
+      send([{ eventName: 'home_view' }], visitor, app, { tenantId: TENANT, userId: randomUUID(), userType: 'visitor' }),
+      // A visitor claiming to be registered or to be a user, and a user claiming another user or to be a visitor.
+      send([{ eventName: 'home_view' }], visitor, app, { tenantId: TENANT, userId: visitorId, userType: 'registered' }),
+      send([{ eventName: 'home_view' }], visitor, app, { tenantId: TENANT, userId: user.sub, userType: 'registered' }),
+      send([{ eventName: 'home_view' }], user.header, app, { tenantId: TENANT, userId: randomUUID(), userType: 'registered' }),
+      send([{ eventName: 'home_view' }], user.header, app, { tenantId: TENANT, userId: user.sub, userType: 'visitor' }),
+      // The body matches, but the tenant_id header names another tenant.
+      send([{ eventName: 'home_view' }], visitor).set('tenant_id', OTHER_TENANT),
+    ]
+    for (const res of await Promise.all(mismatches)) {
+      expect(res.status).toBe(403)
+      expect(res.body.error.code).toBe('IDENTITY_MISMATCH')
+    }
+    expect(bus.published.length).toBe(before)
+
+    expect((await send([{ eventName: 'home_view' }], visitor).set('tenant_id', TENANT)).status).toBe(200)
+    expect((await send([{ eventName: 'home_view' }], visitor, app, {})).body.error.details.errors).toEqual(
+      expect.arrayContaining(['tenantId must be a UUID', 'userId must be a UUID', 'userType must be one of visitor, registered']),
+    )
   })
 
   it('requires an access or visitor token', async () => {
@@ -213,14 +238,18 @@ describe('ingestion: publish to the topic for each event type', () => {
     const malformed = await request(app)
       .post('/api/v1/analytics/events')
       .set('Authorization', visitor)
-      .send({ events: [{ eventId: 'x', eventName: 'purchase', timestamp: 'now' }] })
+      .send({ ...identityOf(visitor), events: [{ eventId: 'x', eventName: 'purchase', timestamp: 'now' }] })
     expect(malformed.status).toBe(400)
     expect(malformed.body.error.details.errors).toEqual(
       expect.arrayContaining(['events[0].eventId must be a UUID', 'events[0].timestamp must be an ISO 8601 date-time']),
     )
     expect((await send([{ eventName: 'click' }])).body.error.details.errors).toEqual(['events[0].campaignId must be a UUID'])
+    // Attribution is the platform's: no click_to_basket events, and no attributionId.
     expect((await send([{ campaignId: randomUUID(), eventName: 'click_to_basket', productId: randomUUID() }])).status).toBe(400)
-    expect((await request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ events: [] })).status).toBe(400)
+    expect((await send([{ eventName: 'add_to_cart', productId: randomUUID(), attributionId: randomUUID() }])).body.error.details.errors).toEqual([
+      'events[0]: unknown field "attributionId"',
+    ])
+    expect((await request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ ...identityOf(visitor), events: [] })).status).toBe(400)
 
     const before = bus.published.length
     const res = await send([
@@ -242,15 +271,16 @@ describe('ingestion: publish to the topic for each event type', () => {
   })
 })
 
-/** Rows as the Spark job writes them. */
+/** Rows as the Flink job writes them (through Kafka). */
 interface Row {
   event_id?: string
   event_name: string
   campaign_id?: string | null
   product_id?: string | null
   user_id?: string | null
+  user_type?: 'visitor' | 'registered'
+  client_type?: 'web' | 'mobile'
   tenant_id?: string
-  attribution_id?: string | null
   event_time?: string
 }
 
@@ -262,11 +292,50 @@ async function insert(rows: Row[]) {
     values: rows.map((row) => ({
       event_id: randomUUID(),
       tenant_id: TENANT,
+      user_type: 'visitor',
       event_time: ago(60_000),
       received_at: new Date().toISOString(),
       properties: '{}',
       ...row,
     })),
+  })
+}
+
+/**
+ * A candidate click for a basket addition, as the Flink job writes it (it
+ * applies the attribution rules); ClickHouse credits each basket's latest click.
+ */
+interface AttributedBasket {
+  basket_event_id?: string
+  click_event_id: string
+  campaign_id: string
+  client_type?: 'web' | 'mobile'
+  product_id?: string
+  user_id?: string
+  user_type?: 'visitor' | 'registered'
+  tenant_id?: string
+  event_time?: string
+  click_time?: string
+}
+
+async function insertAttributed(rows: AttributedBasket[]) {
+  await clickhouse.insert({
+    table: 'attributed_baskets',
+    format: 'JSONEachRow',
+    clickhouse_settings: { date_time_input_format: 'best_effort' },
+    values: rows.map((row) => {
+      const event_time = row.event_time ?? ago(60_000)
+      return {
+        basket_event_id: randomUUID(),
+        tenant_id: TENANT,
+        product_id: randomUUID(),
+        user_id: randomUUID(),
+        user_type: 'visitor',
+        event_time,
+        click_time: event_time,
+        ...row,
+      }
+    }),
   })
 }
 
@@ -301,44 +370,34 @@ describe('the /ad metrics, read from ClickHouse', () => {
     ])
     const from = ago(3 * 24 * HOUR)
     const to = new Date().toISOString()
-    // "from" snaps down to midnight; "to" falls today, so it stays.
+    // Whole UTC days: "from" snaps down to midnight, "to" up to the next one, so today is included.
     const snapped = new Date(Math.floor(new Date(from).getTime() / (24 * HOUR)) * 24 * HOUR).toISOString()
-    expect((await metric(campaignId, 'clicks', `?from=${from}&to=${to}`)).body).toMatchObject({ count: 1, period: { from: snapped, to } })
+    const tomorrow = new Date((Math.floor(Date.now() / (24 * HOUR)) + 1) * 24 * HOUR).toISOString()
+    expect((await metric(campaignId, 'clicks', `?from=${from}&to=${to}`)).body).toMatchObject({ count: 1, period: { from: snapped, to: tomorrow } })
     expect((await metric(campaignId, 'clicks', `?from=${new Date().toISOString()}&to=${ago(HOUR)}`)).body.error.code).toBe('INVALID_PERIOD')
     expect((await metric(campaignId, 'clicks', '?from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z')).body.error.code).toBe('INVALID_PERIOD')
     expect((await metric(campaignId, 'clicks', '?from=yesterday')).status).toBe(400)
   })
 
-  it('counts only basket additions credited to a valid earlier click', async () => {
-    const campaignId = randomUUID()
-    const other = randomUUID()
+  // The attribution rules themselves are applied by the Flink job (test/flink.kafka.test.ts).
+  it("credits each basket addition to its latest click, once per click and product, per tenant and campaign", async () => {
+    const [campaignId, otherCampaign] = [randomUUID(), randomUUID()]
     const [product, otherProduct] = [randomUUID(), randomUUID()]
-    const [shopper, someoneElse] = [randomUUID(), randomUUID()]
-    const click = randomUUID()
-    const oldClick = randomUUID()
-    const userClick = randomUUID()
-    const basket = (attribution_id: string, extra: Partial<Row> = {}): Row => ({
-      event_name: 'click_to_basket',
-      campaign_id: campaignId,
-      product_id: product,
-      attribution_id,
-      ...extra,
-    })
-    await insert([
-      { event_id: click, event_name: 'click', campaign_id: campaignId, product_id: product, event_time: ago(2 * HOUR) },
-      { event_id: oldClick, event_name: 'click', campaign_id: campaignId, product_id: product, event_time: ago(30 * HOUR) },
-      { event_id: userClick, event_name: 'click', campaign_id: campaignId, product_id: product, user_id: shopper, event_time: ago(2 * HOUR) },
-      basket(click), // ✓
-      basket(click), // same click and product again: credited once
-      basket(randomUUID()), // no such click
-      basket(click, { product_id: otherProduct }), // the click was for another product
-      basket(click, { campaign_id: other }), // another campaign
-      basket(click, { event_time: ago(3 * HOUR) }), // before the click
-      basket(oldClick), // more than 24 hours after the click
-      basket(userClick, { user_id: someoneElse }), // a different signed-in user
-      basket(userClick, { user_id: shopper }), // ✓
+    const [click, otherClick] = [randomUUID(), randomUUID()]
+    const [shopper, otherShopper] = [randomUUID(), randomUUID()]
+    const twice = randomUUID()
+    const basket = { campaign_id: campaignId, product_id: product, user_id: shopper }
+    await insertAttributed([
+      { ...basket, click_event_id: click }, // ✓
+      { ...basket, click_event_id: click }, // the same click and product added to the cart again: once
+      { ...basket, click_event_id: otherClick, user_id: otherShopper }, // ✓ another shopper
+      // One basket addition, two candidate clicks: the later one (otherCampaign) wins.
+      { basket_event_id: twice, click_event_id: randomUUID(), campaign_id: campaignId, product_id: otherProduct, user_id: shopper, click_time: ago(3 * HOUR) },
+      { basket_event_id: twice, click_event_id: randomUUID(), campaign_id: otherCampaign, product_id: otherProduct, user_id: shopper, click_time: ago(2 * HOUR) },
+      { ...basket, click_event_id: randomUUID(), tenant_id: OTHER_TENANT }, // another tenant
     ])
-    expect((await metric(campaignId, 'clickToBasket')).body.count).toBe(2)
+    expect((await metric(campaignId, 'clickToBasket')).body).toMatchObject({ count: 2, customers: 2 })
+    expect((await metric(otherCampaign, 'clickToBasket')).body).toMatchObject({ count: 1, customers: 1 })
   })
 
   it("counts only the caller's own tenant's events; a tenant_id header can't change that", async () => {
@@ -362,6 +421,7 @@ describe('the /ad metrics, read from ClickHouse', () => {
 
   it('returns 0 for an unknown campaign, and requires a token and a known metric', async () => {
     expect((await metric(randomUUID(), 'clicks')).body.count).toBe(0)
+    expect((await metric(randomUUID(), 'uniqueCustomers')).body.count).toBe(0)
     expect((await request(app).get(`/api/v1/ad/${randomUUID()}/clicks`)).status).toBe(401)
     expect((await metric(randomUUID(), 'conversions')).body.error.code).toBe('UNKNOWN_METRIC')
     expect((await metric('not-a-uuid', 'clicks')).status).toBe(400)
@@ -374,18 +434,19 @@ const midnight = (days: number) => new Date(Math.floor(Date.now() / DAY) * DAY -
 const atDay = (days: number, hour: number) => new Date(midnight(days).getTime() + hour * HOUR).toISOString()
 const dayString = (days: number) => midnight(days).toISOString().slice(0, 10)
 
-/** What runs every hour: find the changed days, then recount them. */
-async function runDailyJob() {
-  for (const view of ['campaign_daily_changes_mv', 'campaign_daily_aggregates_mv']) {
-    await admin.command({ query: `SYSTEM REFRESH VIEW ${database}.${view}` })
-    await admin.command({ query: `SYSTEM WAIT VIEW ${database}.${view}` })
-  }
+/** What runs every night: recount the closed days that changed, and add the difference. */
+async function runNightlyCheck() {
+  await admin.command({ query: `SYSTEM REFRESH VIEW ${database}.daily_campaign_aggregation_check_mv` })
+  await admin.command({ query: `SYSTEM WAIT VIEW ${database}.daily_campaign_aggregation_check_mv` })
 }
 
-async function savedAggregates(campaignId: string) {
+/** One campaign's daily totals, as /ad sees them (rows not merged yet are added up). */
+async function dailyTotals(campaignId: string) {
   const result = await clickhouse.query({
-    query: `SELECT toString(day) AS day, tenant_id, total_ad_impressions, total_ad_clicks, total_click_to_basket
-            FROM campaign_daily_aggregates WHERE campaign_id = {campaignId:UUID} ORDER BY toString(tenant_id), day`,
+    query: `SELECT toString(day) AS day, toString(tenant_id) AS tenant_id,
+                   sum(total_impressions) AS impressions, sum(total_clicks) AS clicks, sum(total_click_to_basket) AS click_to_basket
+            FROM daily_campaign_aggregation WHERE campaign_id = {campaignId:UUID}
+            GROUP BY day, tenant_id ORDER BY tenant_id, day`,
     query_params: { campaignId },
     format: 'JSONEachRow',
     clickhouse_settings: { output_format_json_quote_64bit_integers: 0 },
@@ -393,93 +454,291 @@ async function savedAggregates(campaignId: string) {
   return result.json()
 }
 
-describe('the aggregates job', () => {
-  it('saves days per tenant and campaign, by the /ad counting rules', async () => {
+describe('daily_campaign_aggregation: the daily totals /ad reads', () => {
+  it('adds each stored row to its day as it arrives, a late one to its own day', async () => {
     const campaignId = randomUUID()
     const product = randomUUID()
     const duplicate = randomUUID()
-    const [click, earlierClick, lateClick] = [randomUUID(), randomUUID(), randomUUID()]
-    const basket = (attribution_id: string, event_time: string): Row => ({
-      event_name: 'click_to_basket',
-      campaign_id: campaignId,
-      product_id: product,
-      attribution_id,
-      event_time,
-    })
+    const [click, earlierClick] = [randomUUID(), randomUUID()]
+    const basket = (click_event_id: string, event_time: string): AttributedBasket => ({ click_event_id, campaign_id: campaignId, product_id: product, event_time })
     await insert([
       { campaign_id: campaignId, event_name: 'impression', event_time: atDay(1, 10) },
       { campaign_id: campaignId, event_name: 'impression', event_id: duplicate, event_time: atDay(1, 10) },
-      { campaign_id: campaignId, event_name: 'impression', event_id: duplicate, event_time: atDay(1, 10) },
+      { campaign_id: campaignId, event_name: 'impression', event_id: duplicate, event_time: atDay(1, 10) }, // same batch: once
       { event_id: click, event_name: 'click', campaign_id: campaignId, product_id: product, event_time: atDay(1, 9) },
-      basket(click, atDay(1, 10)),
-      basket(click, atDay(1, 11)), // same click and product: once
-      basket(randomUUID(), atDay(1, 10)), // no such click
-      { event_id: earlierClick, event_name: 'click', campaign_id: campaignId, product_id: product, event_time: atDay(2, 22) },
-      basket(earlierClick, atDay(1, 1)), // credited to the click from the day before
-      basket(lateClick, atDay(1, 12)), // its click is stored after the basket
       { campaign_id: campaignId, event_name: 'click', tenant_id: OTHER_TENANT, event_time: atDay(1, 11) },
-      { campaign_id: campaignId, event_name: 'impression', event_time: atDay(0, 0) }, // today: saved too
+      { campaign_id: campaignId, event_name: 'impression', event_time: atDay(0, 0) },
+      { campaign_id: campaignId, event_name: 'add_to_cart', event_time: atDay(1, 12) }, // not a metric event
     ])
-    await insert([{ event_id: lateClick, event_name: 'click', campaign_id: campaignId, product_id: product, event_time: atDay(1, 11) }])
-    await runDailyJob()
-    await insert([{ campaign_id: campaignId, event_name: 'impression', event_time: atDay(1, 15) }])
-    await runDailyJob() // recounts yesterday: still one row per key, now with the extra impression
+    await insertAttributed([
+      basket(click, atDay(1, 10)),
+      basket(click, atDay(1, 11)), // same click and product, same batch: once
+      basket(earlierClick, atDay(1, 1)), // counted on the basket's day, not the click's
+    ])
+    // Stored days after it happened: it counts for its own day, at once.
+    await insert([{ campaign_id: campaignId, event_name: 'impression', event_time: atDay(3, 15) }])
 
-    expect(await savedAggregates(campaignId)).toEqual([
-      { day: dayString(2), tenant_id: TENANT, total_ad_impressions: 0, total_ad_clicks: 1, total_click_to_basket: 0 },
-      { day: dayString(1), tenant_id: TENANT, total_ad_impressions: 3, total_ad_clicks: 2, total_click_to_basket: 3 },
-      { day: dayString(0), tenant_id: TENANT, total_ad_impressions: 1, total_ad_clicks: 0, total_click_to_basket: 0 },
-      { day: dayString(1), tenant_id: OTHER_TENANT, total_ad_impressions: 0, total_ad_clicks: 1, total_click_to_basket: 0 },
-    ])
-    // (tenant_id, campaign_id, day) is unique across the whole table, without FINAL.
-    const duplicates = await clickhouse.query({
-      query: 'SELECT count() - uniqExact(tenant_id, campaign_id, day) AS duplicates FROM campaign_daily_aggregates',
-      format: 'JSONEachRow',
-      clickhouse_settings: { output_format_json_quote_64bit_integers: 0 },
-    })
-    expect(await duplicates.json()).toEqual([{ duplicates: 0 }])
+    expect(await dailyTotals(campaignId)).toEqual([
+      { day: dayString(3), tenant_id: TENANT, impressions: 1, clicks: 0, click_to_basket: 0 },
+      { day: dayString(1), tenant_id: TENANT, impressions: 2, clicks: 1, click_to_basket: 2 },
+      { day: dayString(0), tenant_id: TENANT, impressions: 1, clicks: 0, click_to_basket: 0 },
+      { day: dayString(1), tenant_id: OTHER_TENANT, impressions: 0, clicks: 1, click_to_basket: 0 },
+    ].sort((a, b) => a.tenant_id.localeCompare(b.tenant_id)))
   })
-})
 
-describe('/ad combines saved days with raw events for yesterday and today', () => {
-  it('reads days before yesterday from the aggregates, which take in late events on the next run', async () => {
+  it('counts a copy stored in another batch until the nightly check corrects past days', async () => {
+    const campaignId = randomUUID()
+    const product = randomUUID()
+    const [click, todaysClick, clickWithBasket] = [randomUUID(), randomUUID(), randomUUID()]
+    const sent = { event_id: click, event_name: 'click', campaign_id: campaignId, event_time: atDay(1, 9) }
+    const today = { event_id: todaysClick, event_name: 'click', campaign_id: campaignId, event_time: ago(60_000) }
+    const credited: AttributedBasket = { click_event_id: clickWithBasket, campaign_id: campaignId, product_id: product, event_time: atDay(1, 10) }
+    await insert([sent, today])
+    await insertAttributed([credited])
+    // Redelivered later (a retry, or a replay after a restart): a separate batch each.
+    await insert([sent, today])
+    await insertAttributed([credited])
+
+    const lastTwoDays = `?from=${midnight(1).toISOString()}`
+    expect((await metric(campaignId, 'clicks', lastTwoDays)).body.count).toBe(4)
+    expect((await metric(campaignId, 'clickToBasket', lastTwoDays)).body.count).toBe(2)
+
+    await runNightlyCheck()
+    // Yesterday is exact now; today is checked the night after it ends.
+    expect(await dailyTotals(campaignId)).toEqual([
+      { day: dayString(1), tenant_id: TENANT, impressions: 0, clicks: 1, click_to_basket: 1 },
+      { day: dayString(0), tenant_id: TENANT, impressions: 0, clicks: 2, click_to_basket: 0 },
+    ])
+
+    // Running it again changes nothing: a day that is right gets no correction.
+    await runNightlyCheck()
+    expect((await metric(campaignId, 'clicks', lastTwoDays)).body.count).toBe(3)
+  })
+
+  it('moves a basket addition to a later click that arrives in another batch, once the nightly check runs', async () => {
+    const [first, second] = [randomUUID(), randomUUID()]
+    const basket = { basket_event_id: randomUUID(), product_id: randomUUID(), user_id: randomUUID(), event_time: atDay(1, 12) }
+    await insertAttributed([{ ...basket, click_event_id: randomUUID(), campaign_id: first, click_time: atDay(1, 8) }])
+    // A later click on the same product, in another campaign, arrives late.
+    await insertAttributed([{ ...basket, click_event_id: randomUUID(), campaign_id: second, click_time: atDay(1, 10) }])
+    const yesterday = `?from=${midnight(1).toISOString()}`
+    // Live, each batch credits its own latest click.
+    expect((await metric(first, 'clickToBasket', yesterday)).body.count).toBe(1)
+    expect((await metric(second, 'clickToBasket', yesterday)).body.count).toBe(1)
+
+    await runNightlyCheck()
+    // The first campaign had nothing else that day, and is corrected to 0.
+    expect((await metric(first, 'clickToBasket', yesterday)).body.count).toBe(0)
+    expect((await metric(second, 'clickToBasket', yesterday)).body.count).toBe(1)
+  })
+
+  it('answers any range of days from the daily totals', async () => {
     const campaignId = randomUUID()
     await insert([
       { campaign_id: campaignId, event_name: 'click', event_time: atDay(3, 12) },
       { campaign_id: campaignId, event_name: 'click', event_time: atDay(1, 12) },
       { campaign_id: campaignId, event_name: 'click', event_time: ago(1_000) },
     ])
-    await runDailyJob()
     expect((await metric(campaignId, 'clicks')).body.count).toBe(3)
-
-    // A late click for 3 days ago: stored now, counted once the job has run again.
-    await insert([{ campaign_id: campaignId, event_name: 'click', event_time: atDay(3, 13) }])
-    expect((await metric(campaignId, 'clicks')).body.count).toBe(3)
-    await runDailyJob()
-    expect((await metric(campaignId, 'clicks')).body.count).toBe(4)
-    expect(await savedAggregates(campaignId)).toEqual([
-      { day: dayString(3), tenant_id: TENANT, total_ad_impressions: 0, total_ad_clicks: 2, total_click_to_basket: 0 },
-      { day: dayString(1), tenant_id: TENANT, total_ad_impressions: 0, total_ad_clicks: 1, total_click_to_basket: 0 },
-      { day: dayString(0), tenant_id: TENANT, total_ad_impressions: 0, total_ad_clicks: 1, total_click_to_basket: 0 },
-    ])
-
-    // Yesterday and today only: raw events.
+    // Yesterday and today.
     expect((await metric(campaignId, 'clicks', `?from=${midnight(1).toISOString()}`)).body.count).toBe(2)
     // Snapped to whole days: [3 days ago 00:00, 2 days ago 00:00).
-    const saved = await metric(campaignId, 'clicks', `?from=${atDay(3, 18)}&to=${atDay(3, 20)}`)
-    expect(saved.body).toMatchObject({ count: 2, period: { from: midnight(3).toISOString(), to: midnight(2).toISOString() } })
+    const oneDay = await metric(campaignId, 'clicks', `?from=${atDay(3, 18)}&to=${atDay(3, 20)}`)
+    expect(oneDay.body).toMatchObject({ count: 1, period: { from: midnight(3).toISOString(), to: midnight(2).toISOString() } })
+  })
+})
+
+describe('daily_campaign_customers_aggregation: unique customers', () => {
+  it('counts each customer who saw or clicked the campaign once per period, whatever the days or copies', async () => {
+    const campaignId = randomUUID()
+    const [visitor, user, otherVisitor] = [randomUUID(), randomUUID(), randomUUID()]
+    const copy = randomUUID()
+    await insert([
+      // Two days ago: a visitor and a registered user.
+      { campaign_id: campaignId, event_name: 'impression', user_id: visitor, event_time: atDay(2, 10) },
+      { campaign_id: campaignId, event_name: 'click', user_id: user, user_type: 'registered', event_time: atDay(2, 11) },
+      // Yesterday: the same visitor again, and another one whose impression arrives twice.
+      { campaign_id: campaignId, event_name: 'click', user_id: visitor, event_time: atDay(1, 9) },
+      { campaign_id: campaignId, event_name: 'impression', user_id: otherVisitor, event_id: copy, event_time: atDay(1, 10) },
+      // Not counted: a basket addition, another campaign, another tenant, and an event with no customer ID.
+      { campaign_id: campaignId, event_name: 'add_to_cart', user_id: randomUUID(), event_time: atDay(1, 12) },
+      { campaign_id: randomUUID(), event_name: 'impression', user_id: randomUUID(), event_time: atDay(1, 12) },
+      { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID(), tenant_id: OTHER_TENANT, event_time: atDay(1, 12) },
+      { campaign_id: campaignId, event_name: 'impression', event_time: atDay(1, 12) },
+    ])
+    await insert([{ campaign_id: campaignId, event_name: 'impression', user_id: otherVisitor, event_id: copy, event_time: atDay(1, 10) }])
+
+    const unique = await metric(campaignId, 'uniqueCustomers')
+    expect(unique.status).toBe(200)
+    expect(unique.body).toMatchObject({ campaignId, metric: 'uniqueCustomers', count: 3, has_visited_registered: 1, has_visited_visitor: 2 })
+    // Each day on its own: the visitor active on both days counts in each, once overall.
+    expect((await metric(campaignId, 'uniqueCustomers', `?from=${atDay(2, 0)}&to=${midnight(1).toISOString()}`)).body.count).toBe(2)
+    expect((await metric(campaignId, 'uniqueCustomers', `?from=${atDay(1, 0)}&to=${midnight(0).toISOString()}`)).body.count).toBe(2)
   })
 
-  it("saves today's rows on the next run, so a later run's watermark can't skip them", async () => {
-    // The old job left today's rows for after midnight; a run that saved a late event
-    // for an older day meanwhile moved max(computed_at) past them, so they were never counted.
+  it('returns the customers behind impressions, clicks and click-to-basket, per client and user type', async () => {
     const campaignId = randomUUID()
-    await insert([{ campaign_id: campaignId, event_name: 'click', event_time: ago(60_000) }])
-    await runDailyJob()
-    await insert([{ campaign_id: randomUUID(), event_name: 'click', event_time: atDay(3, 12) }])
-    await runDailyJob()
-    expect(await savedAggregates(campaignId)).toEqual([
-      { day: dayString(0), tenant_id: TENANT, total_ad_impressions: 0, total_ad_clicks: 1, total_click_to_basket: 0 },
+    const [visitor, user] = [randomUUID(), randomUUID()]
+    await insert([
+      { campaign_id: campaignId, event_name: 'impression', user_id: visitor, event_time: atDay(1, 9) },
+      { campaign_id: campaignId, event_name: 'impression', user_id: visitor, event_time: atDay(0, 0) },
+      { campaign_id: campaignId, event_name: 'impression', user_id: user, user_type: 'registered', client_type: 'mobile' },
+      { campaign_id: campaignId, event_name: 'click', user_id: visitor },
+      { campaign_id: campaignId, event_name: 'click', user_id: visitor },
     ])
+    await insertAttributed([
+      { click_event_id: randomUUID(), campaign_id: campaignId, user_id: user, user_type: 'registered', client_type: 'mobile' },
+      { click_event_id: randomUUID(), campaign_id: campaignId, user_id: user, user_type: 'registered', client_type: 'mobile' },
+    ])
+    expect((await metric(campaignId, 'impressions')).body).toMatchObject({
+      count: 3,
+      customers: 2,
+      customers_impressions: 2,
+      customers_web_impressions: 1,
+      customers_mobile_impressions: 1,
+      customers_registered_impressions: 1,
+      customers_visitor_impressions: 1,
+    })
+    expect((await metric(campaignId, 'clicks')).body).toMatchObject({ count: 2, customers: 1, customers_visitor_clicks: 1, customers_registered_clicks: 0 })
+    expect((await metric(campaignId, 'clickToBasket')).body).toMatchObject({
+      count: 2,
+      customers: 1,
+      customers_mobile_click_to_basket: 1,
+      customers_web_click_to_basket: 0,
+      customers_registered_click_to_basket: 1,
+    })
+    // Unique customers and sessions have no separate customers field.
+    expect((await metric(campaignId, 'uniqueCustomers')).body).not.toHaveProperty('customers')
+  })
+})
+
+/** Sessions as the Flink job writes them (through Kafka); kafka.sql derives session_id. */
+async function insertSession(session: { campaigns: string[]; clicked?: string[]; added?: string[]; minutes: number; start?: string; session_id?: string }) {
+  const start = session.start ?? ago(10 * HOUR)
+  await clickhouse.insert({
+    table: 'sessions',
+    format: 'JSONEachRow',
+    clickhouse_settings: { date_time_input_format: 'best_effort' },
+    values: [
+      {
+        session_id: session.session_id ?? randomUUID(),
+        tenant_id: TENANT,
+        user_id: randomUUID(),
+        user_type: 'visitor',
+        session_start: start,
+        last_event_time: new Date(new Date(start).getTime() + session.minutes * 60_000).toISOString(),
+        events: 3,
+        impressions: 1,
+        clicks: 1,
+        add_to_carts: 1,
+        web: true,
+        mobile: false,
+        campaigns: session.campaigns,
+        clicked: session.clicked ?? [],
+        added: session.added ?? [],
+      },
+    ],
+  })
+}
+
+describe('daily_campaign_sessions_aggregation: sessions', () => {
+  it('counts the sessions that saw a campaign, those that converted, and their average duration', async () => {
+    const [campaignId, otherCampaign] = [randomUUID(), randomUUID()]
+    const [product, otherProduct] = [randomUUID(), randomUUID()]
+    const repeated = randomUUID()
+    // Converted: clicked the product in this campaign and added it to the cart.
+    await insertSession({ campaigns: [campaignId, otherCampaign], clicked: [`${campaignId}:${product}`], added: [product], minutes: 30, session_id: repeated })
+    // Written again after a Flink restart: counts once.
+    await insertSession({ campaigns: [campaignId, otherCampaign], clicked: [`${campaignId}:${product}`], added: [product], minutes: 30, session_id: repeated })
+    // Not converted: added another product than the one clicked.
+    await insertSession({ campaigns: [campaignId], clicked: [`${campaignId}:${product}`], added: [otherProduct], minutes: 10 })
+
+    const sessions = await metric(campaignId, 'sessions')
+    expect(sessions.status).toBe(200)
+    expect(sessions.body).toMatchObject({ metric: 'sessions', count: 2, total_sessions: 2, total_converted_sessions: 1 })
+    expect(sessions.body).not.toHaveProperty('customers')
+    // (30 + 30 + 10) / 3 rows: a repeated session counts in the average.
+    expect(sessions.body.avg_session_duration_ms).toBeCloseTo((70 / 3) * 60_000, -3)
+    // Seen, but the click and the basket were for another campaign.
+    expect((await metric(otherCampaign, 'sessions')).body).toMatchObject({ count: 1, total_converted_sessions: 0 })
+    expect((await metric(randomUUID(), 'sessions')).body).toMatchObject({ count: 0, avg_session_duration_ms: 0 })
+  })
+})
+
+describe('a visitor who registers', () => {
+  it('counts once, as both a visitor and a registered user: the client keeps their UUID', async () => {
+    const campaignId = randomUUID()
+    const person = randomUUID()
+    await insert([
+      { campaign_id: campaignId, event_name: 'impression', user_id: person, event_time: atDay(1, 9) },
+      { campaign_id: campaignId, event_name: 'click', user_id: person, user_type: 'registered', client_type: 'mobile', event_time: atDay(1, 10) },
+      { campaign_id: campaignId, event_name: 'impression', user_id: person, user_type: 'registered', client_type: 'mobile' },
+    ])
+    expect((await metric(campaignId, 'uniqueCustomers')).body).toMatchObject({
+      count: 1,
+      has_visited_registered: 1,
+      has_visited_visitor: 1,
+      has_visited_in_web: 1,
+      has_visited_in_mobile: 1,
+      has_visited_in_both: 1,
+    })
+  })
+})
+
+describe('web, mobile and total', () => {
+  it('counts every metric per client type, and in total: event counts add up, a customer on both counts once', async () => {
+    const campaignId = randomUUID()
+    const [both, webOnly] = [randomUUID(), randomUUID()]
+    await insert([
+      { campaign_id: campaignId, event_name: 'impression', user_id: both, client_type: 'web' },
+      { campaign_id: campaignId, event_name: 'impression', user_id: both, client_type: 'mobile' },
+      { campaign_id: campaignId, event_name: 'click', user_id: both, client_type: 'mobile' },
+      { campaign_id: campaignId, event_name: 'impression', user_id: webOnly },
+    ])
+    await insertAttributed([{ click_event_id: randomUUID(), campaign_id: campaignId, product_id: randomUUID(), client_type: 'mobile' }])
+
+    const body = async (name: string) => (await metric(campaignId, name)).body
+    expect(await body('impressions')).toMatchObject({ count: 3, total_impressions: 3, total_web_impressions: 2, total_mobile_impressions: 1 })
+    expect(await body('clicks')).toMatchObject({ count: 1, total_clicks: 1, total_web_clicks: 0, total_mobile_clicks: 1 })
+    expect(await body('clickToBasket')).toMatchObject({
+      count: 1,
+      total_click_to_basket: 1,
+      total_web_click_to_basket: 0,
+      total_mobile_click_to_basket: 1,
+    })
+    // 2 people: one on web only, one on both (counted once in the total).
+    expect(await body('uniqueCustomers')).toMatchObject({
+      count: 2,
+      has_visited: 2,
+      has_visited_in_web: 2,
+      has_visited_in_mobile: 1,
+      has_visited_in_both: 1,
+    })
+    // One row per campaign and day in both daily tables, not one per client type.
+    for (const table of ['daily_campaign_aggregation', 'daily_campaign_customers_aggregation']) {
+      const rows = await clickhouse.query({
+        query: `SELECT count() AS rows FROM ${table} FINAL WHERE campaign_id = {campaignId:UUID}`,
+        query_params: { campaignId },
+        format: 'JSONEachRow',
+      })
+      expect(await rows.json()).toEqual([{ rows: 1 }])
+    }
+  })
+})
+
+describe('the /ad cache', () => {
+  it('reuses a count for the same campaign, metric and days, and fetches new days afresh', async () => {
+    const cached = buildAnalyticsApp({ bus, clickhouse, logger, publicKey: keys.publicKey, metricsCacheMs: 15_000 })
+    const campaignId = randomUUID()
+    const clicks = (query = '') => request(cached).get(`/api/v1/ad/${campaignId}/clicks${query}`).set('Authorization', reader)
+    await insert([{ campaign_id: campaignId, event_name: 'click' }])
+    expect((await clicks()).body.count).toBe(1)
+
+    await insert([{ campaign_id: campaignId, event_name: 'click' }])
+    // Within 15 s: the same answer, without asking ClickHouse.
+    expect((await clicks()).body.count).toBe(1)
+    // Other days are another entry. The app without a cache sees the new click at once.
+    expect((await clicks(`?from=${midnight(1).toISOString()}`)).body.count).toBe(2)
+    expect((await metric(campaignId, 'clicks')).body.count).toBe(2)
   })
 })

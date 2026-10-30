@@ -66,50 +66,163 @@
   font: inherit;
 }
 
-.metrics-grid {
+/* Chart colours for the dashboard's split bars, in both themes. */
+.analytics-page {
+  --chart-web: #4f46e5;
+  --chart-mobile: #0d9488;
+  --chart-both: #8b85f0;
+  --chart-registered: #7c3aed;
+  --chart-visitor: #94a3b8;
+  --chart-track: #eceef6;
+  --step-1: #a5b4fc;
+  --step-2: #4f46e5;
+  --step-3: #059669;
+}
+
+@media (prefers-color-scheme: dark) {
+  .analytics-page {
+    --chart-web: #818cf8;
+    --chart-mobile: #2dd4bf;
+    --chart-both: #b4b0f7;
+    --chart-registered: #c4b5fd;
+    --chart-visitor: #64748b;
+    --chart-track: #2a2e4a;
+    --step-1: #6366f1;
+    --step-2: #a5b4fc;
+    --step-3: #34d399;
+  }
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 32px;
+  margin: 8px 0 12px;
+}
+
+.section-head__title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.metrics-panel .section-head + * + .section-head {
+  margin-top: 28px;
+}
+
+/* Loading status in the section header: shown and hidden without moving anything. */
+.loading-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.loading-chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Impressions → clicks → click-to-basket, with the conversion between each step. */
+.funnel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: minmax(0, 1fr) 104px minmax(0, 1fr) 104px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.audience {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
 .metric-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
+  min-width: 0;
   padding: 20px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 
-.metric-card--rate {
-  background: var(--color-surface-muted);
-}
+.metric-card--step1 { border-top: 4px solid var(--step-1); }
+.metric-card--step2 { border-top: 4px solid var(--step-2); }
+.metric-card--step3 { border-top: 4px solid var(--step-3); }
 
 .metric-card--error {
   border-color: var(--color-danger);
   background: var(--color-danger-bg);
 }
 
+.metric-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .metric-card__label {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 0.95rem;
   font-weight: 700;
+}
+
+.metric-card__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
   color: var(--color-text-muted);
 }
 
 .metric-card__value {
   margin: 0;
-  min-height: 2.6rem;
-  font-size: 2rem;
+  font-size: clamp(1.9rem, 3vw, 2.4rem);
+  line-height: 1.1;
   font-weight: 800;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
-.metric-card__value--muted {
-  font-size: 1.25rem;
-  color: var(--color-danger);
+.metric-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.metric-card__customers,
+.metric-card__fact {
+  margin: -6px 0 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.metric-card__customers strong,
+.metric-card__fact strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-card__note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
 }
 
 .metric-card__error {
@@ -119,22 +232,251 @@
   gap: 6px;
 }
 
-.metric-card__description {
+.metric-card__error-title {
   margin: 0;
+  font-weight: 700;
+  color: var(--color-danger);
+}
+
+/* A share bar with its legend. */
+.split {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.split__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.split__bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--chart-track);
+}
+
+.split__segment {
+  min-width: 4px;
+}
+
+.split__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
   font-size: 0.8rem;
   color: var(--color-text-muted);
 }
 
+.split__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.split__legend strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.split__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.split__segment--web { background: var(--chart-web); }
+.split__segment--mobile { background: var(--chart-mobile); }
+.split__segment--both { background: var(--chart-both); }
+.split__segment--registered { background: var(--chart-registered); }
+.split__segment--visitor { background: var(--chart-visitor); }
+
+.progress-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-stat__text {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.progress-stat__text strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-stat__track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--chart-track);
+  overflow: hidden;
+}
+
+.progress-stat__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--step-3);
+}
+
+/* The conversion between two funnel steps: an arrow with the rate on it. */
+.funnel-rate {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.funnel-rate__arrow {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 2px;
+  background: var(--color-border);
+}
+
+.funnel-rate__arrow::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -5px;
+  border: 6px solid transparent;
+  border-left-color: var(--color-border);
+  border-right: 0;
+}
+
+.funnel-rate__pill {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+}
+
+.funnel-rate__value {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
+}
+
+.funnel-rate__label {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* Placeholders while a count loads, in the shape of what replaces them. */
+.metric-card__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--chart-track) 0%, color-mix(in srgb, var(--chart-track) 40%, var(--color-surface)) 50%, var(--chart-track) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton--value { width: 55%; height: 2.4rem; }
+.skeleton--line { width: 35%; height: 0.9rem; }
+.skeleton--bar { width: 100%; height: 8px; border-radius: 999px; }
+.skeleton--pill { display: inline-block; width: 3.5rem; height: 1.1rem; }
+
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@keyframes pulse {
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .loading-chip__dot {
+    animation: none;
+  }
+}
+
+/* Narrow screens: the funnel's steps stack, the arrows point down. */
+@media (max-width: 900px) {
+  .funnel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .funnel-rate {
+    min-height: 56px;
+  }
+
+  .funnel-rate__arrow {
+    inset: 0 auto 0 50%;
+    width: 2px;
+    height: auto;
+  }
+
+  .funnel-rate__arrow::after {
+    right: -5px;
+    top: auto;
+    bottom: 0;
+    border: 6px solid transparent;
+    border-top-color: var(--color-border);
+    border-bottom: 0;
+  }
+
+  .funnel-rate__pill {
+    flex-direction: row;
+    gap: 8px;
+    align-items: baseline;
+  }
+}
+
+@media (max-width: 720px) {
+  .audience {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .table-wrap {
   overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.table-wrap > .muted {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
 }
 
 .comparison-table {
   width: 100%;
   border-collapse: collapse;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
   font-variant-numeric: tabular-nums;
 }
 
@@ -152,17 +494,62 @@
 }
 
 .comparison-table thead th {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  background: var(--color-surface-muted);
+}
+
+.comparison-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface));
+}
+
+.comparison-table tbody tr:last-child th,
+.comparison-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.comparison-table td {
+  font-weight: 600;
+}
+
+.comparison-table__title {
+  display: block;
+  font-weight: 700;
+}
+
+.comparison-table__id,
+.comparison-table__sub {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.comparison-table__id {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rate-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.rate-pill--empty {
+  background: transparent;
   color: var(--color-text-muted);
 }
 
 .cell-error {
   color: var(--color-danger);
-}
-
-.loading-banner-slot {
-  min-height: 44px;
-  margin-bottom: 12px;
 }
 
 .loading-banner {
@@ -176,11 +563,6 @@
   color: var(--color-text);
   font-size: 0.9rem;
   font-weight: 600;
-}
-
-.metric-card__value .spinner-wrap {
-  height: 100%;
-  min-height: 2.6rem;
 }
 
 .field input[type='date'] {
@@ -213,4 +595,17 @@
 
 .analytics-period {
   margin: -8px 0 16px;
+}
+
+/* Side by side, the funnel's hints take two lines each, so the three headline numbers line up. */
+@media (min-width: 901px) {
+  .funnel .metric-card__hint {
+    min-height: 2.7em;
+  }
+}
+
+@media (max-width: 600px) {
+  .analytics-toolbar .field {
+    flex-basis: 100%;
+  }
 }

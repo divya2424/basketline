@@ -183,6 +183,44 @@ describe('visitor tokens', () => {
     expect(me.status).toBe(401)
     expect((await request(app).post('/api/v1/auth/visitor')).body.error.code).toBe('TENANT_REQUIRED')
   })
+
+  it("keeps the client's userId across tokens, and a random one without it", async () => {
+    const userId = randomUUID()
+    const visitor = (body?: object) => request(app).post('/api/v1/auth/visitor').set('tenant_id', TENANT).send(body)
+    const visitorId = async (body?: object) => (await verifyVisitorToken((await visitor(body)).body.visitorToken, keys.publicKey)).sub
+    expect(await visitorId({ userId })).toBe(userId)
+    expect(await visitorId({ userId })).toBe(userId)
+    expect((await visitor({ userId })).body.userId).toBe(userId)
+    expect(await visitorId()).not.toBe(userId)
+
+    const invalid = await visitor({ userId: 'not-a-uuid' })
+    expect(invalid.status).toBe(400)
+    expect(invalid.body.error.code).toBe('VALIDATION_FAILED')
+  })
+})
+
+describe('register with a visitor token', () => {
+  it("keeps the visitor's UUID as the user's ID, only with a visitor token for this tenant", async () => {
+    const userId = randomUUID()
+    const visitor = await request(app).post('/api/v1/auth/visitor').set('tenant_id', TENANT).send({ userId })
+    const adopted = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken: visitor.body.visitorToken })
+    expect(adopted.status).toBe(201)
+    expect(adopted.body.user.id).toBe(userId)
+
+    // The UUID is a user now: registering again with the same token gets a random ID.
+    const again = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken: visitor.body.visitorToken })
+    expect(again.status).toBe(201)
+    expect(again.body.user.id).not.toBe(userId)
+
+    // Another tenant's visitor token, or a token that isn't one, gets a random ID.
+    const foreignId = randomUUID()
+    const foreign = await request(app).post('/api/v1/auth/visitor').set('tenant_id', OTHER_TENANT).send({ userId: foreignId })
+    for (const visitorToken of [foreign.body.visitorToken, 'not-a-token']) {
+      const other = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken })
+      expect(other.status).toBe(201)
+      expect(other.body.user.id).not.toBe(foreignId)
+    }
+  })
 })
 
 describe('login', () => {
@@ -196,7 +234,7 @@ describe('login', () => {
     const claims = decodeJwt(res.body.accessToken)
     expect(Object.keys(claims)).toEqual(expect.arrayContaining(['sub', 'sid', 'role', 'tid', 'iat', 'exp']))
     expect(claims.exp! - claims.iat!).toBe(1800)
-    expect(claims).toMatchObject({ sub: user.id, sid: res.body.session.id, role: 'standard-user', tid: TENANT })
+    expect(claims).toMatchObject({ sub: user.id, sid: res.body.session.id, role: 'standard-user', tid: TENANT, client: 'mobile' })
     expect(new Date(res.body.session.expiresAt).getTime()).toBe(claims.exp! * 1000)
 
     const { rows } = await queryAsTenant('SELECT tenant_id, client_type, session_end_time FROM user_login WHERE id = $1', [res.body.session.id])

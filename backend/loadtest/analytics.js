@@ -20,7 +20,7 @@ const PASSWORD = __ENV.LOADTEST_PASSWORD || 'load test password'
 // analytics-service allows 300 events per sender per minute: a visitor sends this
 // many batches of 10, then becomes a new visitor.
 const BATCHES_PER_VISITOR = 25
-const METRICS = ['impressions', 'clicks', 'clickToBasket']
+const METRICS = ['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers', 'sessions']
 const RANGE_DAYS = [7, 30, 90, 365]
 const DAY = 24 * 60 * 60 * 1000
 
@@ -85,17 +85,17 @@ export function setup() {
   }
 }
 
-// Per VU: the current visitor's token and how many batches it has sent.
+// Per VU: the current visitor's token and ID, and how many batches it has sent.
 let visitor = null
 
-function visitorHeader() {
+function currentVisitor() {
   if (!visitor || visitor.batches >= BATCHES_PER_VISITOR) {
     const res = http.post(`${BASE_URL}/auth/visitor`, null, { headers: { tenant_id: TENANT }, tags: { name: 'visitor' } })
     if (res.status !== 201) throw new Error(`visitor token failed: ${res.status} ${res.body}`)
-    visitor = { header: `Bearer ${res.json('visitorToken')}`, batches: 0 }
+    visitor = { header: `Bearer ${res.json('visitorToken')}`, userId: res.json('userId'), batches: 0 }
   }
   visitor.batches += 1
-  return visitor.header
+  return visitor
 }
 
 function event(eventName, campaignId, extra = {}) {
@@ -109,7 +109,7 @@ function event(eventName, campaignId, extra = {}) {
   }
 }
 
-/** One browser batch: 6 impressions, 2 clicks, 1 credited basket addition, 1 add_to_cart. */
+/** One browser batch: 6 impressions, 2 clicks, and an add_to_cart of the first click's product (Flink credits it to that click). */
 function batch(campaigns) {
   const campaign = pick(campaigns)
   const campaignId = campaign.id
@@ -119,14 +119,16 @@ function batch(campaigns) {
     ...Array.from({ length: 6 }, () => event('impression', campaignId)),
     click,
     event('click', campaignId, { productId: pick(campaign.productIds) }),
-    event('click_to_basket', campaignId, { productId, attributionId: click.eventId }),
-    event('add_to_cart', campaignId, { productId }),
+    event('add_to_cart', null, { productId }),
   ]
 }
 
 export function ingest(data) {
-  const res = http.post(`${BASE_URL}/analytics/events`, JSON.stringify({ events: batch(data.campaigns) }), {
-    headers: { 'Content-Type': 'application/json', Authorization: visitorHeader() },
+  const { header, userId } = currentVisitor()
+  // The identity the visitor token was issued for; a mismatch is rejected.
+  const body = { tenantId: TENANT, userId, userType: 'visitor', events: batch(data.campaigns) }
+  const res = http.post(`${BASE_URL}/analytics/events`, JSON.stringify(body), {
+    headers: { 'Content-Type': 'application/json', Authorization: header },
   })
   check(res, { 'events accepted': (r) => r.status === 200 && r.json('rejected') === 0 })
 }

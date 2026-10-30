@@ -8,6 +8,8 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@basketline/contracts": "workspace:*",
+    "@basketline/platform": "workspace:*",
     "drizzle-orm": "^0.45.4"
   }
 }

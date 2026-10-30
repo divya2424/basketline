@@ -91,10 +91,13 @@ function Carousel({ slides }) {
   }
 
   return (
+    // Focusable so the arrow keys move between slides.
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <section
       className="campaign-carousel"
       aria-roledescription="carousel"
       aria-label="Promotional campaigns"
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >

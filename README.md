@@ -30,22 +30,25 @@ gateway (:8080) ──► auth · product · campaign · analytics services (Nod
 
 ## Quick start
 
-Requires Node 24, Docker and npm, and a GitHub token with `read:packages`: the Kafka event bus ([`basketline-kafka`](https://github.com/divya2424/basketline-kafka)) and the SDK come from GitHub Packages.
+Requires Node 24, Docker and pnpm (`corepack enable pnpm` gives you the version each project pins), and a GitHub token with `read:packages`: the Kafka event bus ([`basketline-kafka`](https://github.com/divya2424/basketline-kafka)) and the SDK come from GitHub Packages.
 
 ```bash
+# Once: pnpm reads registry tokens only from your own config, not a project's.
+echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' >> ~/.npmrc
+
 export NODE_AUTH_TOKEN=<GitHub token with read:packages>
 
 # Backend: everything in "Local URLs" below
 cd backend
-npm install
-npm run keys                 # JWT signing keys → backend/keys/ (git-ignored)
+pnpm install
+pnpm keys                 # JWT signing keys → backend/keys/ (git-ignored)
 docker compose up -d --build
 
 # Frontend
 cd ../frontend
-npm install
+pnpm install
 cp .env.example .env         # points at the gateway, http://localhost:8080/api/v1
-npm run dev
+pnpm dev
 ```
 
 1. Open http://localhost:5173 and onboard a tenant. It gets an `onboarding` campaign manager (password `test`), sample products and campaigns.
@@ -99,9 +102,9 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 
 | Command | Covers | Needs |
 |---|---|---|
-| `cd frontend && npm test` | The frontend | Nothing |
-| `cd backend && npm run verify` | Typecheck, architecture check, unit and integration tests | postgres, kafka, clickhouse |
-| `cd backend && npm run test:e2e` | The full flow through the gateway, with real Kafka | The whole stack |
-| `cd backend && npm run test:flink` | Click→basket attribution through Kafka → Flink → ClickHouse | The whole stack |
-| `cd backend && npm run test:airflow` | The Iceberg export job | The stack, and [uv](https://docs.astral.sh/uv/) |
-| `cd backend && npm run test:backfill` | The history backfill (Spark local mode) | The stack, with a rebuilt `airflow` image |
+| `cd frontend && pnpm test` | The frontend | Nothing |
+| `cd backend && pnpm verify` | Typecheck, architecture check, unit and integration tests | postgres, kafka, clickhouse |
+| `cd backend && pnpm test:e2e` | The full flow through the gateway, with real Kafka | The whole stack |
+| `cd backend && pnpm test:flink` | Click→basket attribution through Kafka → Flink → ClickHouse | The whole stack |
+| `cd backend && pnpm test:airflow` | The Iceberg export job | The stack, and [uv](https://docs.astral.sh/uv/) |
+| `cd backend && pnpm test:backfill` | The history backfill (Spark local mode) | The stack, with a rebuilt `airflow` image |

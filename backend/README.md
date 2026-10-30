@@ -48,7 +48,7 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | **Kafka** | `localhost:9092` | `kafka:19092` | No UI; use the CLI in the container (see [Operations](#operations)) |
 | **Postgres** | `localhost:5432` | `postgres:5432` | Superuser `postgres` / `postgres`; one database and login per service (`infra/postgres/init.sql`) |
 | **S3** for the archive (SeaweedFS) | http://localhost:8333 · UI http://localhost:23646 | `archive-storage:8333` | Bucket `ad-insights-archive`, keys `archive` / `archive_dev` |
-| Frontend (dev server) | http://localhost:5173 | — | Started from `../frontend` with `npm run dev` |
+| Frontend (dev server) | http://localhost:5173 | — | Started from `../frontend` with `pnpm dev` |
 
 The four services aren't published to the host. Reach their health probes from inside the container:
 
@@ -61,12 +61,12 @@ docker compose exec auth-service wget -qO- localhost:4001/health/ready   # 4002 
 ```bash
 cd backend
 export NODE_AUTH_TOKEN=<GitHub token with read:packages>   # see below
-npm install
-npm run keys                     # ES256 key pair → keys/ (git-ignored)
+pnpm install
+pnpm keys                     # ES256 key pair → keys/ (git-ignored)
 docker compose up -d --build     # everything in the table above
 ```
 
-**The token:** the Kafka event bus is its own package, [`@divya2424/basketline-kafka`](https://github.com/divya2424/basketline-kafka), on GitHub Packages, which needs a token even to install. Use a classic personal access token with only `read:packages`. `.npmrc` reads it from `NODE_AUTH_TOKEN`. Docker builds get it as the build secret `npm_token` (`docker-compose.yml`), so it never ends up in an image.
+**The token:** the Kafka event bus is its own package, [`@divya2424/basketline-kafka`](https://github.com/divya2424/basketline-kafka), on GitHub Packages, which needs a token even to install. Use a classic personal access token with only `read:packages`, in `NODE_AUTH_TOKEN`. pnpm takes registry tokens only from your user config, so add `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` to `~/.npmrc` once (the project's `.npmrc` only says which registry `@divya2424` packages come from). Docker builds get the token as the build secret `npm_token` (`docker-compose.yml`), so it never ends up in an image.
 
 The quickest way in is the frontend's onboarding page. It creates a tenant with an `onboarding` campaign manager (password `test`), plus sample products and campaigns.
 
@@ -77,7 +77,7 @@ cli() { docker compose exec auth-service node services/auth-service/src/cli.ts "
 cli create-account --name 'Default storefront' --tier free --tenant 5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01
 cli create-user --username maya --password 'correct horse battery' --role campaign-manager \
   --tenant 5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01
-npm run seed                     # 10 sample products and 4 campaigns in that tenant (safe to re-run)
+pnpm seed                     # 10 sample products and 4 campaigns in that tenant (safe to re-run)
 ```
 
 | CLI command | What it does |
@@ -99,11 +99,11 @@ All data is per tenant: a campaign manager sees and changes only their tenant's 
 
 | Command | Covers | Needs running |
 |---|---|---|
-| `npm run verify` | Typecheck, architecture check, unit and integration tests | postgres, kafka, clickhouse |
-| `npm run test:e2e` | The full flow through the gateway, with real Kafka | the whole stack |
-| `npm run test:flink` | Attribution through Kafka → Flink → ClickHouse, from the shared cases | the whole stack |
-| `npm run test:airflow` | The Iceberg export job (needs [uv](https://docs.astral.sh/uv/)) | clickhouse, postgres, archive-storage |
-| `npm run test:backfill` | The history backfill in Spark local mode; runs in the Airflow container | the whole stack, with a rebuilt `airflow` image |
+| `pnpm verify` | Typecheck, architecture check, unit and integration tests | postgres, kafka, clickhouse |
+| `pnpm test:e2e` | The full flow through the gateway, with real Kafka | the whole stack |
+| `pnpm test:flink` | Attribution through Kafka → Flink → ClickHouse, from the shared cases | the whole stack |
+| `pnpm test:airflow` | The Iceberg export job (needs [uv](https://docs.astral.sh/uv/)) | clickhouse, postgres, archive-storage |
+| `pnpm test:backfill` | The history backfill in Spark local mode; runs in the Airflow container | the whole stack, with a rebuilt `airflow` image |
 
 The analytics tests create and drop their own ClickHouse database.
 
@@ -457,7 +457,7 @@ To change a service's tables:
 
 ```bash
 # edit services/<service>/src/db/schema.ts, then:
-npm run db:generate -w @basketline/<service>   # writes services/<service>/drizzle/<n>.sql
-npm run db:generate                                      # or every service
+pnpm db:generate -w @basketline/<service>   # writes services/<service>/drizzle/<n>.sql
+pnpm db:generate                                      # or every service
 # commit the file; it is applied when the service starts
 ```

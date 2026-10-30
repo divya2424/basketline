@@ -6,7 +6,7 @@
  * Safe to run repeatedly: existing products (same name) are updated to match
  * the sample data; existing campaigns (same title) are left as they are.
  *
- *   SEED_USERNAME=maya SEED_PASSWORD='correct horse battery' SEED_TENANT=5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01 npm run seed
+ *   SEED_USERNAME=maya SEED_PASSWORD='correct horse battery' SEED_TENANT=5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01 pnpm seed
  */
 import { setTimeout as sleep } from 'node:timers/promises'
 import { campaigns as sampleCampaigns } from '../../frontend/src/features/campaigns/campaignData.js'

@@ -8,7 +8,8 @@
     "./testing": "./src/testing.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.4",
-    "@divya2424/basketline-kafka": "^0.1.0"
+    "@basketline/contracts": "workspace:*",
+    "@divya2424/basketline-kafka": "^0.1.0",
+    "drizzle-orm": "^0.45.4"
   }
 }

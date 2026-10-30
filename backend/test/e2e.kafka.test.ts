@@ -3,7 +3,7 @@
  * postgres kafka clickhouse). Each service runs in-process with its own database and its
  * own Kafka client; topics use a unique prefix so runs don't interfere.
  *
- *   npm run test:e2e
+ *   pnpm test:e2e
  */
 import { randomUUID } from 'node:crypto'
 import type { AddressInfo, Server } from 'node:net'

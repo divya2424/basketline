@@ -12,31 +12,31 @@ The web app of [Basketline](../README.md), a React + Vite app on the Basketline 
 
 ## Quick start
 
-Requirements: Node.js 20.19+ (developed on Node 24) and npm, with the backend running locally (`../backend/README.md`).
+Requirements: Node.js 20.19+ (developed on Node 24) and pnpm (`corepack enable pnpm`), with the backend running locally (`../backend/README.md`).
 
 ```bash
 # 1. Backend: start everything
 cd backend
-npm install && npm run keys
+pnpm install && pnpm keys
 docker compose up -d --build
 
 # 2. Frontend
 cd ../frontend
 export NODE_AUTH_TOKEN=<GitHub token with read:packages>   # for the SDK, see below
-npm install
+pnpm install
 cp .env.example .env         # points at the gateway on http://localhost:8080/api/v1
-npm run dev                  # http://localhost:5173
+pnpm dev                  # http://localhost:5173
 ```
 
-**The SDK:** the storefront sends its events through [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk), the same package vendors install. It's on GitHub Packages, which needs a token even to install: a classic personal access token with `read:packages`, in `NODE_AUTH_TOKEN` (`.npmrc` reads it from there). To use a new SDK version, publish it from its repo, then `npm install @divya2424/basketline-sdk@<version>` here. `src/analytics/sdkContract.test.js` checks that its event names match the API's.
+**The SDK:** the storefront sends its events through [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk), the same package vendors install. It's on GitHub Packages, which needs a token even to install: a classic personal access token with `read:packages`, in `NODE_AUTH_TOKEN`, and once, in `~/.npmrc`: `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` (pnpm takes registry tokens only from your user config). To use a new SDK version, publish it from its repo, then `pnpm add @divya2424/basketline-sdk@<version>` here. `src/analytics/sdkContract.test.js` checks that its event names match the API's.
 
 On http://localhost:5173, onboard a tenant, then click **Analytics** on its row. You're signed in as its `onboarding` campaign manager (password `test`), with demo products and campaigns already seeded.
 
 | Command | |
 |---|---|
-| `npm run dev` | Development server on http://localhost:5173 (the gateway allows CORS from here) |
-| `npm test` | Vitest + React Testing Library. No backend needed |
-| `npm run build` | Production build into `dist/` |
+| `pnpm dev` | Development server on http://localhost:5173 (the gateway allows CORS from here) |
+| `pnpm test` | Vitest + React Testing Library. No backend needed |
+| `pnpm build` | Production build into `dist/` |
 
 <details>
 <summary>Using the default tenant from the CLI instead</summary>
@@ -48,7 +48,7 @@ docker compose exec auth-service node services/auth-service/src/cli.ts \
 docker compose exec auth-service node services/auth-service/src/cli.ts \
   create-user --username maya --password 'correct horse battery' --role campaign-manager \
   --tenant 5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01
-npm run seed                 # 10 sample products and 4 campaigns in that tenant
+pnpm seed                 # 10 sample products and 4 campaigns in that tenant
 ```
 
 A tenant created this way has no `onboarding` user, so use **Log in** on its row and sign in as `maya`.
@@ -211,6 +211,6 @@ src/
   pages/HomePage.jsx
 ```
 
-**Testing:** the tests render the app with the sample catalog, and `mockFetch()` (`src/test/mockFetch.js`) answers API calls, so they need no backend. `productData.js` and `campaignData.js` are only test fixtures and the source of the backend's `npm run seed`; the app itself loads everything from the API.
+**Testing:** the tests render the app with the sample catalog, and `mockFetch()` (`src/test/mockFetch.js`) answers API calls, so they need no backend. `productData.js` and `campaignData.js` are only test fixtures and the source of the backend's `pnpm seed`; the app itself loads everything from the API.
 
 **StrictMode:** in development, React mounts each component twice. Pending data requests are shared (`src/api/sharedRequest.js`) rather than cancelled on unmount, so each is sent once.

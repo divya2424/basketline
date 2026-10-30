@@ -7,7 +7,7 @@
  * rule give the same answers. Needs the stack running:
  *
  *   docker compose up -d --build kafka clickhouse analytics-service flink-streaming
- *   npm run test:flink
+ *   pnpm test:flink
  *
  * Every run uses its own tenant, so it only reads back its own rows.
  *

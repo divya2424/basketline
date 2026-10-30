@@ -5,7 +5,7 @@
  *   3. Each service's DATABASE_URL in docker-compose.yml points at its own database.
  *      analytics-service has no Postgres database: it uses CLICKHOUSE_URL instead.
  *
- *   npm run check:architecture
+ *   pnpm check:architecture
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'

@@ -65,7 +65,7 @@ from pyiceberg.catalog import load_catalog
 print(load_catalog('archive').load_table('archive.events').scan().to_arrow().group_by('event_name').aggregate([('event_id', 'count')]))"
 ```
 
-**Test:** `npm run test:airflow` (from `backend/`, with ClickHouse, Postgres and `archive-storage` up; needs [uv](https://docs.astral.sh/uv/)). It exports a day twice, including an event delivered twice, and checks that the archive holds each row once. It also checks that a day ClickHouse no longer keeps is refused. It writes to the `archive_test` namespace.
+**Test:** `pnpm test:airflow` (from `backend/`, with ClickHouse, Postgres and `archive-storage` up; needs [uv](https://docs.astral.sh/uv/)). It exports a day twice, including an event delivered twice, and checks that the archive holds each row once. It also checks that a day ClickHouse no longer keeps is refused. It writes to the `archive_test` namespace.
 
 ## Backfilling history
 
@@ -86,7 +86,7 @@ validate → spark_backfill (local or EMR Serverless) → prepare → check → 
 - **Dashboards never see an empty or partial month.** Nothing is deleted from a live table. Each `REPLACE PARTITION` swaps a month's parts atomically, so a query sees the whole old month or the whole new one. The whole swap is metadata operations and takes seconds, whatever the backfill's size. For those seconds, one month can be corrected while the next isn't yet.
 - **Only closed months.** The daily tables are partitioned by month (rows stay one per day). A month can be backfilled once its last day is more than 6 days ago: events arrive at most 5 days late, and the archive holds a day from 6 days after it. No live view or nightly check writes to such a month, so a swap can't race them.
 - **Why Spark and ClickHouse.** Spark does the heavy part (the 7-day join and sessions over months of raw events) away from the cluster that serves dashboards. ClickHouse builds the sketches, because they must be byte-compatible with the live rows. Its part reads only Spark's reduced rows, under its own limits (`BACKFILL_MAX_THREADS`, `BACKFILL_MAX_MEMORY_BYTES`).
-- **The same rules as Flink.** A rule change must change [`02_attributed_baskets.sql`](../flink/sql/pipelines/02_attributed_baskets.sql) and `spark_backfill.py` together. [`tests/fixtures/attribution_cases.json`](tests/fixtures/attribution_cases.json) runs the same cases through both (`npm run test:flink`, `npm run test:backfill`).
+- **The same rules as Flink.** A rule change must change [`02_attributed_baskets.sql`](../flink/sql/pipelines/02_attributed_baskets.sql) and `spark_backfill.py` together. [`tests/fixtures/attribution_cases.json`](tests/fixtures/attribution_cases.json) runs the same cases through both (`pnpm test:flink`, `pnpm test:backfill`).
 - **Context.** Basket additions in the first week need clicks from the week before `from`. The run refuses if the archive starts later, unless `allow_partial_context` is set. A session longer than 7 days that starts before the range is seen only from that point.
 
 Run it (a dry run, then apply):
@@ -116,7 +116,7 @@ Each run is recorded in ClickHouse's `backfill_runs` (range, tenants, months, st
 
 It costs nothing between runs and scales up for a large backfill. Only the local path is tested here; the EMR task is checked by the DAG loading.
 
-**Test:** `npm run test:backfill` (from `backend/`). It runs in the Airflow container, which has Java, so the stack must be up with a rebuilt `airflow` image. It writes the shared attribution cases, a session and two tenants' events for July–August 2026 into `archive_test`, then:
+**Test:** `pnpm test:backfill` (from `backend/`). It runs in the Airflow container, which has Java, so the stack must be up with a rebuilt `airflow` image. It writes the shared attribution cases, a session and two tenants' events for July–August 2026 into `archive_test`, then:
 - backfills one tenant for half of August while a reader checks the month is never empty or partial;
 - checks the corrected and untouched days, the other tenant, the attribution winners, the sketches and the sessions;
 - rolls back;

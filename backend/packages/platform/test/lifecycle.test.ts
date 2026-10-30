@@ -78,7 +78,7 @@ describe('graceful shutdown', () => {
     await done
     expect(order).toEqual(['kafka', 'database'])
     expect(exitCode).toBe(0)
-    await expect(fetch(`${base}/health/live`)).rejects.toThrow()
+    await expect(fetch(`${base}/health/live`)).rejects.toThrow('fetch failed')
   })
 
   it('runs only once, and keeps going if a closer fails', async () => {

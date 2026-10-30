@@ -47,8 +47,11 @@ export function LoginModal({ onClose, onSignedIn, title = 'Sign in' }) {
 
   // Portal to <body>: the sticky header's backdrop-filter would otherwise
   // become the containing block for this fixed overlay.
+  // Clicking outside closes it; Escape (above) is the keyboard way.
   return createPortal(
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
     <div className="dialog-backdrop" onClick={onClose}>
+      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <div
         className="dialog"
         role="dialog"

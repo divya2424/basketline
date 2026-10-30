@@ -72,7 +72,7 @@ Clients send no attribution: an `add_to_cart` is matched with every `click` that
 
 Flink writes each match (one row per basket addition and candidate click). **The latest click wins** (last click): ClickHouse credits the one with the largest `(click_time, click_event_id)` per basket addition. Flink can't pick it itself and still write an append-only stream: a click that arrives late would have to retract a match already written, which needs an upsert sink. ClickHouse then counts each click once per product (`uniqExact(click_event_id, product_id)`), under the basket addition's client type (`client_type`). When a basket addition's candidates are stored in different batches (the user clicked the product in two campaigns), today's count credits both until the nightly check corrects the closed day (`backend/README.md`, "Daily totals").
 
-**The same rules in the history backfill.** `airflow/jobs/backfill/spark_backfill.py` recomputes older days from the archive with the same rules, so a rule change here must change it too. `airflow/tests/fixtures/attribution_cases.json` runs the same cases through both (`npm run test:flink`, `npm run test:backfill`).
+**The same rules in the history backfill.** `airflow/jobs/backfill/spark_backfill.py` recomputes older days from the archive with the same rules, so a rule change here must change it too. `airflow/tests/fixtures/attribution_cases.json` runs the same cases through both (`pnpm test:flink`, `pnpm test:backfill`).
 
 **Why 7 days.** Retail media networks credit purchases days after a click (Amazon Ads and Walmart Connect use 14-day windows); 24 hours missed shoppers who come back later. The window is one constant in [`02_attributed_baskets.sql`](sql/pipelines/02_attributed_baskets.sql); a per-tenant window would keep candidates for the longest one and filter per tenant in ClickHouse.
 
@@ -130,7 +130,7 @@ docker compose exec clickhouse clickhouse-client --user basketline --password ba
   --query "SELECT count() FROM analytics.attributed_baskets"
 ```
 
-**Test:** `npm run test:flink` (from `backend/`, with the stack up) publishes clicks and baskets to the real topics. It then checks in ClickHouse that exactly the baskets the rules allow were credited, including one whose click is published after it.
+**Test:** `pnpm test:flink` (from `backend/`, with the stack up) publishes clicks and baskets to the real topics. It then checks in ClickHouse that exactly the baskets the rules allow were credited, including one whose click is published after it.
 
 ## Resetting the checkpoint
 

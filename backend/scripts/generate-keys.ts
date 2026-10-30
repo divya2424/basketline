@@ -3,7 +3,7 @@
  * services) access tokens: keys/jwt-private.pem and keys/jwt-public.pem.
  * Existing keys are kept unless --force is passed.
  *
- *   npm run keys
+ *   pnpm keys
  */
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'

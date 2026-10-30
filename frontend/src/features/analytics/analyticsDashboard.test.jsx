@@ -74,8 +74,8 @@ describe('analyticsService', () => {
     })
     expect(parseMetricResponse({ count: 5, total_web_clicks: 3 }, 'clicks')).toEqual({ count: 5, byClientType: null, byUserType: null })
     expect(() => parseMetricResponse({ total: 5 })).toThrow('Unexpected response format')
-    expect(() => parseMetricResponse(-1)).toThrow()
-    expect(() => parseMetricResponse('')).toThrow()
+    expect(() => parseMetricResponse(-1)).toThrow('Unexpected response format')
+    expect(() => parseMetricResponse('')).toThrow('Unexpected response format')
   })
 
   it('calls fetch with the right URL and reports HTTP errors', async () => {

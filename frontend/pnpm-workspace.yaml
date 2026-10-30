@@ -1,0 +1,4 @@
+# Packages must be a day old before pnpm installs them (minimumReleaseAge), except
+# our own, published from github.com/divya2424 and used as soon as they're out.
+minimumReleaseAgeExclude:
+  - '@divya2424/*'

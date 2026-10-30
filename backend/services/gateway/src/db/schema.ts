@@ -1,7 +1,7 @@
 /**
  * gateway_db tables: the gateway's own view of session and account state,
  * maintained from auth.session.v1 / auth.user.v1 events (never by calling the
- * auth service). After a change run `npm run db:generate -w @basketline/gateway`.
+ * auth service). After a change run `pnpm --filter @basketline/gateway db:generate`.
  */
 import { bigint, boolean, index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core'
 import { timestamptz } from '@basketline/platform'

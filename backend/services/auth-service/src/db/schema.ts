@@ -1,6 +1,6 @@
 /**
  * identity_db tables — the source of truth for the schema. After a change run
- * `npm run db:generate -w @basketline/auth-service`; migrations apply on startup.
+ * `pnpm --filter @basketline/auth-service db:generate`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, index, integer, pgEnum, pgPolicy, pgTable, primaryKey, text, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'

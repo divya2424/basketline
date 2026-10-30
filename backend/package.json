@@ -2,10 +2,6 @@
   "name": "basketline-backend",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "services/*"
-  ],
   "engines": {
     "node": ">=24"
   },
@@ -18,9 +14,10 @@
     "test:backfill": "docker compose exec -T airflow sh -c '/opt/jobs/bin/pip install -q pytest==8.4.2 && cd /opt/airflow && /opt/jobs/bin/python -m pytest -q -p no:cacheprovider tests/test_history_backfill.py'",
     "check:architecture": "node scripts/check-architecture.ts",
     "keys": "node scripts/generate-keys.ts",
-    "verify": "npm run typecheck && npm run check:architecture && npm test",
-    "db:generate": "npm run db:generate --workspaces --if-present",
-    "seed": "node scripts/seed.ts"
+    "verify": "pnpm lint && pnpm typecheck && pnpm check:architecture && pnpm test",
+    "db:generate": "pnpm -r --if-present db:generate",
+    "seed": "node scripts/seed.ts",
+    "lint": "oxlint"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.2",
@@ -34,6 +31,8 @@
     "pino-http": "^11.0.0"
   },
   "devDependencies": {
+    "@basketline/contracts": "workspace:*",
+    "@basketline/platform": "workspace:*",
     "@platformatic/kafka": "^2.14.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -41,8 +40,10 @@
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "drizzle-kit": "^0.31.11",
+    "oxlint": "1.88.0",
     "supertest": "^7.3.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
-  }
+  },
+  "packageManager": "pnpm@12.14.0"
 }

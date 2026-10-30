@@ -1,6 +1,6 @@
 /**
  * product_db tables — the source of truth for the schema. After a change run
- * `npm run db:generate -w @basketline/product-service`; migrations apply on startup.
+ * `pnpm --filter @basketline/product-service db:generate`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, numeric, pgTable, text, uuid, varchar } from 'drizzle-orm/pg-core'

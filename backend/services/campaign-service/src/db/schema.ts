@@ -1,6 +1,6 @@
 /**
  * campaign_db tables — the source of truth for the schema. After a change run
- * `npm run db:generate -w @basketline/campaign-service`; migrations apply on startup.
+ * `pnpm --filter @basketline/campaign-service db:generate`; migrations apply on startup.
  */
 import { relations, sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, integer, numeric, pgEnum, pgTable, text, unique, uuid, varchar } from 'drizzle-orm/pg-core'

@@ -27,7 +27,7 @@ The releases don't wait for each other. A service whose database, Kafka or Click
   docker build -t <registry>/basketline/airflow:<version> airflow
   ```
 
-- **Postgres, Kafka and ClickHouse** must already exist; the charts don't install them. Postgres needs the roles and databases from `infra/postgres/init.sql`, and ClickHouse needs `infra/clickhouse/init.sql` and `infra/clickhouse/kafka.sql` (which reads Kafka at `kafka:19092`). The charts expect the hosts `postgres`, `kafka:19092` and `clickhouse` (the compose names). To use other hosts, set `config.KAFKA_BROKERS`, `config.KAFKA_BOOTSTRAP_SERVERS` (Flink), the connection strings under `secrets`, and `kafka_broker_list` in `kafka.sql`.
+- **Postgres, Kafka and ClickHouse** must already exist; the charts don't install them. Postgres needs the roles and databases from `infra/postgres/init.sql`, and ClickHouse needs the schema files in `infra/clickhouse/` run in name order (`00_functions.sql` to `03_kafka.sql`, which reads Kafka at `kafka:19092`) and the storage policy in `infra/clickhouse/config/storage.xml`. The charts expect the hosts `postgres`, `kafka:19092` and `clickhouse` (the compose names). To use other hosts, set `config.KAFKA_BROKERS`, `config.KAFKA_BOOTSTRAP_SERVERS` (Flink), the connection strings under `secrets`, and `kafka_broker_list` in `03_kafka.sql`.
 
 ## Before the first deploy
 
@@ -37,7 +37,7 @@ All services verify tokens with the same key pair, so it lives in one Secret tha
 kubectl create namespace basketline
 kubectl -n basketline create secret generic basketline-jwt \
   --from-file=jwt-public.pem=keys/jwt-public.pem \
-  --from-file=jwt-private.pem=keys/jwt-private.pem      # from backend/; `npm run keys` creates them
+  --from-file=jwt-private.pem=keys/jwt-private.pem      # from backend/; `pnpm keys` creates them
 ```
 
 Only auth-service mounts `jwt-private.pem`; the other services get only the public key.

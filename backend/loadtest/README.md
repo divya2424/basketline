@@ -31,7 +31,7 @@ docker compose exec auth-service node services/auth-service/src/cli.ts \
   create-account --name 'Load test' --tenant 0ad7e570-0000-4000-8000-000000000001
 docker compose exec auth-service node services/auth-service/src/cli.ts \
   create-user --username loadtest --password 'load test password' --role campaign-manager --tenant 0ad7e570-0000-4000-8000-000000000001
-SEED_USERNAME=loadtest SEED_PASSWORD='load test password' SEED_TENANT=0ad7e570-0000-4000-8000-000000000001 npm run seed
+SEED_USERNAME=loadtest SEED_PASSWORD='load test password' SEED_TENANT=0ad7e570-0000-4000-8000-000000000001 pnpm seed
 ```
 
 The gateway limits each client IP to 300 requests/min (120 for event posts, 10 visitor tokens). One k6 machine is one IP, so raise the limits for the test, and put them back afterwards:
@@ -91,7 +91,7 @@ This is about 1,000× what one laptop handles. These are the changes needed, in 
 2. **Bigger batches from the client.** 50 events per request instead of 9 means 20k requests/s instead of 111k for the same 1M events/s, which cuts gateway and service work by about 5×.
 3. **A Kafka cluster.** Today there's one broker with 3 partitions per topic. 1M messages/s (~0.5 GB/s) needs several brokers and tens of partitions on the busiest topics (`analytics.impression.v1` carries 60%), plus producer batching.
 4. **A Flink cluster.** The job runs in one container with parallelism 2. Run it with the Flink Kubernetes Operator: task managers scaled with the busiest topics' partitions, checkpoints on S3, and RocksDB state sized for 13 days of clicks and 6 of basket additions, plus open sessions, on local NVMe (local recovery).
-5. **`/ad` reads from aggregates, not raw events.** Today `/ad` scans raw events for yesterday and today. At 1M/s that's up to 170B rows, so these reads must come from the hourly aggregates (closed hours), with raw events only for the current hour.
+5. **`/ad` already reads aggregates, not raw events.** It reads the daily tables (one row per day, tenant and campaign, kept current by materialized views), so a read's cost doesn't grow with event volume.
 6. **Lower freshness, if it matters.** The intervals are now relaxed on purpose, so dashboards are under a minute old at the lowest cost (`backend/README.md`); lower them again only if a use case needs it. With Flink, events reach ClickHouse within seconds (median 1.6–4.7 s in small idle-laptop runs). Flink itself adds well under a second. The largest share is ClickHouse's Kafka engine, which stores what it has read at least every `stream_flush_interval_ms` (7.5 s by default); lower it with `kafka_flush_interval_ms` on the queue tables (`infra/clickhouse/03_kafka.sql`), at the cost of more, smaller inserts.
 
 **Running the same script at 1M/s:** one k6 instance generates a few thousand requests/s, so 111k/s needs distributed load. Use the [k6 operator](https://grafana.com/docs/k6/latest/testing-guides/running-distributed-tests/) on Kubernetes with `parallelism: N`; each instance runs `RATE = 111000 / N`. **Don't average the instances' p99s;** that gives a wrong number. Send all instances' raw results to one place (`k6 run --out experimental-prometheus-rw`, or Grafana Cloud k6) and compute the p99 there. Run `freshness.sql` unchanged, since ClickHouse already sees every event.

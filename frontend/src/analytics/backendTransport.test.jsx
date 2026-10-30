@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createEvent, localCollector, setTransport } from './analytics.js'
-import { anonymousId, createBackendTransport, createEventSender, toBackendEvents, VISITOR_TOKEN_RENEW_MS } from './backendTransport.js'
+import { createBackendTransport, toBackendEvents } from './backendTransport.js'
 import { setRequestTenant, setRequestUser } from '../api/requestContext.js'
 import { createTeeTransport } from './eventTransport.js'
 import { renderApp } from '../test/utils.jsx'
@@ -68,134 +68,54 @@ describe('toBackendEvents', () => {
   })
 })
 
-describe('batching', () => {
-  const homeView = () => frontendEvent('home_view', {}, 'home')
-  const sizes = (send) => send.mock.calls.map(([events]) => events.length)
+/** A stand-in for the Basketline SDK that records what the storefront hands it (sdk/ has its own tests). */
+function recordingSdk() {
+  const clients = []
+  const createClient = ({ tenantId }) => {
+    const client = { tenantId, tracked: [], identities: [] }
+    client.track = (eventName, fields) => client.tracked.push({ eventName, ...fields })
+    client.identify = ({ userId, getToken }) => client.identities.push({ userId, token: getToken() })
+    client.reset = () => client.identities.push('reset')
+    client.flush = async () => {}
+    clients.push(client)
+    return client
+  }
+  return { clients, createClient }
+}
 
-  it('posts 20 events per request, the rest two seconds later or when the page is hidden', () => {
-    vi.useFakeTimers()
-    try {
-      const send = vi.fn().mockResolvedValue({})
-      const transport = createBackendTransport({ send })
-      for (let i = 0; i < 25; i += 1) transport.send(homeView())
-      expect(sizes(send)).toEqual([20])
-      vi.advanceTimersByTime(1999)
-      expect(sizes(send)).toEqual([20])
-      vi.advanceTimersByTime(1)
-      expect(sizes(send)).toEqual([20, 5])
-
-      transport.send(homeView())
-      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-      document.dispatchEvent(new Event('visibilitychange'))
-      expect(sizes(send)).toEqual([20, 5, 1])
-    } finally {
-      delete document.visibilityState
-      vi.useRealTimers()
-    }
-  })
-
-  it("rejects each queued event's promise when its request fails", async () => {
-    const send = vi.fn().mockRejectedValue(new Error('offline'))
-    const transport = createBackendTransport({ send, batchSize: 2 })
-    const results = [transport.send(homeView()), transport.send(homeView())]
-    await Promise.all(results.map((result) => expect(result).rejects.toThrow('offline')))
-    expect(sizes(send)).toEqual([2])
-  })
-})
-
-describe('createEventSender', () => {
-  const tokens = []
-  const request = vi.fn(async (path) => {
-    if (path !== '/auth/visitor') return {}
-    tokens.push(`visitor-${tokens.length + 1}`)
-    return { visitorToken: tokens.at(-1) }
-  })
-  const authorizations = () =>
-    request.mock.calls.filter(([path]) => path === '/analytics/events').map(([, options]) => options.headers?.Authorization)
-
-  it("uses one visitor token per tenant for anonymous visitors, renewed before it expires, and the user's own token when signed in", async () => {
-    vi.useFakeTimers()
-    try {
-      tokens.length = 0
-      request.mockClear()
-      const send = createEventSender(request)
-      await send([{ eventName: 'home_view' }])
-      await send([{ eventName: 'home_view' }])
-      vi.advanceTimersByTime(VISITOR_TOKEN_RENEW_MS)
-      await send([{ eventName: 'home_view' }])
-      setRequestTenant('2b6f3e10-0000-4000-8000-000000000002')
-      await send([{ eventName: 'home_view' }])
-      // Signed in: no visitor token; the HTTP client adds the access token.
-      setRequestUser({ userId: 'user_1001', accessToken: 'token-1' })
-      await send([{ eventName: 'home_view' }])
-      expect(authorizations()).toEqual(['Bearer visitor-1', 'Bearer visitor-1', 'Bearer visitor-2', 'Bearer visitor-3', undefined])
-      expect(request.mock.calls.filter(([path]) => path === '/auth/visitor')).toHaveLength(3)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('asks for every visitor token with the same visitor UUID, one per store', async () => {
-    vi.useFakeTimers()
-    try {
-      setRequestUser(null)
-      setRequestTenant('2b6f3e10-0000-4000-8000-000000000003')
-      request.mockClear()
-      const send = createEventSender(request)
-      await send([{ eventName: 'home_view' }])
-      vi.advanceTimersByTime(VISITOR_TOKEN_RENEW_MS)
-      await send([{ eventName: 'home_view' }])
-      const sentIds = request.mock.calls.filter(([path]) => path === '/auth/visitor').map(([, options]) => options.body.userId)
-      expect(sentIds).toHaveLength(2)
-      expect(sentIds[1]).toBe(sentIds[0])
-      expect(sentIds[0]).toMatch(/^[0-9a-f-]{36}$/)
-      expect(anonymousId('2b6f3e10-0000-4000-8000-000000000004')).not.toBe(sentIds[0])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('sends each batch with the identity its token was issued for', async () => {
-    const tenantId = '2b6f3e10-0000-4000-8000-000000000005'
-    setRequestTenant(tenantId)
+describe('createBackendTransport', () => {
+  it('sends through one SDK client per store, following sign-in and sign-out', () => {
+    const { clients, createClient } = recordingSdk()
+    const transport = createBackendTransport({ apiUrl: 'http://api.test', createClient })
+    const homeView = () => frontendEvent('home_view', {}, 'home')
+    setRequestTenant('2b6f3e10-0000-4000-8000-000000000011')
     setRequestUser(null)
-    request.mockClear()
-    const send = createEventSender(request)
-    await send([{ eventName: 'home_view' }])
+    transport.send(homeView())
     setRequestUser({ userId: 'user_1001', accessToken: 'token-1' })
-    await send([{ eventName: 'home_view' }])
+    transport.send(homeView())
+    transport.send(homeView())
     setRequestUser(null)
-    const bodies = request.mock.calls.filter(([path]) => path === '/analytics/events').map(([, options]) => options.body)
-    expect(bodies).toEqual([
-      { tenantId, userId: anonymousId(tenantId), userType: 'visitor', events: [{ eventName: 'home_view' }] },
-      { tenantId, userId: 'user_1001', userType: 'registered', events: [{ eventName: 'home_view' }] },
-    ])
-  })
+    transport.send(homeView())
+    setRequestTenant('2b6f3e10-0000-4000-8000-000000000012')
+    transport.send(homeView())
 
-  it('replaces a stored visitor UUID that is not a UUID', () => {
-    localStorage.setItem('basketline:anonymous-id:tenant-x', 'tampered')
-    expect(anonymousId('tenant-x')).toMatch(/^[0-9a-f-]{36}$/)
-    expect(localStorage.getItem('basketline:anonymous-id:tenant-x')).toBe(anonymousId('tenant-x'))
-  })
-
-  it('asks for a new visitor token after a failed request', async () => {
-    const flaky = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ visitorToken: 'visitor-ok' })
-    const send = createEventSender(flaky)
-    await expect(send([{ eventName: 'home_view' }])).rejects.toThrow('offline')
-    await send([{ eventName: 'home_view' }])
-    expect(flaky.mock.calls.map(([path]) => path)).toEqual(['/auth/visitor', '/auth/visitor', '/analytics/events'])
+    expect(clients.map((c) => c.tenantId)).toEqual(['2b6f3e10-0000-4000-8000-000000000011', '2b6f3e10-0000-4000-8000-000000000012'])
+    // Identified once with the user's own access token, reset on sign-out.
+    expect(clients[0].identities).toEqual([{ userId: 'user_1001', token: 'token-1' }, 'reset'])
+    expect(clients[0].tracked).toHaveLength(4)
+    expect(clients[1].tracked).toHaveLength(1)
   })
 })
 
 describe('sending events from the running app', () => {
-  it('posts impressions, the ad click with its product, and the add to cart', async () => {
-    const send = vi.fn().mockResolvedValue({})
-    // One request per event, so each step's events are sent before it is checked.
-    setTransport(createTeeTransport([localCollector, createBackendTransport({ send, batchSize: 1 })]))
+  it('sends impressions, the ad click with its product, and the add to cart', async () => {
+    const { clients, createClient } = recordingSdk()
+    setRequestUser(null)
+    setTransport(createTeeTransport([localCollector, createBackendTransport({ apiUrl: 'http://api.test', createClient })]))
     const user = userEvent.setup()
     renderApp('/store')
 
-    const sent = () => send.mock.calls.flatMap(([events]) => events)
+    const sent = () => clients.flatMap((c) => c.tracked)
     // Slide 1 shows three campaigns → three impressions.
     expect(sent().filter((e) => e.eventName === 'impression').map((e) => e.campaignId)).toEqual(['campaign_001', 'campaign_002', 'campaign_003'])
 

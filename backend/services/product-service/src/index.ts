@@ -13,7 +13,7 @@ import {
 } from '@basketline/platform'
 import { buildProductApp } from './app.ts'
 import { createProductDb, migrateProductDb } from './db/client.ts'
-import { createTenantSeeder } from './events/tenant.consumer.ts'
+import { createTenantSeeder, handleTenantDeleted } from './events/tenant.consumer.ts'
 
 const logger = createLogger('product-service')
 const health = createHealth()
@@ -23,9 +23,17 @@ await migrateProductDb(db)
 const bus = await createBusFromEnv('product-service', logger, [TOPICS.products, TOPICS.tenants])
 health.addCheck('kafka', () => bus.healthCheck())
 
-// Seeds each newly onboarded tenant's catalog (TenantOnboarded from auth-service).
+// Seeds each newly onboarded tenant's catalog (TenantOnboarded from auth-service), and
+// deletes a deleted tenant's (TenantDeleted).
 const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', logger) })
-await bus.subscribe({ groupId: 'product-service', topics: [TOPICS.tenants], handler: seedTenant })
+await bus.subscribe({
+  groupId: 'product-service',
+  topics: [TOPICS.tenants],
+  handler: async (envelope) => {
+    await seedTenant(envelope)
+    await handleTenantDeleted(db, envelope)
+  },
+})
 
 const app = buildProductApp({ db, bus, logger, health, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4002)

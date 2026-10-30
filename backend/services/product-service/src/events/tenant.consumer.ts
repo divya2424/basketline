@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
 import { writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
-import { insertProductIfAbsent } from '../repositories/product.repository.ts'
+import { deleteTenantProducts, insertProductIfAbsent } from '../repositories/product.repository.ts'
 import { SAMPLE_CATALOG } from '../seed/sampleCatalog.ts'
 import { stateEvent } from '../services/product.service.ts'
 
@@ -37,4 +37,14 @@ export function createTenantSeeder({ db, publish }: { db: Db; publish: PublishEv
     })
     await publish(events)
   }
+}
+
+/**
+ * A deleted tenant (TenantDeleted): its products go. No product events are
+ * published: campaign-service deletes its own copy from the same event.
+ */
+export async function handleTenantDeleted(db: Db, envelope: EventEnvelope): Promise<void> {
+  if (envelope.eventType !== 'TenantDeleted') return
+  const { tenantId } = envelope.payload as EventPayloads['TenantDeleted']
+  await deleteTenantProducts(db, tenantId)
 }

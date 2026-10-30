@@ -22,6 +22,13 @@
       "when": 1793212142054,
       "tag": "0002_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793336449275,
+      "tag": "0003_api_keys",
+      "breakpoints": true
     }
   ]
 }

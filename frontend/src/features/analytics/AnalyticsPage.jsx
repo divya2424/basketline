@@ -7,6 +7,7 @@ import { ALL_CAMPAIGNS, CampaignSelector } from './CampaignSelector.jsx'
 import { CampaignMetricsPanel } from './CampaignMetricsPanel.jsx'
 import { CampaignComparison } from './CampaignComparison.jsx'
 import { TimeRangeSelector } from './TimeRangeSelector.jsx'
+import { ApiKeysPanel } from '../integration/ApiKeysPanel.jsx'
 import { DEFAULT_TIME_RANGE, formatRangeLabel, toPeriod } from './timeRange.js'
 import './analytics.css'
 
@@ -68,6 +69,7 @@ export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) 
           )}
         </>
       )}
+      <ApiKeysPanel />
     </div>
   )
 }

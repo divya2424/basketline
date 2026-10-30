@@ -27,3 +27,9 @@ export const userAccessState = pgTable('user_access_state', {
   tokensNotBefore: timestamptz('tokens_not_before'),
   version: bigint('version', { mode: 'number' }).notNull(),
 })
+
+/** Deleted tenants (TenantDeleted): their tokens, still unexpired, are refused. */
+export const deletedTenants = pgTable('deleted_tenants', {
+  tenantId: uuid('tenant_id').primaryKey(),
+  deletedAt: timestamptz('deleted_at').notNull(),
+})

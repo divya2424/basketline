@@ -3,13 +3,17 @@ import { useNavigate } from 'react-router-dom'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
 import { useToast } from '../../components/common/Toast.jsx'
-import { getRequestContext, switchTenant } from '../../api/requestContext.js'
+import { DEFAULT_TENANT_ID, getRequestContext, switchTenant } from '../../api/requestContext.js'
 import { trackEvent } from '../../analytics/analytics.js'
 import { EVENT_NAMES } from '../../analytics/eventSchema.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { LoginModal } from '../auth/LoginModal.jsx'
 import { DEMO_PASSWORD, listAccounts, onboardTenant, ONBOARDING_USERNAME, TIERS } from './onboardingService.js'
+import { TenantDetails } from './TenantDetails.jsx'
 import './onboarding.css'
+import { KeyReveal } from '../integration/KeyReveal.jsx'
+import { SdkSnippet } from '../integration/SdkSnippet.jsx'
+import '../integration/integration.css'
 
 const tierLabel = (id) => TIERS.find((tier) => tier.id === id)?.label ?? id
 const dateFormat = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
@@ -34,6 +38,7 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
   const [created, setCreated] = useState(null)
   const [opening, setOpening] = useState(null)
   const [loginTarget, setLoginTarget] = useState(null) // { account, previousTenant }
+  const [expanded, setExpanded] = useState(null) // the tenant whose details are open
   const reload = useCallback(() => setAttempt((n) => n + 1), [])
 
   useEffect(() => {
@@ -72,6 +77,18 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
     setLoginTarget({ account, previousTenant })
     trackEvent({ featureName: 'tenant_list', pageName: 'onboarding', eventName: EVENT_NAMES.LOGIN_CLICK, properties: {} })
   }
+  /** A deleted tenant leaves the list; if the app was on it, it signs out and goes back to the default store. */
+  const handleDeleted = async (account) => {
+    setExpanded(null)
+    if (getRequestContext().tenantId === account.tenantId) {
+      if (user) await logout()
+      switchTenant(DEFAULT_TENANT_ID)
+    }
+    if (created?.account.tenantId === account.tenantId) setCreated(null)
+    showToast(`${account.name} and all of its data were deleted.`)
+    reload()
+  }
+
   const cancelLogin = useCallback(() => {
     setLoginTarget((target) => {
       if (target) switchTenant(target.previousTenant.id, target.previousTenant.name)
@@ -136,7 +153,22 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
                   <Button size="sm" variant="ghost" onClick={() => startLogin(account)} disabled={opening !== null} aria-label={`Log in: ${account.name}`}>
                     Log in
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-expanded={expanded === account.tenantId}
+                    aria-controls={`tenant-details-${account.tenantId}`}
+                    aria-label={`Details: ${account.name}`}
+                    onClick={() => setExpanded((open) => (open === account.tenantId ? null : account.tenantId))}
+                  >
+                    {expanded === account.tenantId ? 'Hide details' : 'Details'}
+                  </Button>
                 </div>
+                {expanded === account.tenantId ? (
+                  <div className="tenant-row__details" id={`tenant-details-${account.tenantId}`}>
+                    <TenantDetails account={account} onDeleted={handleDeleted} />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -218,7 +250,7 @@ function OnboardingForm({ onCreated }) {
 }
 
 function CreatedSummary({ result }) {
-  const { account, users, password, seed } = result
+  const { account, users, password, apiKey, seed } = result
   return (
     <section className="onboarding-created" role="status" aria-labelledby="created-heading">
       <h2 id="created-heading">{account.name} is onboarded</h2>
@@ -232,6 +264,13 @@ function CreatedSummary({ result }) {
         <p>
           Seeding {seed.products} products and {seed.campaigns} active campaigns: they appear in the store within a few seconds.
         </p>
+      ) : null}
+      {apiKey ? (
+        <div className="onboarding-created__integration">
+          <h3>Integrate {account.name}’s site</h3>
+          <KeyReveal apiKey={apiKey} />
+          <SdkSnippet tenantId={account.tenantId} />
+        </div>
       ) : null}
     </section>
   )

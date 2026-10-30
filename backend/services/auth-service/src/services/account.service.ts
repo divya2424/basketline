@@ -6,10 +6,11 @@
  * Open to anyone (see the README's warning): for demos, not production tenants.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantOnboardedPayload } from '@basketline/contracts'
-import { event, type NewEvent, type PublishEvents } from '@basketline/platform'
+import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantDeletedPayload, type TenantOnboardedPayload } from '@basketline/contracts'
+import { badRequest, event, notFound, type NewEvent, type PublishEvents } from '@basketline/platform'
 import { withTenant, type Db } from '../db/client.ts'
-import { insertAccount, listAccounts, type Account } from '../repositories/account.repository.ts'
+import { newApiKey } from './shopper.service.ts'
+import { deleteAccountData, findAccount, insertAccount, listAccounts, type Account } from '../repositories/account.repository.ts'
 import type { OnboardInput } from '../validators/account.validator.ts'
 import { createUser } from './user-admin.service.ts'
 
@@ -63,7 +64,7 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
     /** The account and its users are saved in one transaction; their events are published after it commits. */
     async onboard(input: OnboardInput) {
       const tenantId = randomUUID()
-      const { account, users, events } = await withTenant(db, tenantId, async (tx) => {
+      const { account, users, events, apiKey } = await withTenant(db, tenantId, async (tx) => {
         const account = await insertAccount(tx, { tenantId, name: input.name.trim(), tier: input.tier })
         const wanted = [
           { username: ONBOARDING_USERNAME, role: CAMPAIGN_MANAGER },
@@ -78,7 +79,9 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
           users.push({ id: created.user.id, username: created.user.username, role: created.user.role })
           events.push(...created.events)
         }
-        return { account, users, events }
+        // The vendor's first API key, for its backend to identify signed-in shoppers (POST /auth/shopper-token).
+        const apiKey = await newApiKey(tx, tenantId, 'Default')
+        return { account, users, events, apiKey }
       })
       const onboarded = tenantOnboardedEvent(account, users[0]!.id)
       await publish([...events, onboarded])
@@ -87,8 +90,28 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
         account,
         users: users.map(({ username, role }) => ({ username, role })),
         password: DEMO_PASSWORD,
+        // Shown once: only its hash is kept.
+        apiKey: { key: apiKey.key, prefix: apiKey.prefix, name: apiKey.name },
         seed: { products: seed.productIds.length, campaigns: seed.campaigns.length },
       }
+    },
+
+    /**
+     * Deletes the tenant and everything it owns. identity_db's rows go in one
+     * transaction; TenantDeleted then tells product-, campaign- and
+     * analytics-service and the gateway to delete theirs (and the archive job its
+     * files). The name must be typed again (confirmName), so a slip can't delete
+     * the wrong tenant.
+     */
+    async deleteTenant(tenantId: string, confirmName: string) {
+      const account = await findAccount(db, tenantId)
+      if (!account) throw notFound('TENANT_NOT_FOUND', 'No such tenant')
+      if (confirmName.trim() !== account.name) throw badRequest('CONFIRMATION_MISMATCH', "confirmName doesn't match the tenant's name")
+      await withTenant(db, tenantId, (tx) => deleteAccountData(tx, tenantId))
+      const payload: TenantDeletedPayload = { tenantId, name: account.name, deletedAt: new Date().toISOString() }
+      // Version 2: after TenantOnboarded (1).
+      await publish([event('TenantDeleted', tenantId, 2, payload)])
+      return payload
     },
   }
 }

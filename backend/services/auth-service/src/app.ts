@@ -19,6 +19,7 @@ import { accountRoutes } from './routes/account.routes.ts'
 import { authRoutes } from './routes/auth.routes.ts'
 import { createAccountService } from './services/account.service.ts'
 import { createAuthService } from './services/auth.service.ts'
+import { createShopperService } from './services/shopper.service.ts'
 import { PRODUCER } from './services/user-admin.service.ts'
 
 export interface AuthAppDeps {
@@ -48,7 +49,7 @@ export function buildAuthApp({
 
   const publish = createEventPublisher(bus, PRODUCER, logger)
   const service = createAuthService({ db, privateKey, publicKey, publish })
-  const controller = createAuthController(service)
+  const controller = createAuthController(service, createShopperService({ db, privateKey }))
 
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,

@@ -4,7 +4,7 @@ import express from 'express'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { EventEnvelope } from '@basketline/contracts'
-import { closeDb, createLogger, idempotentHandler } from '@basketline/platform'
+import { closeDb, createLogger, idempotentHandler, signShopperToken } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildGateway } from '../src/app.ts'
 import { createGatewayDb, migrateGatewayDb, type Db } from '../src/db/client.ts'
@@ -115,8 +115,8 @@ describe('routing', () => {
 })
 
 describe('permissions', () => {
-  it('lets anyone register, log in and get a visitor token', async () => {
-    for (const url of ['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor']) {
+  it('lets anyone register, log in and get a visitor token; shopper tokens go to auth-service, which checks the API key', async () => {
+    for (const url of ['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token']) {
       expect((await request(gateway).post(url).send({})).status, url).toBe(200)
     }
   })
@@ -139,11 +139,25 @@ describe('permissions', () => {
     }
     expect((await events((await visitorTokenFor(keys)).header)).status).toBe(200)
     expect((await events((await tokenFor(keys, 'standard-user')).header)).status).toBe(200)
+    // A vendor's shopper (events-only, registered).
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
+    expect((await events(`Bearer ${shopper.token}`)).status).toBe(200)
+    // Events-only tokens open nothing else.
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', `Bearer ${shopper.token}`)).status).toBe(401)
     hits = []
     expect((await events()).status).toBe(401)
     expect((await events('Bearer nonsense')).status).toBe(401)
     expect((await events((await visitorTokenFor(await createTestKeys())).header)).status).toBe(401)
     expect(hits).toHaveLength(0)
+  })
+
+  it("limits a tenant's API keys to its campaign managers", async () => {
+    const shopper = (await tokenFor(keys, 'standard-user')).header
+    const manager = (await tokenFor(keys, 'campaign-manager')).header
+    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', shopper)).status).toBe(403)
+    expect((await request(gateway).delete('/api/v1/auth/api-keys/bl_sk_abc').set('Authorization', shopper)).status).toBe(403)
+    expect((await request(gateway).get('/api/v1/auth/api-keys')).status).toBe(401)
+    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', manager)).body).toEqual({ from: 'auth', url: '/api/v1/auth/api-keys' })
   })
 
   it('limits campaign metrics to campaign managers', async () => {
@@ -190,6 +204,24 @@ describe('revocation (from auth events, no calls to the auth service)', () => {
     expect(events.body.error.code).toBe('SESSION_REVOKED')
   })
 
+  it("rejects every token of a deleted tenant, including visitors' and shoppers'; lets anyone ask to delete one", async () => {
+    const tenant = randomUUID()
+    const user = await tokenFor(keys, 'campaign-manager', { tid: tenant })
+    const visitor = await visitorTokenFor(keys, tenant)
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: tenant, userId: randomUUID() })
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)).status).toBe(200)
+    await apply({ ...authEvent('TenantDeleted', tenant, 2, {}), aggregateId: tenant, payload: { tenantId: tenant, name: 'Gone', deletedAt: new Date().toISOString() } })
+    const me = await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)
+    expect(me.status).toBe(401)
+    expect(me.body.error.code).toBe('TENANT_DELETED')
+    for (const header of [visitor.header, `Bearer ${shopper.token}`]) {
+      expect((await request(gateway).post('/api/v1/analytics/events').set('Authorization', header).send({ events: [] })).status).toBe(401)
+    }
+    // Deleting goes to auth-service, which checks the typed name; nothing else on /accounts/:id.
+    expect((await request(gateway).delete(`/api/v1/accounts/${tenant}`).send({ confirmName: 'Gone' })).body).toEqual({ from: 'auth', url: `/api/v1/accounts/${tenant}` })
+    expect((await request(gateway).get(`/api/v1/accounts/${tenant}`)).status).toBe(404)
+  })
+
   it('rejects all tokens of a disabled user', async () => {
     const user = await tokenFor(keys, 'standard-user')
     await apply(authEvent('UserDisabled', user.sub, 2, { disabledAt: new Date().toISOString() }))
@@ -216,6 +248,17 @@ describe('edge protection', () => {
     expect(res.status).toBe(204)
     expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173')
     expect(res.headers['access-control-allow-headers']).toContain('tenant_id')
+  })
+
+  it("lets the SDK on any vendor's site send events and get visitor tokens; other routes keep the allowlist", async () => {
+    const preflight = (path: string, origin: string) =>
+      request(gateway).options(path).set('Origin', origin).set('Access-Control-Request-Method', 'POST').set('Access-Control-Request-Headers', 'authorization,content-type')
+    for (const path of ['/api/v1/analytics/events', '/api/v1/auth/visitor']) {
+      expect((await preflight(path, 'https://shop.example.com')).headers['access-control-allow-origin'], path).toBe('https://shop.example.com')
+    }
+    for (const path of ['/api/v1/products', '/api/v1/auth/login', '/api/v1/auth/shopper-token']) {
+      expect((await preflight(path, 'https://shop.example.com')).headers['access-control-allow-origin'], path).toBeUndefined()
+    }
   })
 
   it('rejects oversized bodies before forwarding', async () => {

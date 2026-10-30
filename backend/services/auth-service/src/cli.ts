@@ -7,6 +7,9 @@
  *   node src/cli.ts create-user --username maya --password '...' --role campaign-manager --tenant <uuid>
  *   node src/cli.ts set-role    --username maya --role standard-user --tenant <uuid>
  *   node src/cli.ts disable     --username maya --tenant <uuid>
+ *   node src/cli.ts create-api-key --tenant <uuid> --name 'Production web'   (prints the key once)
+ *   node src/cli.ts list-api-keys  --tenant <uuid>
+ *   node src/cli.ts revoke-api-key --tenant <uuid> --prefix bl_sk_AbCdEf
  *
  * A tenant is an account: create it first. Usernames are unique within a
  * tenant, so every user command names the tenant.
@@ -20,6 +23,7 @@ import { accountTier } from './db/schema.ts'
 import { findAccount, insertAccount } from './repositories/account.repository.ts'
 import { findUserByUsername } from './repositories/user.repository.ts'
 import { ONBOARDING_USERNAME, tenantOnboardedEvent } from './services/account.service.ts'
+import { createShopperService } from './services/shopper.service.ts'
 import { changeRole, createUser, disableUser, PRODUCER } from './services/user-admin.service.ts'
 
 type Tier = (typeof accountTier.enumValues)[number]
@@ -33,6 +37,7 @@ const { positionals, values } = parseArgs({
     tenant: { type: 'string' },
     name: { type: 'string' },
     tier: { type: 'string' },
+    prefix: { type: 'string' },
   },
 })
 const [command] = positionals
@@ -48,6 +53,29 @@ if (command === 'create-account') {
     await migrateAuthDb(db)
     const account = await insertAccount(db, { tenantId: values.tenant?.toLowerCase() ?? randomUUID(), name: values.name.trim(), tier })
     console.log(JSON.stringify(account))
+  } finally {
+    await closeDb(db)
+  }
+} else if (command === 'create-api-key' || command === 'list-api-keys' || command === 'revoke-api-key') {
+  // A vendor's API keys, for its backend to get shopper tokens (POST /auth/shopper-token). No private key is
+  // needed here: keys are random and stored hashed.
+  if (!isUuid(values.tenant)) throw new Error('--tenant must be the UUID of the tenant (account) the key is for')
+  const tenantId = values.tenant.toLowerCase()
+  const shoppers = createShopperService({ db, privateKey: undefined as never })
+  try {
+    await migrateAuthDb(db)
+    if (!(await findAccount(db, tenantId))) throw new Error(`No account for tenant ${tenantId}`)
+    if (command === 'create-api-key') {
+      if (!values.name?.trim()) throw new Error('--name is required (e.g. "Production web")')
+      const created = await shoppers.createApiKey(tenantId, values.name.trim())
+      console.log(JSON.stringify({ ...created, note: 'Store the key now: it is not shown again.' }))
+    } else if (command === 'list-api-keys') {
+      const keys = await shoppers.listApiKeys(tenantId)
+      console.log(JSON.stringify(keys.map(({ prefix, name, createdAt, revokedAt }) => ({ prefix, name, createdAt, revokedAt }))))
+    } else {
+      if (!values.prefix) throw new Error('--prefix is required (from list-api-keys)')
+      console.log(JSON.stringify({ revoked: await shoppers.revokeApiKey(tenantId, values.prefix) }))
+    }
   } finally {
     await closeDb(db)
   }

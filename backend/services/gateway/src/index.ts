@@ -24,8 +24,8 @@ await migrateGatewayDb(db)
 const bus = await createBusFromEnv('gateway', logger)
 health.addCheck('kafka', () => bus.healthCheck())
 
-// Session revocations, disabled accounts and role changes arrive as events.
-await bus.subscribe({ groupId: 'gateway', topics: [TOPICS.sessions, TOPICS.users], handler: idempotentHandler(db, handleAccessEvent) })
+// Session revocations, disabled accounts, role changes and deleted tenants arrive as events.
+await bus.subscribe({ groupId: 'gateway', topics: [TOPICS.sessions, TOPICS.users, TOPICS.tenants], handler: idempotentHandler(db, handleAccessEvent) })
 
 const { app, access } = buildGateway({
   db,
@@ -42,6 +42,7 @@ const { app, access } = buildGateway({
   rateLimitPerMinute: intEnv('RATE_LIMIT_PER_MINUTE', 300),
   eventsRateLimitPerMinute: intEnv('EVENTS_RATE_LIMIT_PER_MINUTE', 120),
   visitorRateLimitPerMinute: intEnv('VISITOR_RATE_LIMIT_PER_MINUTE', 10),
+  shopperTokenRateLimitPerMinute: intEnv('SHOPPER_TOKEN_RATE_LIMIT_PER_MINUTE', 600),
 })
 const cleanup = setInterval(() => void access.cleanup().catch((error) => logger.error({ err: error }, 'cleanup failed')), 5 * 60_000)
 

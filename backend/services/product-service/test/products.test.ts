@@ -5,7 +5,7 @@ import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type
 import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildProductApp } from '../src/app.ts'
 import { createProductDb, migrateProductDb, type Db } from '../src/db/client.ts'
-import { createTenantSeeder } from '../src/events/tenant.consumer.ts'
+import { createTenantSeeder, handleTenantDeleted } from '../src/events/tenant.consumer.ts'
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
 let db: Db
@@ -194,5 +194,11 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
 
     const list = await request(app).get('/api/v1/products?limit=100').set('tenant_id', tenantId)
     expect(list.body.page.total).toBe(12)
+
+    // TenantDeleted: all of them go (and only this tenant's).
+    const otherProducts = (await db.$client.query('SELECT count(*)::int AS n FROM products WHERE tenant_id <> $1', [tenantId])).rows[0].n
+    await handleTenantDeleted(db, { ...envelope, eventId: randomUUID(), eventType: 'TenantDeleted', aggregateVersion: 2, payload: { tenantId, name: 'Seed Co', deletedAt: new Date().toISOString() } })
+    expect((await request(app).get('/api/v1/products?limit=100').set('tenant_id', tenantId)).body.page.total).toBe(0)
+    expect((await db.$client.query('SELECT count(*)::int AS n FROM products WHERE tenant_id <> $1', [tenantId])).rows[0].n).toBe(otherProducts)
   })
 })

@@ -14,7 +14,7 @@ import {
 import { buildCampaignApp } from './app.ts'
 import { createCampaignDb, migrateCampaignDb } from './db/client.ts'
 import { handleProductEvent } from './events/product.consumer.ts'
-import { createTenantSeeder } from './events/tenant.consumer.ts'
+import { createTenantSeeder, handleTenantDeleted } from './events/tenant.consumer.ts'
 
 const logger = createLogger('campaign-service')
 const health = createHealth()
@@ -27,7 +27,8 @@ health.addCheck('kafka', () => bus.healthCheck())
 // One consumer for both topics (each handler ignores the other's event types):
 // - product.v1 keeps the local products copy up to date. There is no inbox table:
 //   events apply by product version, so a redelivered one changes nothing.
-// - auth.tenant.v1 seeds each onboarded tenant's campaigns, by their planned IDs.
+// - auth.tenant.v1 seeds each onboarded tenant's campaigns, by their planned IDs, and
+//   deletes a deleted tenant's campaigns and product copy.
 const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'campaign-service', logger) })
 await bus.subscribe({
   groupId: 'campaign-service',
@@ -35,6 +36,7 @@ await bus.subscribe({
   handler: async (envelope) => {
     await handleProductEvent(db, envelope)
     await seedTenant(envelope)
+    await handleTenantDeleted(db, envelope)
   },
 })
 

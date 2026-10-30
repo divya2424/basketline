@@ -7,7 +7,7 @@ import { createTestDatabase, createTestKeys, tokenFor } from '@basketline/platfo
 import { buildCampaignApp } from '../src/app.ts'
 import { createCampaignDb, migrateCampaignDb, type Db } from '../src/db/client.ts'
 import { handleProductEvent } from '../src/events/product.consumer.ts'
-import { createTenantSeeder } from '../src/events/tenant.consumer.ts'
+import { createTenantSeeder, handleTenantDeleted } from '../src/events/tenant.consumer.ts'
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
 let db: Db
@@ -367,5 +367,12 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
     const created = bus.published.filter((m) => plan.some((p) => p.campaignId === m.key)).map((m) => m.envelope.eventType)
     expect(created.filter((type) => type === 'CampaignCreated')).toHaveLength(2)
     expect(created.filter((type) => type === 'CampaignProductAssociated')).toHaveLength(5)
+
+    // TenantDeleted: its campaigns, their products and the local product copy go.
+    await handleTenantDeleted(db, { ...envelope, eventId: randomUUID(), eventType: 'TenantDeleted', aggregateVersion: 2, payload: { tenantId, name: 'Seed Co', deletedAt: new Date().toISOString() } })
+    expect((await request(app).get('/api/v1/campaigns').set('tenant_id', tenantId)).body.page.total).toBe(0)
+    for (const table of ['campaigns', 'campaign_products', 'products']) {
+      expect((await db.$client.query(`SELECT count(*)::int AS n FROM ${table} WHERE tenant_id = $1`, [tenantId])).rows[0].n, table).toBe(0)
+    }
   })
 })

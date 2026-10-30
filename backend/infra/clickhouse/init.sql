@@ -99,6 +99,22 @@ CREATE TABLE IF NOT EXISTS analytics.campaigns
 ENGINE = ReplacingMergeTree(version)
 ORDER BY campaign_id;
 
+-- Deleted tenants (TenantDeleted, from analytics-service): their rows are
+-- deleted from every table here, and kafka.sql's queue views drop any that a
+-- replay from Kafka would bring back (Kafka keeps raw events up to 14 days).
+-- archive_purged_at: when the archive job (airflow/dags/tenant_purge.py) deleted
+-- the tenant's files from the Iceberg archive; the newest row per tenant wins.
+CREATE TABLE IF NOT EXISTS analytics.deleted_tenants
+(
+    tenant_id         UUID,
+    name              String,
+    deleted_at        DateTime64(3, 'UTC'),
+    archive_purged_at Nullable(DateTime64(3, 'UTC')),
+    updated_at        DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY tenant_id;
+
 -- Campaign totals per UTC day (of event_time: when the user acted), tenant and
 -- campaign: one row each, with every count in total and per client type (web,
 -- mobile), by the /ad counting rules. /ad reads its event counts only from here.

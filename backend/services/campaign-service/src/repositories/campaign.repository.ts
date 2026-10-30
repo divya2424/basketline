@@ -136,3 +136,10 @@ export async function insertCampaignIfAbsent(
   const [inserted] = await db.insert(campaigns).values(campaign).onConflictDoNothing({ target: campaigns.id }).returning()
   return inserted ?? null
 }
+
+/** Every campaign of a deleted tenant, its product associations, and this service's copy of its products. */
+export async function deleteTenantCampaigns(db: DbOrTx, tenantId: string): Promise<void> {
+  await db.delete(campaignProducts).where(eq(campaignProducts.tenantId, tenantId))
+  await db.delete(campaigns).where(eq(campaigns.tenantId, tenantId))
+  await db.delete(products).where(eq(products.tenantId, tenantId))
+}

@@ -3,7 +3,7 @@
  * `npm run db:generate -w @basketline/auth-service`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, index, pgEnum, pgPolicy, pgTable, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, pgEnum, pgPolicy, pgTable, primaryKey, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { ROLES } from '@basketline/contracts'
 import { timestamptz } from '@basketline/platform'
 
@@ -74,4 +74,48 @@ export const userLogin = pgTable(
     createdAt: timestamptz('created_at').notNull().defaultNow(),
   },
   (table) => [index('user_login_user_idx').on(table.tenantId, table.userId, table.sessionStartTime.desc()), tenantIsolation()],
+).enableRLS()
+
+/**
+ * A vendor's secret API keys, for its backend to vouch for its signed-in
+ * customers (POST /auth/shopper-token). The key itself is shown once; only its
+ * SHA-256 hash is kept (enough for a key with 256 random bits), and its first
+ * characters (prefix) to tell keys apart. Revoked keys are kept, for the audit.
+ */
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: uuid('id').primaryKey(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => accounts.tenantId),
+    name: varchar('name', { length: 100 }).notNull(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull(),
+    prefix: varchar('prefix', { length: 16 }).notNull(),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    revokedAt: timestamptz('revoked_at'),
+  },
+  (table) => [uniqueIndex('api_keys_hash_unique').on(table.keyHash), tenantIsolation()],
+).enableRLS()
+
+/**
+ * A vendor's customer (its own ID for them) and the UUID Basketline counts them
+ * as. Set on the first shopper token, to the visitor's UUID when the vendor
+ * passes it, so the visitor and the signed-in customer stay one person.
+ */
+export const externalCustomers = pgTable(
+  'external_customers',
+  {
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => accounts.tenantId),
+    customerId: varchar('customer_id', { length: 200 }).notNull(),
+    userId: uuid('user_id').notNull(),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.customerId] }),
+    uniqueIndex('external_customers_user_unique').on(table.tenantId, table.userId),
+    tenantIsolation(),
+  ],
 ).enableRLS()

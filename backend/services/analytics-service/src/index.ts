@@ -3,6 +3,7 @@ import { createBusFromEnv, createHealth, createLogger, handleShutdown, intEnv, l
 import { buildAnalyticsApp } from './app.ts'
 import { createClickHouse } from './clickhouse.ts'
 import { handleCampaignEvent } from './events/campaign.consumer.ts'
+import { handleTenantEvent } from './events/tenant.consumer.ts'
 
 const logger = createLogger('analytics-service')
 const health = createHealth()
@@ -24,8 +25,16 @@ const bus = await createBusFromEnv('analytics-service', logger, [
 ])
 health.addCheck('kafka', () => bus.healthCheck())
 const clickhouse = createClickHouse(requireEnv('CLICKHOUSE_URL'))
-// Campaign status for checking metric events. Applying an event twice is harmless (see campaign.repository.ts).
-await bus.subscribe({ groupId: 'analytics-service', topics: [TOPICS.campaigns], handler: (envelope) => handleCampaignEvent(clickhouse, envelope) })
+// Campaign status for checking metric events, and deleted tenants (whose analytics are
+// deleted). Applying an event twice is harmless.
+await bus.subscribe({
+  groupId: 'analytics-service',
+  topics: [TOPICS.campaigns, TOPICS.tenants],
+  handler: async (envelope) => {
+    await handleCampaignEvent(clickhouse, envelope)
+    await handleTenantEvent(clickhouse, envelope)
+  },
+})
 
 // Dashboards refresh every 20 s; reusing a count for 15 s keeps their cost flat as viewers grow.
 const metricsCacheMs = intEnv('METRICS_CACHE_MS', 15_000)

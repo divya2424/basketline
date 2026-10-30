@@ -1,6 +1,6 @@
 import { unauthorized, type AccessTokenClaims, type Logger } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
-import { deleteExpiredRevocations, findUserAccessState, isSessionRevoked } from '../repositories/access.repository.ts'
+import { deleteExpiredRevocations, findUserAccessState, isSessionRevoked, isTenantDeleted } from '../repositories/access.repository.ts'
 
 export function createAccessService({ db, logger }: { db: Db; logger: Logger }) {
   return {
@@ -10,12 +10,18 @@ export function createAccessService({ db, logger }: { db: Db; logger: Logger }) 
      * so it reflects auth-service changes within a few seconds (eventual consistency).
      */
     async assertTokenUsable(claims: AccessTokenClaims): Promise<void> {
-      const [revoked, state] = await Promise.all([isSessionRevoked(db, claims.sid), findUserAccessState(db, claims.sub)])
+      const [revoked, state, deleted] = await Promise.all([isSessionRevoked(db, claims.sid), findUserAccessState(db, claims.sub), isTenantDeleted(db, claims.tid)])
+      if (deleted) throw unauthorized('TENANT_DELETED', 'This tenant has been deleted')
       if (revoked) throw unauthorized('SESSION_REVOKED', 'This session has ended; sign in again')
       if (state?.disabled) throw unauthorized('ACCOUNT_DISABLED', 'This account is disabled')
       if (state?.tokensNotBefore && claims.iat * 1000 < state.tokensNotBefore.getTime()) {
         throw unauthorized('TOKEN_STALE', 'Your role changed; sign in again')
       }
+    },
+
+    /** Events-only tokens (visitors', shoppers') have no session; only their tenant can make them unusable. */
+    async assertTenantActive(tenantId: string): Promise<void> {
+      if (await isTenantDeleted(db, tenantId)) throw unauthorized('TENANT_DELETED', 'This tenant has been deleted')
     },
 
     async cleanup(): Promise<void> {

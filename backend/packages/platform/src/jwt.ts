@@ -7,9 +7,13 @@ export const JWT_ALGORITHM = 'ES256'
 export const JWT_ISSUER = 'basketline-auth'
 export const JWT_AUDIENCE = 'basketline-api'
 export const ACCESS_TOKEN_TTL_SECONDS = 30 * 60
-/** Visitor tokens are only accepted by event ingestion: any other API rejects this audience. */
+/**
+ * Events-only tokens (visitor and shopper tokens) are only accepted by event
+ * ingestion: any other API rejects this audience.
+ */
 export const VISITOR_AUDIENCE = 'basketline-events'
 export const VISITOR_TOKEN_TTL_SECONDS = 30 * 60
+export const SHOPPER_TOKEN_TTL_SECONDS = 30 * 60
 
 export interface AccessTokenClaims {
   sub: string
@@ -23,11 +27,17 @@ export interface AccessTokenClaims {
   exp: number
 }
 
-/** A visitor (not registered): the client's UUID for them (or a random one), bound to one tenant. */
+/**
+ * An events-only token, bound to one tenant:
+ *   visitor: someone not signed in; sub is the client's UUID for them (or a random one).
+ *   shopper: a vendor's signed-in customer, vouched for by the vendor's backend with
+ *            its API key (POST /auth/shopper-token); sub is the UUID Basketline keeps for them.
+ */
 export interface VisitorTokenClaims {
   sub: string
   tid: string
   client: ClientType
+  kind: 'visitor' | 'shopper'
   exp: number
 }
 
@@ -63,30 +73,31 @@ export async function verifyAccessToken(token: string, publicKey: CryptoKey): Pr
 
 export async function verifyVisitorToken(token: string, publicKey: CryptoKey): Promise<VisitorTokenClaims> {
   const { payload } = await jwtVerify(token, publicKey, { issuer: JWT_ISSUER, audience: VISITOR_AUDIENCE, algorithms: [JWT_ALGORITHM] })
-  const { sub, tid, client, exp } = payload as Partial<VisitorTokenClaims>
+  const { sub, tid, client, kind, exp } = payload as Partial<VisitorTokenClaims>
   if (!isUuid(sub) || !isUuid(tid) || typeof exp !== 'number') throw new Error('token is missing required claims')
-  return { sub, tid, client: clientClaim(client), exp }
+  return { sub, tid, client: clientClaim(client), kind: kind === 'shopper' ? 'shopper' : 'visitor', exp }
 }
 
-/** Who sent an analytics event: a signed-in user (access token) or a visitor (visitor token). */
+/** Who sent an analytics event: a signed-in user (access or shopper token) or a visitor (visitor token). */
 export interface EventSender {
   tenantId: string
   /** The person: the registered user's ID, or the visitor's UUID (the token's sub). */
   userId: string
   userType: UserType
   clientType: ClientType
-  /** Set for a user token, so the gateway can check revocation. */
+  /** Set for a Basketline user's access token, so the gateway can check revocation. */
   claims: AccessTokenClaims | null
 }
 
-/** Accepts an access token or a visitor token; throws if it is neither. */
+/** Accepts an access, shopper or visitor token; throws if it is none of them. A shopper is registered. */
 export async function verifyEventToken(token: string, publicKey: CryptoKey): Promise<EventSender> {
   try {
     const claims = await verifyAccessToken(token, publicKey)
     return { tenantId: claims.tid, userId: claims.sub, userType: 'registered', clientType: claims.client, claims }
   } catch {
-    const visitor = await verifyVisitorToken(token, publicKey)
-    return { tenantId: visitor.tid, userId: visitor.sub, userType: 'visitor', clientType: visitor.client, claims: null }
+    const events = await verifyVisitorToken(token, publicKey)
+    const userType = events.kind === 'shopper' ? 'registered' : 'visitor'
+    return { tenantId: events.tid, userId: events.sub, userType, clientType: events.client, claims: null }
   }
 }
 
@@ -97,11 +108,30 @@ export async function signVisitorToken(
   issuedAt: Date = new Date(),
   ttlSeconds = VISITOR_TOKEN_TTL_SECONDS,
 ): Promise<{ token: string; expiresAt: Date }> {
+  return signEventsToken(privateKey, { tenantId, userId: visitorId, client, kind: 'visitor' }, issuedAt, ttlSeconds)
+}
+
+/** A vendor's signed-in customer (registered), for events only; userId is the UUID Basketline keeps for them. */
+export async function signShopperToken(
+  privateKey: CryptoKey,
+  { tenantId, userId, client = 'web' }: { tenantId: string; userId: string; client?: ClientType },
+  issuedAt: Date = new Date(),
+  ttlSeconds = SHOPPER_TOKEN_TTL_SECONDS,
+): Promise<{ token: string; expiresAt: Date }> {
+  return signEventsToken(privateKey, { tenantId, userId, client, kind: 'shopper' }, issuedAt, ttlSeconds)
+}
+
+async function signEventsToken(
+  privateKey: CryptoKey,
+  { tenantId, userId, client, kind }: { tenantId: string; userId: string; client: ClientType; kind: VisitorTokenClaims['kind'] },
+  issuedAt: Date,
+  ttlSeconds: number,
+): Promise<{ token: string; expiresAt: Date }> {
   const iat = Math.floor(issuedAt.getTime() / 1000)
   const exp = iat + ttlSeconds
-  const token = await new SignJWT({ tid: tenantId, client })
+  const token = await new SignJWT({ tid: tenantId, client, kind })
     .setProtectedHeader({ alg: JWT_ALGORITHM, typ: 'JWT' })
-    .setSubject(visitorId)
+    .setSubject(userId)
     .setIssuer(JWT_ISSUER)
     .setAudience(VISITOR_AUDIENCE)
     .setIssuedAt(iat)

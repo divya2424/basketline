@@ -30,6 +30,7 @@ import { handleCampaignEvent } from '../services/analytics-service/src/events/ca
 import { buildAuthApp } from '../services/auth-service/src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant } from '../services/auth-service/src/db/client.ts'
 import { insertAccount } from '../services/auth-service/src/repositories/account.repository.ts'
+import { createShopperService } from '../services/auth-service/src/services/shopper.service.ts'
 import { createUser, PRODUCER as AUTH_PRODUCER } from '../services/auth-service/src/services/user-admin.service.ts'
 import { buildCampaignApp } from '../services/campaign-service/src/app.ts'
 import { createCampaignDb, migrateCampaignDb } from '../services/campaign-service/src/db/client.ts'
@@ -218,4 +219,51 @@ describe('the full flow over Kafka', () => {
     expect(afterLogout.body.error.code).toBe('SESSION_REVOKED')
     expect(revocationLag).toBeLessThan(5_000)
   }, 90_000)
+})
+
+describe("a vendor's site, through the SDK's endpoints", () => {
+  it('sends a visitor\'s events, then the signed-in shopper\'s (vouched for with an API key) as the same person', async () => {
+    const vendorSite = 'https://shop.vendor.example'
+    // The SDK's endpoints accept any origin.
+    const preflight = await request(gateway).options('/api/v1/analytics/events').set('Origin', vendorSite).set('Access-Control-Request-Method', 'POST')
+    expect(preflight.headers['access-control-allow-origin']).toBe(vendorSite)
+
+    // The browser (SDK): a visitor token for its visitor ID, then events.
+    const visitorId = randomUUID()
+    const visitor = await request(gateway).post('/api/v1/auth/visitor').set('tenant_id', TENANT).send({ userId: visitorId, clientType: 'web' })
+    expect(visitor.status).toBe(201)
+    const asVisitor = { eventId: randomUUID(), eventName: 'home_view', timestamp: new Date().toISOString() }
+    const sentAsVisitor = await request(gateway)
+      .post('/api/v1/analytics/events')
+      .set('Authorization', `Bearer ${visitor.body.visitorToken}`)
+      .send({ tenantId: TENANT, userId: visitorId, userType: 'visitor', events: [asVisitor] })
+    expect(sentAsVisitor.body).toMatchObject({ accepted: 1 })
+
+    // The vendor's backend: its API key and its own customer ID → a shopper token.
+    const { key } = await createShopperService({ db: authDb, privateKey: undefined as never }).createApiKey(TENANT, 'e2e vendor')
+    const shopper = await request(gateway)
+      .post('/api/v1/auth/shopper-token')
+      .set('tenant_id', TENANT)
+      .set('Authorization', `ApiKey ${key}`)
+      .send({ customerId: 'vendor-customer-1', visitorId })
+    expect(shopper.status).toBe(201)
+    expect(shopper.body.userId).toBe(visitorId)
+    const wrongKey = await request(gateway).post('/api/v1/auth/shopper-token').set('tenant_id', TENANT).set('Authorization', 'ApiKey bl_sk_wrong').send({ customerId: 'x' })
+    expect(wrongKey.status).toBe(401)
+
+    // The browser again, identified: registered, the same person.
+    const asShopper = { eventId: randomUUID(), eventName: 'cart_view', timestamp: new Date().toISOString() }
+    const sentAsShopper = await request(gateway)
+      .post('/api/v1/analytics/events')
+      .set('Authorization', `Bearer ${shopper.body.shopperToken}`)
+      .send({ tenantId: TENANT, userId: visitorId, userType: 'registered', events: [asShopper] })
+    expect(sentAsShopper.body).toMatchObject({ accepted: 1 })
+    // A shopper token opens nothing but event ingestion.
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', `Bearer ${shopper.body.shopperToken}`)).status).toBe(401)
+
+    const payloadOf = (eventId: string) => analyticsMessages.find((m) => m.envelope.eventId === eventId)?.envelope.payload
+    await eventually(async () => [payloadOf(asVisitor.eventId), payloadOf(asShopper.eventId)], (found) => found.every(Boolean))
+    expect(payloadOf(asVisitor.eventId)).toMatchObject({ userId: visitorId, userType: 'visitor', tenantId: TENANT })
+    expect(payloadOf(asShopper.eventId)).toMatchObject({ userId: visitorId, userType: 'registered', tenantId: TENANT })
+  }, 60_000)
 })

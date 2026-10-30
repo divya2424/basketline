@@ -2,12 +2,13 @@ import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { decodeJwt } from 'jose'
 import { randomUUID } from 'node:crypto'
-import { closeDb, createLogger, createMemoryEventBus, verifyVisitorToken, type MemoryEventBus } from '@basketline/platform'
+import { closeDb, createLogger, createMemoryEventBus, verifyEventToken, verifyVisitorToken, type MemoryEventBus } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildAuthApp } from '../src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant, type Db } from '../src/db/client.ts'
 import { insertAccount } from '../src/repositories/account.repository.ts'
 import { seedPlan } from '../src/services/account.service.ts'
+import { createShopperService } from '../src/services/shopper.service.ts'
 import { changeRole, disableUser } from '../src/services/user-admin.service.ts'
 
 const logger = createLogger('auth-test')
@@ -223,6 +224,61 @@ describe('register with a visitor token', () => {
   })
 })
 
+describe('vendor API keys and shopper tokens', () => {
+  const shopperToken = (key: string | undefined, body: object, tenant: string = TENANT) => {
+    const req = request(app).post('/api/v1/auth/shopper-token').set('tenant_id', tenant)
+    return (key ? req.set('Authorization', `ApiKey ${key}`) : req).send(body)
+  }
+
+  it("issues a registered, events-only token for the vendor's customer, the same person every time", async () => {
+    const shoppers = createShopperService({ db, privateKey: keys.privateKey })
+    const { key, prefix } = await shoppers.createApiKey(TENANT, 'Production web')
+    expect(key).toMatch(/^bl_sk_[A-Za-z0-9_-]{43}$/)
+    expect(key.startsWith(prefix)).toBe(true)
+    // Only the hash is stored.
+    expect((await queryAsTenant('SELECT key_hash FROM api_keys WHERE prefix = $1', [prefix])).rows[0].key_hash).not.toContain(key)
+
+    const visitor = randomUUID()
+    const first = await shopperToken(key, { customerId: 'cust-42', visitorId: visitor })
+    expect(first.status).toBe(201)
+    expect(first.body).toMatchObject({ tokenType: 'Bearer', expiresIn: 1800, userId: visitor })
+    // Accepted as a registered sender, for this tenant, by event ingestion only.
+    expect(await verifyEventToken(first.body.shopperToken, keys.publicKey)).toMatchObject({ tenantId: TENANT, userId: visitor, userType: 'registered', clientType: 'web' })
+    expect(decodeJwt(first.body.shopperToken).aud).toBe('basketline-events')
+
+    // Later: the same UUID, whatever visitor ID comes with it.
+    const again = await shopperToken(key, { customerId: 'cust-42', visitorId: randomUUID(), clientType: 'mobile' })
+    expect(again.body.userId).toBe(visitor)
+    // Another customer can't take a UUID already in use: it gets its own.
+    const other = await shopperToken(key, { customerId: 'cust-43', visitorId: visitor })
+    expect(other.body.userId).not.toBe(visitor)
+  })
+
+  it('rejects a missing, unknown, revoked or other tenant\'s key, and never lets a shopper token register a user', async () => {
+    const shoppers = createShopperService({ db, privateKey: keys.privateKey })
+    const { key, prefix } = await shoppers.createApiKey(TENANT, 'To revoke')
+    const others = await shoppers.createApiKey(OTHER_TENANT, 'Other store')
+    for (const res of [
+      await shopperToken(undefined, { customerId: 'c' }),
+      await shopperToken('bl_sk_not-a-real-key', { customerId: 'c' }),
+      await shopperToken(others.key, { customerId: 'c' }),
+    ]) {
+      expect(res.status).toBe(401)
+      expect(res.body.error.code).toBe('INVALID_API_KEY')
+    }
+    expect((await shopperToken(key, { customerId: 'c' })).status).toBe(201)
+    expect(await shoppers.revokeApiKey(TENANT, prefix)).toBe(1)
+    expect((await shopperToken(key, { customerId: 'c' })).status).toBe(401)
+    expect((await shopperToken(others.key, { customerId: '' }, OTHER_TENANT)).status).toBe(400)
+
+    // A shopper token isn't a visitor token: registering with it gets a random ID.
+    const shopper = await shopperToken(others.key, { customerId: 'shopper-1' }, OTHER_TENANT)
+    const res = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken: shopper.body.shopperToken }, OTHER_TENANT)
+    expect(res.status).toBe(201)
+    expect(res.body.user.id).not.toBe(shopper.body.userId)
+  })
+})
+
 describe('login', () => {
   it('returns the documented response, a 30-minute JWT and a new session row', async () => {
     const { username, user } = await register()
@@ -397,6 +453,72 @@ describe('tenant onboarding (/accounts)', () => {
     expect(login.body.user).toMatchObject({ role: 'campaign-manager', tenantId: tenant })
     const created = bus.published.filter((m) => m.envelope.eventType === 'UserCreated' && m.key === login.body.user.id)
     expect(created).toHaveLength(1)
+  })
+
+  it("gives the vendor a first API key, shown once, that its managers can list, add to and revoke", async () => {
+    const res = await onboard({ name: 'Vendor with a key', tier: 'free', dummyUsers: true })
+    const tenant = res.body.account.tenantId as string
+    const first = res.body.apiKey as { key: string; prefix: string; name: string }
+    expect(first).toMatchObject({ name: 'Default', key: expect.stringMatching(/^bl_sk_/) })
+    // It works at once: the vendor's backend can get shopper tokens with it.
+    const token = await request(app).post('/api/v1/auth/shopper-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${first.key}`).send({ customerId: 'c-1' })
+    expect(token.status).toBe(201)
+
+    const manager = `Bearer ${(await signIn(tenant, 'onboarding')).body.accessToken}`
+    const shopper = `Bearer ${(await signIn(tenant, 'user01')).body.accessToken}`
+    const keys = () => request(app).get('/api/v1/auth/api-keys').set('Authorization', manager)
+    // Listed by prefix, never the key itself.
+    expect((await keys()).body.items).toEqual([{ prefix: first.prefix, name: 'Default', createdAt: expect.any(String), revokedAt: null }])
+    expect(JSON.stringify((await keys()).body)).not.toContain(first.key)
+
+    const added = await request(app).post('/api/v1/auth/api-keys').set('Authorization', manager).send({ name: 'Mobile app' })
+    expect(added.status).toBe(201)
+    expect(added.body).toMatchObject({ name: 'Mobile app', key: expect.stringMatching(/^bl_sk_/) })
+    expect((await request(app).delete(`/api/v1/auth/api-keys/${first.prefix}`).set('Authorization', manager)).status).toBe(204)
+    expect((await request(app).delete(`/api/v1/auth/api-keys/${first.prefix}`).set('Authorization', manager)).status).toBe(404)
+    const revoked = await request(app).post('/api/v1/auth/shopper-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${first.key}`).send({ customerId: 'c-1' })
+    expect(revoked.status).toBe(401)
+    expect((await keys()).body.items.map((k: { name: string; revokedAt: string | null }) => [k.name, k.revokedAt === null])).toEqual([
+      ['Mobile app', true],
+      ['Default', false],
+    ])
+
+    // Not for standard users, and a manager sees only their own tenant's keys.
+    expect((await request(app).get('/api/v1/auth/api-keys').set('Authorization', shopper)).status).toBe(403)
+    const other = await onboard({ name: 'Another vendor', tier: 'free', dummyUsers: false })
+    const otherManager = `Bearer ${(await signIn(other.body.account.tenantId, 'onboarding')).body.accessToken}`
+    const otherKeys = await request(app).get('/api/v1/auth/api-keys').set('Authorization', otherManager)
+    expect(otherKeys.body.items.map((k: { prefix: string }) => k.prefix)).toEqual([other.body.apiKey.prefix])
+    expect((await request(app).delete(`/api/v1/auth/api-keys/${added.body.prefix}`).set('Authorization', otherManager)).status).toBe(404)
+  })
+
+  it('deletes a tenant and all of its identity data when its name is typed again, then tells the other services', async () => {
+    const res = await onboard({ name: 'To Delete', tier: 'free', dummyUsers: true })
+    const tenant = res.body.account.tenantId as string
+    const kept = await onboard({ name: 'To Keep', tier: 'free', dummyUsers: false })
+    expect((await signIn(tenant, 'onboarding')).status).toBe(200)
+    await request(app).post('/api/v1/auth/shopper-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${res.body.apiKey.key}`).send({ customerId: 'c-1' })
+    const remove = (body: object, id = tenant) => request(app).delete(`/api/v1/accounts/${id}`).send(body)
+
+    // The name must match exactly (spaces around it aside).
+    expect((await remove({ confirmName: 'to delete' })).body.error.code).toBe('CONFIRMATION_MISMATCH')
+    expect((await remove({})).status).toBe(400)
+    expect((await remove({ confirmName: 'x' }, 'not-a-uuid')).status).toBe(400)
+    expect((await remove({ confirmName: 'x' }, randomUUID())).status).toBe(404)
+
+    const before = bus.published.length
+    const deleted = await remove({ confirmName: ' To Delete ' })
+    expect(deleted.status).toBe(200)
+    expect(deleted.body.deleted).toMatchObject({ tenantId: tenant, name: 'To Delete' })
+    for (const table of ['users', 'user_login', 'api_keys', 'external_customers']) {
+      expect((await queryAsTenant(`SELECT count(*)::int AS n FROM ${table}`, [], tenant)).rows[0].n, table).toBe(0)
+    }
+    expect((await request(app).get('/api/v1/accounts')).body.items.map((a: { tenantId: string }) => a.tenantId)).not.toContain(tenant)
+    expect((await signIn(tenant, 'onboarding')).status).toBe(401)
+    const event = bus.published.slice(before).find((m) => m.envelope.eventType === 'TenantDeleted')!
+    expect(event).toMatchObject({ topic: 'auth.tenant.v1', key: tenant, envelope: { payload: { tenantId: tenant, name: 'To Delete' } } })
+    // Other tenants are untouched.
+    expect((await signIn(kept.body.account.tenantId, 'onboarding')).status).toBe(200)
   })
 
   it('adds user01–user10 as standard users when asked, all signing in with "test"', async () => {

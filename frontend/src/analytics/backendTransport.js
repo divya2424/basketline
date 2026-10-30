@@ -10,45 +10,12 @@
  * click on the product in the last 7 days (click-to-basket), so the browser
  * keeps no record of clicks.
  *
- * Failures are reported by trackEvent and never affect the shopper.
+ * Sending is the Basketline SDK's (sdk/), the same package vendors install;
+ * its failures are logged and never affect the shopper.
  */
+import { createBasketline } from '@basketline/sdk'
 import { randomEventId } from './analytics.js'
-import { apiRequest } from '../api/httpClient.js'
 import { getRequestContext } from '../api/requestContext.js'
-
-/** Visitor tokens last 30 minutes; a new one is fetched a little before. */
-export const VISITOR_TOKEN_RENEW_MS = 25 * 60 * 1000
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-/** IDs for stores whose ID can't be kept in localStorage (private mode): kept for this page. */
-const pageIds = new Map()
-
-/**
- * This browser's lasting visitor UUID for one store (tenant): the userId of its
- * events while not signed in, so a visitor counts as one customer across visits.
- * One per store, so stores can't link a shopper.
- */
-export function anonymousId(tenantId) {
-  const key = `basketline:anonymous-id:${tenantId}`
-  try {
-    const stored = localStorage.getItem(key)
-    if (UUID.test(stored ?? '')) return stored
-    const id = randomEventId()
-    localStorage.setItem(key, id)
-    return id
-  } catch {
-    if (!pageIds.has(tenantId)) pageIds.set(tenantId, randomEventId())
-    return pageIds.get(tenantId)
-  }
-}
-
-/** A visitor token for this browser's visitor UUID in the store: { userId, token }. */
-export async function requestVisitorToken(tenantId, request = apiRequest) {
-  const userId = anonymousId(tenantId)
-  const body = await request('/auth/visitor', { method: 'POST', body: { userId, clientType: 'web' } })
-  return { userId, token: body.visitorToken }
-}
 
 /** The event as the backend stores it: campaignId/productId as columns, the rest as properties. */
 function activity(event) {
@@ -96,87 +63,37 @@ export function toBackendEvents(event) {
 }
 
 /**
- * Posts a batch of events, with the tenant, user and user type its token was
- * issued for: the backend rejects a batch whose identity doesn't match its
- * token. A signed-in user's access token is used as is (registered); a visitor
- * gets a visitor token for its UUID in the store (POST /auth/visitor), reused
- * until shortly before it expires.
+ * Sends the storefront's events through the Basketline SDK (sdk/), as any
+ * vendor's site does: one client per store, which batches the events and sends
+ * them with the right identity. Signed in, the user's access token (Basketline
+ * users' tokens are accepted for events); signed out, this browser's visitor.
+ * Sign-in and sign-out are picked up from the request context on each event.
  */
-export function createEventSender(request = apiRequest) {
-  let visitor = null // { tenantId, renewAt, visit: Promise<{ userId, token }> }
+export function createBackendTransport({ apiUrl = import.meta.env.VITE_API_BASE_URL, createClient = createBasketline } = {}) {
+  const clients = new Map() // tenantId → { sdk, userId }
 
-  function visitorToken(tenantId) {
-    if (visitor?.tenantId !== tenantId || visitor.renewAt <= Date.now()) {
-      const visit = requestVisitorToken(tenantId, request)
-      visitor = { tenantId, renewAt: Date.now() + VISITOR_TOKEN_RENEW_MS, visit }
-      // A failed request is retried with the next batch.
-      visit.catch(() => {
-        if (visitor?.visit === visit) visitor = null
-      })
+  function clientFor(tenantId) {
+    if (!clients.has(tenantId)) clients.set(tenantId, { sdk: createClient({ apiUrl, tenantId }), userId: null })
+    const client = clients.get(tenantId)
+    const { userId, accessToken } = getRequestContext()
+    if (accessToken && client.userId !== userId) {
+      client.sdk.identify({ userId, getToken: () => getRequestContext().accessToken })
+      client.userId = userId
+    } else if (!accessToken && client.userId) {
+      client.sdk.reset()
+      client.userId = null
     }
-    return visitor.visit
-  }
-
-  return async (events) => {
-    const { tenantId, userId, accessToken } = getRequestContext()
-    // Signed in: the HTTP client adds the access token.
-    if (accessToken) {
-      return request('/analytics/events', { method: 'POST', body: { tenantId, userId, userType: 'registered', events }, keepalive: true })
-    }
-    const visit = await visitorToken(tenantId)
-    return request('/analytics/events', {
-      method: 'POST',
-      body: { tenantId, userId: visit.userId, userType: 'visitor', events },
-      keepalive: true,
-      headers: { Authorization: `Bearer ${visit.token}` },
-    })
-  }
-}
-
-/**
- * Queues events and posts them in batches: when `batchSize` are queued, `flushAfterMs`
- * after the first one, or when the page is hidden. The gateway rate-limits event
- * requests per IP, so one request per event would drop events for busy pages and
- * shared IPs. Each send() returns the promise of the request that carries its events.
- */
-export function createBackendTransport({
-  send = createEventSender(),
-  batchSize = 20,
-  flushAfterMs = 2000,
-} = {}) {
-  let queue = []
-  let delivered = null
-  let settle
-  let timer
-
-  function flush() {
-    clearTimeout(timer)
-    timer = undefined
-    if (queue.length === 0) return
-    send(queue).then(settle.resolve, settle.reject)
-    queue = []
-    delivered = null
-  }
-
-  if (typeof document !== 'undefined') {
-    // keepalive lets this last request finish while the page unloads.
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') flush()
-    })
+    return client.sdk
   }
 
   return {
     send(event) {
-      const events = toBackendEvents(event)
-      if (events.length === 0) return undefined
-      delivered ??= new Promise((resolve, reject) => {
-        settle = { resolve, reject }
-      })
-      const result = delivered
-      queue.push(...events)
-      if (queue.length >= batchSize) flush()
-      else timer ??= setTimeout(flush, flushAfterMs)
-      return result
+      const sdk = clientFor(getRequestContext().tenantId)
+      for (const { eventName, campaignId, productId, pageName, featureName, properties } of toBackendEvents(event)) {
+        sdk.track(eventName, { campaignId, productId, pageName, featureName, properties })
+      }
     },
+    /** Sends what is queued now (tests; the SDK also does it when the page is hidden). */
+    flush: () => Promise.all([...clients.values()].map(({ sdk }) => sdk.flush())),
   }
 }

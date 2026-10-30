@@ -1,8 +1,9 @@
 import type { Request, Response } from 'express'
-import { ACCESS_TOKEN_TTL_SECONDS, badRequest, page, readPagination, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
+import { ACCESS_TOKEN_TTL_SECONDS, badRequest, notFound, page, readPagination, SHOPPER_TOKEN_TTL_SECONDS, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
 import type { Session } from '../repositories/session.repository.ts'
 import type { User } from '../repositories/user.repository.ts'
 import type { AuthService } from '../services/auth.service.ts'
+import type { ShopperService } from '../services/shopper.service.ts'
 
 /** Public user shape. Never includes the password hash. */
 const toPublicUser = ({ id, username, role, tenantId }: User) => ({ id, username, role, tenantId })
@@ -28,7 +29,7 @@ function sessionStatus(session: Session, now: number) {
   return session.expiresAt.getTime() <= now ? 'expired' : 'active'
 }
 
-export function createAuthController(service: AuthService) {
+export function createAuthController(service: AuthService, shoppers: ShopperService) {
   return {
     async register(req: Request, res: Response) {
       const user = await service.register(req.body, requireTenant(req))
@@ -38,6 +39,28 @@ export function createAuthController(service: AuthService) {
     async visitor(req: Request, res: Response) {
       const { token, visitorId } = await service.visitor(requireTenant(req), req.body ?? {})
       res.status(201).json({ visitorToken: token, tokenType: 'Bearer', expiresIn: VISITOR_TOKEN_TTL_SECONDS, userId: visitorId })
+    },
+
+    async listApiKeys(req: Request, res: Response) {
+      const keys = await shoppers.listApiKeys(req.auth!.tid)
+      res.json({ items: keys.map(({ prefix, name, createdAt, revokedAt }) => ({ prefix, name, createdAt, revokedAt })) })
+    },
+
+    /** The key is in this response only: it is stored hashed. */
+    async createApiKey(req: Request, res: Response) {
+      const { key, prefix, name, createdAt } = await shoppers.createApiKey(req.auth!.tid, req.body.name.trim())
+      res.status(201).json({ key, prefix, name, createdAt })
+    },
+
+    async revokeApiKey(req: Request<{ prefix: string }>, res: Response) {
+      const revoked = await shoppers.revokeApiKey(req.auth!.tid, req.params.prefix)
+      if (revoked === 0) throw notFound('API_KEY_NOT_FOUND', 'No active API key with this prefix')
+      res.status(204).end()
+    },
+
+    async shopperToken(req: Request, res: Response) {
+      const { token, userId } = await shoppers.shopperToken(requireTenant(req), req.headers.authorization, req.body)
+      res.status(201).json({ shopperToken: token, tokenType: 'Bearer', expiresIn: SHOPPER_TOKEN_TTL_SECONDS, userId })
     },
 
     async login(req: Request, res: Response) {

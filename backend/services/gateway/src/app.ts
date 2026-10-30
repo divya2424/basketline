@@ -1,4 +1,5 @@
-import cors from 'cors'
+import { createHash } from 'node:crypto'
+import cors, { type CorsOptions } from 'cors'
 import { rateLimit } from 'express-rate-limit'
 import type { CryptoKey } from 'jose'
 import { createBaseApp, createHealth, errorHandler, notFoundHandler, pingDb, type Health, type Logger } from '@basketline/platform'
@@ -19,11 +20,20 @@ export interface GatewayDeps {
   eventsRateLimitPerMinute?: number
   /** Visitor tokens issued per minute per IP (default 10): each is a fresh anonymous identity. */
   visitorRateLimitPerMinute?: number
+  /** Shopper tokens per minute per API key (default 600): a vendor's backend calls from few IPs for all its shoppers. */
+  shopperTokenRateLimitPerMinute?: number
   /** Probe state from index.ts; tests get one that's already started. */
   health?: Health
 }
 
 const MAX_BODY_BYTES = 100 * 1024
+/**
+ * What the Basketline SDK calls from vendors' sites: any origin may call them.
+ * They take bearer tokens, never cookies, so a page on another origin gains
+ * nothing it couldn't do with a script. Every other route keeps CORS_ORIGINS.
+ */
+const SDK_PATHS = new Set(['/api/v1/auth/visitor', '/api/v1/analytics/events'])
+const SHOPPER_TOKEN_PATH = '/api/v1/auth/shopper-token'
 
 export function buildGateway({
   db,
@@ -34,6 +44,7 @@ export function buildGateway({
   rateLimitPerMinute = 300,
   eventsRateLimitPerMinute = 120,
   visitorRateLimitPerMinute = 10,
+  shopperTokenRateLimitPerMinute = 600,
   health = createHealth({ started: true }),
 }: GatewayDeps) {
   health.addCheck('database', () => pingDb(db))
@@ -41,16 +52,26 @@ export function buildGateway({
   // Bodies are streamed to the services untouched, so the gateway doesn't parse JSON.
   const app = createBaseApp({ name: 'gateway', logger, health, parseJson: false })
 
+  const corsOptions: CorsOptions = {
+    // User-Agent: axios sets it on every request, and Firefox includes it in the preflight.
+    allowedHeaders: ['Authorization', 'Content-Type', 'tenant_id', 'user_id', 'x-request-id', 'User-Agent'],
+    exposedHeaders: ['x-request-id', 'Retry-After'],
+    maxAge: 600,
+  }
+  app.use(cors((req, callback) => callback(null, { ...corsOptions, origin: SDK_PATHS.has(req.url?.split('?')[0] ?? '') ? true : corsOrigins })))
+  // Per IP, except shopper tokens: a vendor's backend asks for all its shoppers from a few IPs, so they're limited per API key.
+  app.use(rateLimit({ windowMs: 60_000, limit: rateLimitPerMinute, standardHeaders: 'draft-8', legacyHeaders: false, skip: (req) => req.path === SHOPPER_TOKEN_PATH }))
   app.use(
-    cors({
-      origin: corsOrigins,
-      // User-Agent: axios sets it on every request, and Firefox includes it in the preflight.
-      allowedHeaders: ['Authorization', 'Content-Type', 'tenant_id', 'user_id', 'x-request-id', 'User-Agent'],
-      exposedHeaders: ['x-request-id', 'Retry-After'],
-      maxAge: 600,
+    SHOPPER_TOKEN_PATH,
+    rateLimit({
+      windowMs: 60_000,
+      limit: shopperTokenRateLimitPerMinute,
+      standardHeaders: 'draft-8',
+      legacyHeaders: false,
+      // A hash, so the key itself isn't kept in memory; requests without one share a bucket per IP.
+      keyGenerator: (req) => createHash('sha256').update(req.headers.authorization ?? `ip:${req.ip}`).digest('hex'),
     }),
   )
-  app.use(rateLimit({ windowMs: 60_000, limit: rateLimitPerMinute, standardHeaders: 'draft-8', legacyHeaders: false }))
   app.use('/api/v1/analytics/events', rateLimit({ windowMs: 60_000, limit: Math.min(eventsRateLimitPerMinute, rateLimitPerMinute), standardHeaders: 'draft-8', legacyHeaders: false }))
   app.use('/api/v1/auth/visitor', rateLimit({ windowMs: 60_000, limit: Math.min(visitorRateLimitPerMinute, rateLimitPerMinute), standardHeaders: 'draft-8', legacyHeaders: false }))
   app.use((req, res, next) => {

@@ -11,9 +11,14 @@ export function createAccountController(service: AccountService) {
       res.json({ items: (await service.list()).map(toPublicAccount) })
     },
 
+    async remove(req: Request<{ tenantId: string }>, res: Response) {
+      const deleted = await service.deleteTenant(req.params.tenantId.toLowerCase(), req.body.confirmName)
+      res.json({ deleted })
+    },
+
     async onboard(req: Request, res: Response) {
-      const { account, users, password, seed } = await service.onboard(req.body)
-      res.status(201).json({ account: toPublicAccount(account), users, password, seed })
+      const { account, users, password, apiKey, seed } = await service.onboard(req.body)
+      res.status(201).json({ account: toPublicAccount(account), users, password, apiKey, seed })
     },
   }
 }

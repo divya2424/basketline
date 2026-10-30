@@ -70,10 +70,12 @@ The app opens on the onboarding page (`/`), open to everyone.
 - **Onboard a tenant:** give it a name and a tier (Free, Pro or Enterprise), and optionally tick "Create 10 demo users". The backend generates the tenant ID and creates:
   - an `onboarding` campaign manager;
   - `user01`–`user10` (standard users), if ticked. Every one of them has the password `test`.
-  - 10–15 sample products and 2 active campaigns. They appear in its store within a few seconds.
+  - 10–15 sample products and 2 active campaigns. They appear in its store within a few seconds;
+  - its first **API key**, shown once with a Copy button, next to the tenant ID and an SDK setup snippet filled in for it.
 - **Tenants list:** every tenant, newest first. Each row has:
   - **Open store** and **Analytics:** sign in as the tenant's `onboarding` user and open `/store` or `/analytics`;
-  - **Log in:** sign in as any of its users, then open its store.
+  - **Log in:** sign in as any of its users, then open its store;
+  - **Details:** the tenant's SDK setup and its **API keys** (list, create, revoke), loaded by signing in as its `onboarding` manager for that panel only, so the app stays on its current store. A tenant created with the CLI has no `onboarding` user; manage its keys with the CLI. Details also has **Delete tenant**: type the tenant's name to confirm, and it and all of its data are deleted for good (see the backend README, "Deleting a tenant"). Deleting the store you're in signs you out.
 
 The tenant's pages (`/store`, `/store/products/:id`, `/cart`, `/analytics`) require signing in to that tenant. Signed out, they redirect to `/`. The chosen tenant is remembered in `localStorage` (`basketline:tenant`), and each store has its own cart.
 
@@ -127,6 +129,12 @@ The screenshots use mock data (`VITE_ANALYTICS_MODE=mock`).
 - **Code:** see `timeRange.js`.
 
 **Freshness:** counts are fetched again every 20 seconds while the page is visible, without a loader. With the backend's batching and 15-second cache, they are at most about a minute old.
+
+**Integrate your site:** a closed section at the bottom of the dashboard, loaded only when opened. It has two parts:
+- the SDK setup snippet, with the store's tenant ID;
+- the store's API keys: create one (shown once, with a Copy button), see when each was created, and revoke one.
+
+The code is in `src/features/integration`.
 
 **Loading and errors:** each card loads on its own, with placeholders shaped like the card, and a status chip in the section header shows progress. A card that fails shows **Retry**, without hiding the others.
 

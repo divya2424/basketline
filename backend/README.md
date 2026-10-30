@@ -38,7 +38,7 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | Service | URL (from your machine) | Inside Compose | Notes |
 |---|---|---|---|
 | **Gateway** (the API) | http://localhost:8080/api/v1 | `gateway:8080` | The only HTTP entry point. Health: http://localhost:8080/health/ready |
-| auth-service | not published | `auth-service:4001` | Accounts, users, sign-in, tokens |
+| auth-service | not published | `auth-service:4001` | Accounts, users, sign-in, tokens, vendors' API keys |
 | product-service | not published | `product-service:4002` | Products |
 | campaign-service | not published | `campaign-service:4003` | Campaigns |
 | analytics-service | not published | `analytics-service:4004` | Event ingestion and `/ad` metrics |
@@ -84,6 +84,9 @@ npm run seed                     # 10 sample products and 4 campaigns in that te
 | `set-role --username … --role … --tenant <uuid>` | Changes a role (published as an event, so the gateway picks it up) |
 | `disable --username … --tenant <uuid>` | Disables a user |
 | `seed-tenant --tenant <uuid>` | Seeds a tenant onboarded before seeding existed (needs its `onboarding` user) |
+| `create-api-key --tenant <uuid> --name '…'` | A vendor's secret API key for `POST /auth/shopper-token`. Printed once; only its hash is stored |
+| `list-api-keys --tenant <uuid>` | The tenant's keys: prefix, name, created, revoked |
+| `revoke-api-key --tenant <uuid> --prefix bl_sk_…` | Revokes a key; its shopper tokens stop being issued at once |
 
 All data is per tenant: a campaign manager sees and changes only their tenant's products, campaigns and metrics.
 
@@ -110,10 +113,15 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | Method | Path | Who | What |
 |---|---|---|---|
 | GET | `/accounts` | anyone | Every tenant, newest first: `{items: [{tenantId, name, tier, createdAt}]}` |
-| POST | `/accounts` | anyone | Demo onboarding: `{name, tier, dummyUsers}` → 201 `{account, users, password, seed}` |
+| POST | `/accounts` | anyone | Demo onboarding: `{name, tier, dummyUsers}` → 201 `{account, users, password, apiKey, seed}`. `apiKey` is the vendor's first API key, shown only here |
+| DELETE | `/accounts/:tenantId` | anyone | Deletes the tenant and all of its data: `{confirmName}` must be the tenant's name exactly, else 400 `CONFIRMATION_MISMATCH` → `{deleted: {tenantId, name, deletedAt}}`. See [Deleting a tenant](#deleting-a-tenant) |
+| GET | `/auth/api-keys` | campaign manager | The tenant's API keys: `{items: [{prefix, name, createdAt, revokedAt}]}`, never the keys |
+| POST | `/auth/api-keys` | campaign manager | `{name}` → 201 `{key, prefix, name, createdAt}`: a new key, shown only here |
+| DELETE | `/auth/api-keys/:prefix` | campaign manager | Revokes the key (404 if no active key has that prefix) |
 | POST | `/auth/register` | anyone | `{username, password, visitorToken?}` → a standard user in the `tenant_id` header's tenant |
 | POST | `/auth/login` | anyone | `{username, password, clientType: web\|mobile}` → `{accessToken, expiresIn: 1800, user, session}`. Rate limited |
 | POST | `/auth/visitor` | anyone | `{userId?, clientType?}` → `{visitorToken, expiresIn: 1800, userId}`. Valid only for `POST /analytics/events`. Rate limited per IP |
+| POST | `/auth/shopper-token` | a vendor's backend, with `Authorization: ApiKey bl_sk_…` | `{customerId, visitorId?, clientType?}` → `{shopperToken, expiresIn: 1800, userId}`: a registered, events-only token for the vendor's signed-in customer. Rate limited per API key |
 | POST | `/auth/logout` | signed in | Ends the session and publishes `SessionRevoked` |
 | GET | `/auth/me` | signed in | The current user |
 | GET | `/auth/sessions` | signed in | The user's sessions, newest first; `?limit&offset` |
@@ -123,6 +131,13 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 - **Onboarding** creates:
   - an `onboarding` campaign manager, plus `user01`–`user10` with `dummyUsers: true`, **all with the password `test`**;
   - 10–15 sample products and 2 active campaigns, seeded by product- and campaign-service from `TenantOnboarded` within seconds.
+- **Shopper tokens (vendors' signed-in customers):**
+  - **How:** a vendor's shoppers aren't Basketline users, so the vendor's backend vouches for them with its secret API key.
+  - **Same person:** each `customerId` is mapped to one Basketline `userId` on its first token: the `visitorId` passed (if it's free), else a random one. So a visitor who signs in stays one person.
+  - **Where it works:** the token is accepted only by event ingestion, where it counts as `registered`.
+  - **Errors:** a wrong, revoked or other tenant's key gets `401 INVALID_API_KEY`.
+  - **Keys:** every tenant gets a first key at onboarding (`apiKey`, named "Default"). Its campaign managers create and revoke keys in the dashboard (`/auth/api-keys`) or with the CLI. Keys are stored hashed, so a key is shown only when it's created.
+  - **The client side:** see the SDK, [sdk/README.md](../sdk/README.md).
 - **Register with a visitor token:** the new user keeps the visitor's UUID, so their analytics stay one person. An invalid token, another tenant's, or a UUID that's already a user gets a random ID instead; the sign-up never fails over it. A `role` field is rejected.
 
 ### Catalog
@@ -236,7 +251,7 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 |---|---|---|
 | `auth.user.v1` | UserCreated, UserRoleChanged, UserDisabled | gateway (disabled accounts, stale tokens) |
 | `auth.session.v1` | SessionRevoked | gateway (rejects revoked sessions) |
-| `auth.tenant.v1` | TenantOnboarded, with the seed plan | product-service, campaign-service (seed by the planned IDs) |
+| `auth.tenant.v1` | TenantOnboarded, with the seed plan; TenantDeleted | product-service, campaign-service (seed by the planned IDs); on TenantDeleted every service deletes its own data, and the gateway rejects the tenant's tokens |
 | `product.v1` | ProductCreated, ProductUpdated, ProductDeactivated | campaign-service (its `products` table) |
 | `campaign.v1` | CampaignCreated, CampaignUpdated, CampaignProductAssociated, CampaignProductRemoved | analytics-service (`analytics.campaigns`) |
 | `analytics.<eventName>.v1` | AnalyticsEventRecorded (key = the client's `eventId`). Kept **14 days** | flink-streaming |
@@ -282,7 +297,8 @@ Compose and the Helm charts use a 35 s grace period.
 | `JWT_PUBLIC_KEY_FILE` / `JWT_PRIVATE_KEY_FILE` | all / auth-service | Verify / sign tokens |
 | `LOGIN_RATE_LIMIT` | auth-service | Attempts per IP and username per 15 minutes (default 10) |
 | `AUTH_/PRODUCT_/CAMPAIGN_/ANALYTICS_SERVICE_URL` | gateway | Where to route requests |
-| `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `EVENTS_RATE_LIMIT_PER_MINUTE`, `VISITOR_RATE_LIMIT_PER_MINUTE` | gateway | Allowed origins; per-IP limits (defaults 300, 120 and 10 per minute) |
+| `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `EVENTS_RATE_LIMIT_PER_MINUTE`, `VISITOR_RATE_LIMIT_PER_MINUTE` | gateway | Allowed origins; per-IP limits (defaults 300, 120 and 10 per minute). The SDK's endpoints (`/auth/visitor`, `/analytics/events`) accept any origin: they take bearer tokens, never cookies |
+| `SHOPPER_TOKEN_RATE_LIMIT_PER_MINUTE` | gateway | Shopper tokens per minute per API key (default 600); this route isn't limited per IP, since a vendor's backend calls from few IPs |
 | `PORT`, `LOG_LEVEL`, `SHUTDOWN_DRAIN_MS`, `SHUTDOWN_TIMEOUT_MS` | all | |
 | `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_STARTUP_MODE`, `CHECKPOINT_DIR`, … | flink-streaming | See [flink/README.md](flink/README.md) |
 | `PYICEBERG_CATALOG__ARCHIVE__*`, `ARCHIVE_S3_URL` | airflow | The archive's catalog and S3; see [airflow/README.md](airflow/README.md) |
@@ -354,11 +370,26 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 | Less frequent Kafka engine flushes | `infra/clickhouse/migrations/009_kafka_flush_interval.sql` |
 | Daily tables partitioned by month (for backfills) | `infra/clickhouse/migrations/010_monthly_daily_partitions.sql` |
 | Renamed to Basketline | Docker volumes are now `basketline_*`. Before the first start, copy the old ones across: `for v in pgdata chdata flink-checkpoints archive-data; do docker run --rm -v ecommerce-analytics_$v:/from -v basketline_$v:/to alpine cp -a /from/. /to/; done`. Then, once ClickHouse is up, run `infra/clickhouse/migrations/011_basketline_user.sql` and `init.sql` (the ClickHouse user is now `basketline`). Everyone signs in again |
+| Tenants can be deleted | `infra/clickhouse/migrations/012_deleted_tenants.sql`, then `init.sql` and `kafka.sql`. Rebuild auth-service and the gateway (`docker compose up -d --build`) for their migrations |
 | Analytics topics kept 14 days | `for t in $(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list \| grep '^analytics\..*\.v1$'); do docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name $t --add-config retention.ms=1209600000; done` |
 | Serving topics kept 48 h | `kafka-configs.sh … --entity-name serving.events.v1 --add-config retention.ms=172800000` (and the other two) |
 | Airflow and the Iceberg catalog on an old `pgdata` | `docker compose exec postgres psql -U postgres -c "CREATE ROLE airflow_svc LOGIN PASSWORD 'airflow_svc_dev'" -c "CREATE ROLE iceberg_svc LOGIN PASSWORD 'iceberg_svc_dev'" -c 'CREATE DATABASE airflow_db OWNER airflow_svc' -c 'CREATE DATABASE iceberg_catalog_db OWNER iceberg_svc' -c 'REVOKE CONNECT ON DATABASE airflow_db, iceberg_catalog_db FROM PUBLIC' -c 'GRANT CONNECT ON DATABASE airflow_db TO airflow_svc' -c 'GRANT CONNECT ON DATABASE iceberg_catalog_db TO iceberg_svc'` |
 | `auth_db` → `identity_db` | `docker compose stop auth-service`, then `docker compose exec postgres psql -U postgres -c 'ALTER DATABASE auth_db RENAME TO identity_db' -c 'ALTER ROLE auth_svc RENAME TO identity_svc' -c "ALTER ROLE identity_svc PASSWORD 'identity_svc_dev'"`, then `docker compose up -d --build auth-service` |
 | Unused `analytics_db` | `docker compose exec postgres psql -U postgres -c 'DROP DATABASE analytics_db'` |
+
+## Deleting a tenant
+
+`DELETE /accounts/:tenantId` (or **Details → Delete tenant** on the onboarding page) removes everything the tenant owns, for good:
+
+| Where | What | When |
+|---|---|---|
+| auth-service (`identity_db`) | users, sign-ins, API keys, shopper mappings, the account | in the request, then it publishes `TenantDeleted` on `auth.tenant.v1` |
+| gateway | records the tenant in `deleted_tenants`: its access, visitor and shopper tokens get 401 `TENANT_DELETED` | on the event |
+| product-service, campaign-service | products, campaigns and their links | on the event |
+| analytics-service (ClickHouse) | raw events, attributed baskets, sessions, the daily tables, the campaign projection; adds the tenant to `analytics.deleted_tenants`, which the Kafka queue views filter on, so events still in flight are dropped | on the event |
+| Airflow `tenant_purge` (daily 02:00 UTC) | the tenant's rows in the Iceberg archive and the backfill tables | next run, then marked done in `deleted_tenants` |
+
+The Kafka topics keep the tenant's past messages until they expire (14 days at most); nothing reads them back into a deleted tenant.
 
 ## Known limitations
 
@@ -373,6 +404,7 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 - **Tenants are isolated in the data, not the infrastructure.** Every row and query is scoped by tenant, but tenants share the services, databases and topics.
 - **The campaign projection starts from Kafka.** On a new or rebuilt ClickHouse volume, a campaign last changed more than 7 days ago is unknown until it changes again.
 - **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.
+- **Deleting a tenant is open to anyone,** like onboarding: typing the tenant's name is a guard against mistakes, not a permission. Put `DELETE /accounts/:tenantId` behind an admin role too.
 - **Not implemented:** `CampaignMetricUpdated` events, OpenAPI files, refresh tokens, a time-series endpoint.
 
 ## Code layout

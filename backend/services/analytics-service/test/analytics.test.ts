@@ -4,11 +4,12 @@ import path from 'node:path'
 import request from 'supertest'
 import { decodeJwt } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createLogger, createMemoryEventBus, type EventBus, type MemoryEventBus } from '@basketline/platform'
+import { createLogger, createMemoryEventBus, signShopperToken, type EventBus, type MemoryEventBus } from '@basketline/platform'
 import { createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildAnalyticsApp } from '../src/app.ts'
 import { createClickHouse, type ClickHouse } from '../src/clickhouse.ts'
 import { handleCampaignEvent } from '../src/events/campaign.consumer.ts'
+import { handleTenantEvent } from '../src/events/tenant.consumer.ts'
 
 const CLICKHOUSE = process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123'
 const HOUR = 3_600_000
@@ -176,6 +177,17 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect((await send([{ eventName: 'home_view' }], visitor, app, {})).body.error.details.errors).toEqual(
       expect.arrayContaining(['tenantId must be a UUID', 'userId must be a UUID', 'userType must be one of visitor, registered']),
     )
+  })
+
+  it("counts a vendor's shopper token as registered, and rejects a batch that claims otherwise", async () => {
+    const userId = randomUUID()
+    const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId, client: 'mobile' })).token}`
+    const before = bus.published.length
+    const res = await send([{ eventName: 'home_view' }], shopper, app, { tenantId: TENANT, userId, userType: 'registered' })
+    expect(res.status).toBe(200)
+    expect(bus.published[before]!.envelope.payload).toMatchObject({ userId, userType: 'registered', clientType: 'mobile', tenantId: TENANT })
+    const claimsVisitor = await send([{ eventName: 'home_view' }], shopper, app, { tenantId: TENANT, userId, userType: 'visitor' })
+    expect(claimsVisitor.status).toBe(403)
   })
 
   it('requires an access or visitor token', async () => {
@@ -723,6 +735,36 @@ describe('web, mobile and total', () => {
       })
       expect(await rows.json()).toEqual([{ rows: 1 }])
     }
+  })
+})
+
+describe('a deleted tenant (TenantDeleted)', () => {
+  it("deletes all of its analytics, keeps other tenants', and records it so Kafka replays can't bring it back", async () => {
+    const gone = randomUUID()
+    const campaignId = randomUUID()
+    await insert([
+      { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID(), tenant_id: gone },
+      { campaign_id: campaignId, event_name: 'click', user_id: randomUUID(), tenant_id: gone },
+      { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID() },
+    ])
+    await insertAttributed([{ click_event_id: randomUUID(), campaign_id: campaignId, tenant_id: gone }])
+    await insertSession({ campaigns: [campaignId], minutes: 5 })
+    await clickhouse.command({ query: `INSERT INTO sessions (session_id, tenant_id, user_id, user_type, session_start, last_event_time, events, impressions, clicks, add_to_carts, web, mobile, campaigns, clicked, added) VALUES (generateUUIDv4(), '${gone}', generateUUIDv4(), 'visitor', now64(3), now64(3), 1, 1, 0, 0, 1, 0, ['${campaignId}'], [], [])` })
+
+    const count = async (table: string, tenant: string) =>
+      Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM ${table} WHERE tenant_id = {t:UUID}`, query_params: { t: tenant }, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
+    const tables = ['events', 'attributed_baskets', 'sessions', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation', 'daily_campaign_sessions_aggregation']
+    for (const table of tables) expect(await count(table, gone), table).toBeGreaterThan(0)
+    const othersBefore = await Promise.all(tables.map((table) => count(table, TENANT)))
+
+    const envelope = { eventId: randomUUID(), eventType: 'TenantDeleted', eventVersion: 1, occurredAt: new Date().toISOString(), producer: 'auth-service', aggregateId: gone, aggregateVersion: 2, payload: { tenantId: gone, name: 'Gone Store', deletedAt: new Date().toISOString() } }
+    await handleTenantEvent(clickhouse, envelope)
+    await handleTenantEvent(clickhouse, envelope) // redelivered: harmless
+
+    for (const table of tables) expect(await count(table, gone), table).toBe(0)
+    expect(await Promise.all(tables.map((table) => count(table, TENANT)))).toEqual(othersBefore)
+    const recorded = await (await clickhouse.query({ query: 'SELECT name, archive_purged_at FROM deleted_tenants FINAL WHERE tenant_id = {t:UUID}', query_params: { t: gone }, format: 'JSONEachRow' })).json()
+    expect(recorded).toEqual([{ name: 'Gone Store', archive_purged_at: null }])
   })
 })
 

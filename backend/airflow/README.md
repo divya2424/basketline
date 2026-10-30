@@ -23,6 +23,7 @@ dags/                  scheduling only: which job, which day, retries
   archive_export.py      nightly 01:00 UTC: exports day D-6 of each table
   archive_maintenance.py monthly, AWS only: Athena OPTIMIZE + VACUUM
   history_backfill.py    on demand: recompute closed months of the daily tables from the archive
+  tenant_purge.py        daily 02:00 UTC: delete deleted tenants' rows from the archive (jobs/purge_tenants.py)
 jobs/                  the work, as plain scripts that also run without Airflow
   export_archive.py
   backfill/              spark_backfill.py (Spark) and load_backfill.py (ClickHouse staging and swap)

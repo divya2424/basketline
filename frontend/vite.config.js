@@ -1,8 +1,11 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // The storefront uses the Basketline SDK from its source (../sdk), as vendors use the published package.
+  resolve: { alias: { '@basketline/sdk': fileURLToPath(new URL('../sdk/src/index.ts', import.meta.url)) } },
   test: {
     environment: 'jsdom',
     globals: true,

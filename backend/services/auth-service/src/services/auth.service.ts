@@ -44,7 +44,7 @@ export function createAuthService({
   async function visitorIdFor(token: string, tenantId: string): Promise<string | undefined> {
     try {
       const visitor = await verifyVisitorToken(token, publicKey)
-      return visitor.tid === tenantId ? visitor.sub : undefined
+      return visitor.tid === tenantId && visitor.kind === 'visitor' ? visitor.sub : undefined
     } catch {
       return undefined
     }

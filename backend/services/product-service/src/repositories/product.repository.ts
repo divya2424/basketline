@@ -68,3 +68,9 @@ export async function insertProductIfAbsent(
   const [inserted] = await db.insert(products).values(product).onConflictDoNothing({ target: products.id }).returning()
   return inserted ?? null
 }
+
+/** Every product of a deleted tenant. */
+export async function deleteTenantProducts(db: DbOrTx, tenantId: string): Promise<number> {
+  const deleted = await db.delete(products).where(eq(products.tenantId, tenantId)).returning({ id: products.id })
+  return deleted.length
+}

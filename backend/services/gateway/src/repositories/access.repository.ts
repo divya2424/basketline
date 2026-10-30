@@ -1,6 +1,6 @@
 import { eq, lt, sql } from 'drizzle-orm'
 import type { DbOrTx } from '../db/client.ts'
-import { revokedSessions, userAccessState } from '../db/schema.ts'
+import { deletedTenants, revokedSessions, userAccessState } from '../db/schema.ts'
 
 export async function isSessionRevoked(db: DbOrTx, sessionId: string): Promise<boolean> {
   const [row] = await db.select({ sessionId: revokedSessions.sessionId }).from(revokedSessions).where(eq(revokedSessions.sessionId, sessionId))
@@ -42,4 +42,13 @@ export async function setTokensNotBefore(db: DbOrTx, userId: string, at: string,
 export async function deleteExpiredRevocations(db: DbOrTx): Promise<number> {
   const deleted = await db.delete(revokedSessions).where(lt(revokedSessions.expiresAt, sql`now()`)).returning({ id: revokedSessions.sessionId })
   return deleted.length
+}
+
+export async function isTenantDeleted(db: DbOrTx, tenantId: string): Promise<boolean> {
+  const [row] = await db.select({ tenantId: deletedTenants.tenantId }).from(deletedTenants).where(eq(deletedTenants.tenantId, tenantId))
+  return row !== undefined
+}
+
+export async function insertDeletedTenant(db: DbOrTx, tenant: { tenantId: string; deletedAt: string }) {
+  await db.insert(deletedTenants).values({ tenantId: tenant.tenantId, deletedAt: new Date(tenant.deletedAt) }).onConflictDoNothing()
 }

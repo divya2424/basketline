@@ -75,6 +75,16 @@ export interface TenantOnboardedPayload {
   }
 }
 
+/**
+ * A tenant was deleted, with all of its data: each service that holds some of it
+ * deletes it when this arrives (keyed by tenant ID, like TenantOnboarded).
+ */
+export interface TenantDeletedPayload {
+  tenantId: string
+  name: string
+  deletedAt: string
+}
+
 /** Payload of each event type. */
 export interface EventPayloads {
   UserCreated: { userId: string; username: string; role: Role; isActive: boolean }
@@ -82,6 +92,7 @@ export interface EventPayloads {
   UserDisabled: { userId: string; disabledAt: string }
   SessionRevoked: { sessionId: string; userId: string; revokedAt: string; expiresAt: string }
   TenantOnboarded: TenantOnboardedPayload
+  TenantDeleted: TenantDeletedPayload
   ProductCreated: ProductState
   ProductUpdated: ProductState
   ProductDeactivated: { productId: string; tenantId: string; deactivatedAt: string; deactivatedBy: string }
@@ -100,6 +111,7 @@ export const EVENTS: Record<EventType, { topic: string; version: number }> = {
   UserDisabled: { topic: TOPICS.users, version: 1 },
   SessionRevoked: { topic: TOPICS.sessions, version: 1 },
   TenantOnboarded: { topic: TOPICS.tenants, version: 1 },
+  TenantDeleted: { topic: TOPICS.tenants, version: 1 },
   ProductCreated: { topic: TOPICS.products, version: 1 },
   ProductUpdated: { topic: TOPICS.products, version: 1 },
   ProductDeactivated: { topic: TOPICS.products, version: 1 },

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
 import { event, writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
-import { insertAssociation, insertCampaignIfAbsent } from '../repositories/campaign.repository.ts'
+import { deleteTenantCampaigns, insertAssociation, insertCampaignIfAbsent } from '../repositories/campaign.repository.ts'
 import { stateEvent } from '../services/campaign.service.ts'
 
 const TITLES = ['Launch Deals', 'Weekend Picks']
@@ -47,4 +47,11 @@ export function createTenantSeeder({ db, publish }: { db: Db; publish: PublishEv
     })
     await publish(events)
   }
+}
+
+/** A deleted tenant (TenantDeleted): its campaigns, their products and the local product copy go, in one transaction. */
+export async function handleTenantDeleted(db: Db, envelope: EventEnvelope): Promise<void> {
+  if (envelope.eventType !== 'TenantDeleted') return
+  const { tenantId } = envelope.payload as EventPayloads['TenantDeleted']
+  await db.transaction((tx) => deleteTenantCampaigns(tx, tenantId))
 }

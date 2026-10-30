@@ -35,8 +35,10 @@ SETTINGS kafka_broker_list = 'kafka:19092',
          kafka_format = 'JSONEachRow',
          kafka_flush_interval_ms = 15000;
 
+-- A deleted tenant's rows are dropped (analytics.deleted_tenants), in case Kafka still has them.
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.events_queue_mv TO analytics.events
-AS SELECT * FROM analytics.events_queue;
+AS SELECT * FROM analytics.events_queue
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);
 
 CREATE TABLE IF NOT EXISTS analytics.attributed_baskets_queue
 (
@@ -59,7 +61,8 @@ SETTINGS kafka_broker_list = 'kafka:19092',
          kafka_flush_interval_ms = 15000;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.attributed_baskets_queue_mv TO analytics.attributed_baskets
-AS SELECT * FROM analytics.attributed_baskets_queue;
+AS SELECT * FROM analytics.attributed_baskets_queue
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);
 
 CREATE TABLE IF NOT EXISTS analytics.sessions_queue
 (
@@ -88,4 +91,5 @@ SETTINGS kafka_broker_list = 'kafka:19092',
 -- session_id: the same (tenant, user, start) always gives the same ID.
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.sessions_queue_mv TO analytics.sessions
 AS SELECT reinterpretAsUUID(MD5(concat(toString(tenant_id), toString(user_id), toString(session_start)))) AS session_id, *
-FROM analytics.sessions_queue;
+FROM analytics.sessions_queue
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);

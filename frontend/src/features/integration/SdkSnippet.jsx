@@ -1,7 +1,11 @@
+import { API_BASE_URL } from '../../api/httpClient.js'
 import { CopyField } from './KeyReveal.jsx'
 
-/** The few lines a vendor adds to their site, with their store's tenant ID filled in. */
-export function SdkSnippet({ tenantId, apiUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.basketline.io/api/v1' }) {
+/** The API this dashboard talks to, as an absolute URL: the one a vendor's site must call too. */
+const dashboardApiUrl = () => new URL(API_BASE_URL || '/', window.location.href).href.replace(/\/+$/, '')
+
+/** The few lines a vendor adds to their site, with their store's tenant ID and the API filled in. */
+export function SdkSnippet({ tenantId, apiUrl = dashboardApiUrl() }) {
   const code = `import { createBasketline } from '@divya2424/basketline-sdk'
 
 const bl = createBasketline({

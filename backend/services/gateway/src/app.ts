@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import cors, { type CorsOptions } from 'cors'
-import { rateLimit } from 'express-rate-limit'
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit'
 import type { CryptoKey } from 'jose'
 import { createBaseApp, createHealth, errorHandler, notFoundHandler, pingDb, type Health, type Logger } from '@basketline/platform'
 import type { Db } from './db/client.ts'
@@ -68,8 +68,9 @@ export function buildGateway({
       limit: shopperTokenRateLimitPerMinute,
       standardHeaders: 'draft-8',
       legacyHeaders: false,
-      // A hash, so the key itself isn't kept in memory; requests without one share a bucket per IP.
-      keyGenerator: (req) => createHash('sha256').update(req.headers.authorization ?? `ip:${req.ip}`).digest('hex'),
+      // A hash, so the key itself isn't kept in memory; requests without one share a bucket per
+      // IP (an IPv6 address by its /56, so a client can't get around it by changing addresses).
+      keyGenerator: (req) => createHash('sha256').update(req.headers.authorization ?? `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`).digest('hex'),
     }),
   )
   app.use('/api/v1/analytics/events', rateLimit({ windowMs: 60_000, limit: Math.min(eventsRateLimitPerMinute, rateLimitPerMinute), standardHeaders: 'draft-8', legacyHeaders: false }))

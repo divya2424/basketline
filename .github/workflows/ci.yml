@@ -1,0 +1,51 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+  # @divya2424/basketline-kafka and -sdk come from GitHub Packages. Each package grants
+  # this repo read access (package settings → Manage Actions access).
+  packages: read
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm, at the version package.json's packageManager pins.
+      - run: corepack enable pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: '@divya2424'
+      - run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm test
+      # Lints first (prebuild).
+      - run: pnpm build
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: '@divya2424'
+      # The integration tests use these, on the ports docker-compose.yml publishes.
+      - run: docker compose up -d --wait postgres kafka clickhouse
+      - run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Lint, typecheck, architecture check, unit and integration tests.
+      - run: pnpm verify

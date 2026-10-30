@@ -1,4 +1,4 @@
-import { unauthorized, type AccessTokenClaims, type Logger } from '@ecommerce-analytics/platform'
+import { unauthorized, type AccessTokenClaims, type Logger } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
 import { deleteExpiredRevocations, findUserAccessState, isSessionRevoked } from '../repositories/access.repository.ts'
 

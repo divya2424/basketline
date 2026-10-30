@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import type { EventEnvelope, EventPayloads } from '@ecommerce-analytics/contracts'
-import { writeAudit, type NewEvent, type PublishEvents } from '@ecommerce-analytics/platform'
+import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
+import { writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
 import { insertProductIfAbsent } from '../repositories/product.repository.ts'
 import { SAMPLE_CATALOG } from '../seed/sampleCatalog.ts'

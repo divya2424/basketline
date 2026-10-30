@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { createDb, runMigrations, type Database, type Logger, type Transaction } from '@ecommerce-analytics/platform'
+import { createDb, runMigrations, type Database, type Logger, type Transaction } from '@basketline/platform'
 import * as schema from './schema.ts'
 
 export const createCampaignDb = (url: string, logger?: Logger) => createDb(url, schema, logger)

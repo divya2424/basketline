@@ -5,7 +5,7 @@
 -- again. Their consumer groups keep their committed offsets, so they resume
 -- where they stopped:
 --
---   CH="docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery"
+--   CH="docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery"
 --   $CH < infra/clickhouse/migrations/009_kafka_flush_interval.sql
 --   $CH < infra/clickhouse/kafka.sql
 

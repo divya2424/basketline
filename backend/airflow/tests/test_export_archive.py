@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Before importing PyIceberg, which reads its configuration from the environment then.
 for name, value in {
-    "CLICKHOUSE_URL": "http://ecommerce_analytics:ecommerce_analytics_dev@localhost:8123/analytics",
+    "CLICKHOUSE_URL": "http://basketline:basketline_dev@localhost:8123/analytics",
     "PYICEBERG_CATALOG__ARCHIVE__TYPE": "sql",
     "PYICEBERG_CATALOG__ARCHIVE__URI": "postgresql+psycopg2://iceberg_svc:iceberg_svc_dev@localhost:5432/iceberg_catalog_db",
     "PYICEBERG_CATALOG__ARCHIVE__WAREHOUSE": "s3://ad-insights-archive",

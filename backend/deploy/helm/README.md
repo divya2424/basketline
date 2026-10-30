@@ -1,15 +1,15 @@
-# Kubernetes deployment (Helm)
+# Basketline: Kubernetes deployment (Helm)
 
 There is one Helm chart per service, and each service is its **own Helm release**. You can deploy, upgrade or roll back any service at any time without touching the others. [helmfile](https://github.com/helmfile/helmfile) deploys all of them, or any subset, with one command.
 
 ```
 deploy/helm/
-  helmfile.yaml.gotmpl      the seven releases (namespace ecommerce-analytics)
+  helmfile.yaml.gotmpl      the seven releases (namespace basketline)
   environments/local/       per-release values for one environment (copy it for staging, production)
   charts/
-    ecommerce-analytics-lib/         library chart: the templates every service chart shares
+    basketline-lib/         library chart: the templates every service chart shares
     gateway/  auth-service/  product-service/  campaign-service/  analytics-service/  flink-streaming/
-      Chart.yaml            the chart's version and its dependency on ecommerce-analytics-lib
+      Chart.yaml            the chart's version and its dependency on basketline-lib
       values.yaml           everything you can set for this service
       templates/manifests.yaml
 ```
@@ -22,9 +22,9 @@ The releases don't wait for each other. A service whose database, Kafka or Click
 - **Images in a registry the cluster can pull from.** From `backend/`:
 
   ```bash
-  docker build --build-arg SERVICE=gateway -t <registry>/ecommerce-analytics/gateway:<version> .   # repeat per Node service
-  docker build -t <registry>/ecommerce-analytics/flink-streaming:<version> flink
-  docker build -t <registry>/ecommerce-analytics/airflow:<version> airflow
+  docker build --build-arg SERVICE=gateway -t <registry>/basketline/gateway:<version> .   # repeat per Node service
+  docker build -t <registry>/basketline/flink-streaming:<version> flink
+  docker build -t <registry>/basketline/airflow:<version> airflow
   ```
 
 - **Postgres, Kafka and ClickHouse** must already exist; the charts don't install them. Postgres needs the roles and databases from `infra/postgres/init.sql`, and ClickHouse needs `infra/clickhouse/init.sql` and `infra/clickhouse/kafka.sql` (which reads Kafka at `kafka:19092`). The charts expect the hosts `postgres`, `kafka:19092` and `clickhouse` (the compose names). To use other hosts, set `config.KAFKA_BROKERS`, `config.KAFKA_BOOTSTRAP_SERVERS` (Flink), the connection strings under `secrets`, and `kafka_broker_list` in `kafka.sql`.
@@ -34,8 +34,8 @@ The releases don't wait for each other. A service whose database, Kafka or Click
 All services verify tokens with the same key pair, so it lives in one Secret that no chart owns. That way no release depends on another release to create it:
 
 ```bash
-kubectl create namespace ecommerce-analytics
-kubectl -n ecommerce-analytics create secret generic ecommerce-analytics-jwt \
+kubectl create namespace basketline
+kubectl -n basketline create secret generic basketline-jwt \
   --from-file=jwt-public.pem=keys/jwt-public.pem \
   --from-file=jwt-private.pem=keys/jwt-private.pem      # from backend/; `npm run keys` creates them
 ```
@@ -54,23 +54,23 @@ helmfile -e local -l name=gateway apply --set image.tag=1.4.2            # a new
 helmfile -e local -l name=gateway diff                   # what an apply would change
 ```
 
-`apply` installs or upgrades and waits for the pods to be ready. If they never become ready, it rolls that release back. The release for each name has the same name, so `helm -n ecommerce-analytics history gateway` and `helm -n ecommerce-analytics rollback gateway` work as usual.
+`apply` installs or upgrades and waits for the pods to be ready. If they never become ready, it rolls that release back. The release for each name has the same name, so `helm -n basketline history gateway` and `helm -n basketline rollback gateway` work as usual.
 
-To remove one service, run `helmfile -e local -l name=gateway destroy`, or `helm -n ecommerce-analytics uninstall gateway`.
+To remove one service, run `helmfile -e local -l name=gateway destroy`, or `helm -n basketline uninstall gateway`.
 
 ### With Helm only
 
 ```bash
-helm dependency build charts/gateway       # packages ecommerce-analytics-lib into charts/gateway/charts/
-helm upgrade --install gateway charts/gateway -n ecommerce-analytics \
+helm dependency build charts/gateway       # packages basketline-lib into charts/gateway/charts/
+helm upgrade --install gateway charts/gateway -n basketline \
   -f environments/local/gateway.yaml --wait --atomic
 ```
 
-Run `helm dependency build` again after changing `charts/ecommerce-analytics-lib`. helmfile does this on every `apply`.
+Run `helm dependency build` again after changing `charts/basketline-lib`. helmfile does this on every `apply`.
 
 ## Environments
 
-An environment is a folder of values files, one per release, applied on top of the chart's `values.yaml`. The `local` environment uses the `docker compose build` images (`ecommerce-analytics-<service>:latest`), one replica each, and the compose development credentials. Its target is a local cluster that can reach the compose infrastructure under the names above.
+An environment is a folder of values files, one per release, applied on top of the chart's `values.yaml`. The `local` environment uses the `docker compose build` images (`basketline-<service>:latest`), one replica each, and the compose development credentials. Its target is a local cluster that can reach the compose infrastructure under the names above.
 
 To add production, copy the folder and register it in `helmfile.yaml.gotmpl` under `environments:` (`production: {}`). Then, in each file:
 - set `image.repository` and `image.tag`;

@@ -1,6 +1,6 @@
 # Images from `docker compose build` (backend/), loaded into the local cluster.
 image:
-  repository: ecommerce-analytics-flink-streaming
+  repository: basketline-flink-streaming
   tag: latest
 persistence:
   size: 1Gi

@@ -1,4 +1,4 @@
-import type { EventEnvelope, EventPayloads } from '@ecommerce-analytics/contracts'
+import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
 import type { DbOrTx } from '../db/client.ts'
 import { markProductInactive, upsertProductState } from '../repositories/product.repository.ts'
 

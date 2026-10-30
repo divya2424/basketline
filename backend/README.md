@@ -1,6 +1,6 @@
-# E-commerce Analytics: backend
+# Basketline: backend
 
-Five Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHouse for the metrics, and Airflow for the archive and backfills. Services talk to each other only through **Kafka** events; there are no service-to-service HTTP calls.
+The backend of [Basketline](../README.md): five Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHouse for the metrics, and Airflow for the archive and backfills. Services talk to each other only through **Kafka** events; there are no service-to-service HTTP calls.
 
 **Contents:**
 - Getting started: [Services and URLs](#services-and-urls) · [Run it](#run-it) · [Test it](#test-it)
@@ -33,7 +33,7 @@ Five Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHou
 
 ## Services and URLs
 
-Everything below runs with `docker compose up -d --build`. The development credentials are for local use only.
+Everything below runs with `docker compose up -d --build`, as the Compose project `basketline`: containers are named `basketline-<service>-1` (e.g. `basketline-gateway-1`), and data lives in the `basketline_*` volumes. The development credentials are for local use only.
 
 | Service | URL (from your machine) | Inside Compose | Notes |
 |---|---|---|---|
@@ -44,7 +44,7 @@ Everything below runs with `docker compose up -d --build`. The development crede
 | analytics-service | not published | `analytics-service:4004` | Event ingestion and `/ad` metrics |
 | **Flink** web UI | http://localhost:8081 | `flink-streaming:8081` | Job graph, checkpoints, backpressure |
 | **Airflow** UI | http://localhost:8082 | `airflow:8080` | DAGs `archive_export`, `history_backfill`; no login (local only) |
-| **ClickHouse** HTTP / SQL console | http://localhost:8123 · http://localhost:8123/play | `clickhouse:8123` | User `ecommerce_analytics`, password `ecommerce_analytics_dev`, database `analytics` |
+| **ClickHouse** HTTP / SQL console | http://localhost:8123 · http://localhost:8123/play | `clickhouse:8123` | User `basketline`, password `basketline_dev`, database `analytics` |
 | **Kafka** | `localhost:9092` | `kafka:19092` | No UI; use the CLI in the container (see [Operations](#operations)) |
 | **Postgres** | `localhost:5432` | `postgres:5432` | Superuser `postgres` / `postgres`; one database and login per service (`infra/postgres/init.sql`) |
 | **S3** for the archive (SeaweedFS) | http://localhost:8333 · UI http://localhost:23646 | `archive-storage:8333` | Bucket `ad-insights-archive`, keys `archive` / `archive_dev` |
@@ -275,7 +275,7 @@ Compose and the Helm charts use a 35 s grace period.
 | Variable | Used by | Purpose |
 |---|---|---|
 | `DATABASE_URL` | all but analytics-service | The service's own database |
-| `CLICKHOUSE_URL` | analytics-service, airflow | e.g. `http://ecommerce_analytics:ecommerce_analytics_dev@clickhouse:8123/analytics` |
+| `CLICKHOUSE_URL` | analytics-service, airflow | e.g. `http://basketline:basketline_dev@clickhouse:8123/analytics` |
 | `METRICS_CACHE_MS` | analytics-service | How long an `/ad` count is reused (default 15000; 0 turns it off) |
 | `KAFKA_BROKERS` | all | e.g. `kafka:19092` |
 | `KAFKA_TOPIC_PREFIX`, `KAFKA_REPLICATION` | all | Environment isolation; the replication factor of created topics (default 1) |
@@ -305,7 +305,7 @@ Consumer groups: `campaign-service`, `gateway`, `analytics-service`. When the ev
 ClickHouse holds only what was derived from Kafka, so it can be rebuilt from the topics, for example after a schema change. Only what Kafka still keeps comes back (14 days of analytics events).
 
 ```bash
-ch() { docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery "$@"; }
+ch() { docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery "$@"; }
 kg() { docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "$@" < /dev/null; }
 docker compose stop flink-streaming analytics-service
 ch -q "DROP DATABASE analytics SYNC" < /dev/null
@@ -335,7 +335,7 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 
 | What | How |
 |---|---|
-| ClickHouse | http://localhost:8123/play, or `docker compose exec clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev` |
+| ClickHouse | http://localhost:8123/play, or `docker compose exec clickhouse clickhouse-client --user basketline --password basketline_dev` |
 | identity_db | `docker compose exec postgres psql -U postgres -d identity_db`. Row-level security hides other tenants' users; `postgres` bypasses it, or run `SELECT set_config('app.tenant_id', '<uuid>', false)` first |
 | Kafka topics | `docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list` |
 | The archive | http://localhost:23646, or Athena/Trino on AWS ([airflow/README.md](airflow/README.md)) |
@@ -353,6 +353,7 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 | Raw tables by day, kept 14 days | `infra/clickhouse/migrations/008_raw_daily_partitions.sql` |
 | Less frequent Kafka engine flushes | `infra/clickhouse/migrations/009_kafka_flush_interval.sql` |
 | Daily tables partitioned by month (for backfills) | `infra/clickhouse/migrations/010_monthly_daily_partitions.sql` |
+| Renamed to Basketline | Docker volumes are now `basketline_*`. Before the first start, copy the old ones across: `for v in pgdata chdata flink-checkpoints archive-data; do docker run --rm -v ecommerce-analytics_$v:/from -v basketline_$v:/to alpine cp -a /from/. /to/; done`. Then, once ClickHouse is up, run `infra/clickhouse/migrations/011_basketline_user.sql` and `init.sql` (the ClickHouse user is now `basketline`). Everyone signs in again |
 | Analytics topics kept 14 days | `for t in $(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list \| grep '^analytics\..*\.v1$'); do docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name $t --add-config retention.ms=1209600000; done` |
 | Serving topics kept 48 h | `kafka-configs.sh … --entity-name serving.events.v1 --add-config retention.ms=172800000` (and the other two) |
 | Airflow and the Iceberg catalog on an old `pgdata` | `docker compose exec postgres psql -U postgres -c "CREATE ROLE airflow_svc LOGIN PASSWORD 'airflow_svc_dev'" -c "CREATE ROLE iceberg_svc LOGIN PASSWORD 'iceberg_svc_dev'" -c 'CREATE DATABASE airflow_db OWNER airflow_svc' -c 'CREATE DATABASE iceberg_catalog_db OWNER iceberg_svc' -c 'REVOKE CONNECT ON DATABASE airflow_db, iceberg_catalog_db FROM PUBLIC' -c 'GRANT CONNECT ON DATABASE airflow_db TO airflow_svc' -c 'GRANT CONNECT ON DATABASE iceberg_catalog_db TO iceberg_svc'` |
@@ -410,7 +411,7 @@ To change a service's tables:
 
 ```bash
 # edit services/<service>/src/db/schema.ts, then:
-npm run db:generate -w @ecommerce-analytics/<service>   # writes services/<service>/drizzle/<n>.sql
+npm run db:generate -w @basketline/<service>   # writes services/<service>/drizzle/<n>.sql
 npm run db:generate                                      # or every service
 # commit the file; it is applied when the service starts
 ```

@@ -3,8 +3,8 @@ A Deployment, or a single-identity StatefulSet when .Values.persistence is set:
 a StatefulSet never runs the old and new pod at the same time (a Deployment
 can, during a node drain), which a checkpoint directory needs.
 */}}
-{{- define "ecommerce-analytics.workload" -}}
-{{- $fullname := include "ecommerce-analytics.fullname" . -}}
+{{- define "basketline.workload" -}}
+{{- $fullname := include "basketline.fullname" . -}}
 {{- $persistence := .Values.persistence -}}
 {{- $jwt := .Values.jwt -}}
 {{- $hasSecret := or .Values.secrets .Values.existingSecret -}}
@@ -17,7 +17,7 @@ kind: {{ ternary "StatefulSet" "Deployment" (not (empty $persistence)) }}
 metadata:
   name: {{ $fullname }}
   labels:
-    {{- include "ecommerce-analytics.labels" . | nindent 4 }}
+    {{- include "basketline.labels" . | nindent 4 }}
 spec:
   {{- if not (.Values.autoscaling).enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -25,7 +25,7 @@ spec:
   revisionHistoryLimit: 5
   selector:
     matchLabels:
-      {{- include "ecommerce-analytics.selectorLabels" . | nindent 6 }}
+      {{- include "basketline.selectorLabels" . | nindent 6 }}
   {{- if $persistence }}
   serviceName: {{ $fullname }}
   {{- else }}
@@ -39,7 +39,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "ecommerce-analytics.selectorLabels" . | nindent 8 }}
+        {{- include "basketline.selectorLabels" . | nindent 8 }}
       annotations:
         # Restart pods when the chart's config or secrets change.
         checksum/config: {{ toJson .Values.config | sha256sum }}
@@ -69,7 +69,7 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              {{- include "ecommerce-analytics.selectorLabels" . | nindent 14 }}
+              {{- include "basketline.selectorLabels" . | nindent 14 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -83,8 +83,8 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: {{ include "ecommerce-analytics.name" . }}
-          image: "{{ .Values.image.repository }}:{{ include "ecommerce-analytics.imageTag" . }}"
+        - name: {{ include "basketline.name" . }}
+          image: "{{ .Values.image.repository }}:{{ include "basketline.imageTag" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -114,14 +114,14 @@ spec:
             {{- end }}
             {{- if $hasSecret }}
             - secretRef:
-                name: {{ include "ecommerce-analytics.secretName" . }}
+                name: {{ include "basketline.secretName" . }}
             {{- end }}
           {{- end }}
           {{- with .Values.port }}
           ports:
             - name: http
               containerPort: {{ . }}
-          # The probes every service gets from @ecommerce-analytics/platform (packages/platform/src/health.ts).
+          # The probes every service gets from @basketline/platform (packages/platform/src/health.ts).
           startupProbe:
             httpGet: { path: /health/startup, port: http }
             periodSeconds: 5

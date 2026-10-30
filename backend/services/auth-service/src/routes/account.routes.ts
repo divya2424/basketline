@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { validate } from '@ecommerce-analytics/platform'
+import { validate } from '@basketline/platform'
 import type { AccountController } from '../controllers/account.controller.ts'
 import { validateOnboard } from '../validators/account.validator.ts'
 

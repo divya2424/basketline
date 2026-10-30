@@ -12,7 +12,7 @@ import {
   type AccessTokenClaims,
   type Logger,
   type PublishEvents,
-} from '@ecommerce-analytics/platform'
+} from '@basketline/platform'
 import { withTenant, type Db } from '../db/client.ts'
 import { findAccount } from '../repositories/account.repository.ts'
 import { endSession, findSessionState, insertSession, listSessions } from '../repositories/session.repository.ts'

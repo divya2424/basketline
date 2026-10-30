@@ -2,7 +2,7 @@
 # with the image from `docker compose build airflow`: the DAGs and jobs are baked in.
 # Every component and task pod uses it.
 airflowVersion: "3.3.2"
-defaultAirflowRepository: ecommerce-analytics-airflow
+defaultAirflowRepository: basketline-airflow
 defaultAirflowTag: latest
 
 # Each task runs in its own pod, so nothing but the scheduler and API server
@@ -32,7 +32,7 @@ data:
 # (PYICEBERG_CATALOG__ARCHIVE__TYPE=glue, no S3 endpoint or keys) and an IAM
 # role for the service account instead of keys (airflow/README.md).
 env:
-  - { name: CLICKHOUSE_URL, value: "http://ecommerce_analytics:ecommerce_analytics_dev@clickhouse:8123/analytics" }
+  - { name: CLICKHOUSE_URL, value: "http://basketline:basketline_dev@clickhouse:8123/analytics" }
   - { name: PYICEBERG_CATALOG__ARCHIVE__TYPE, value: sql }
   - { name: PYICEBERG_CATALOG__ARCHIVE__URI, value: "postgresql+psycopg2://iceberg_svc:iceberg_svc_dev@postgres:5432/iceberg_catalog_db" }
   - { name: PYICEBERG_CATALOG__ARCHIVE__WAREHOUSE, value: "s3://ad-insights-archive" }

@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { ACCESS_TOKEN_TTL_SECONDS, badRequest, page, readPagination, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@ecommerce-analytics/platform'
+import { ACCESS_TOKEN_TTL_SECONDS, badRequest, page, readPagination, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
 import type { Session } from '../repositories/session.repository.ts'
 import type { User } from '../repositories/user.repository.ts'
 import type { AuthService } from '../services/auth.service.ts'

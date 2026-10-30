@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { importPKCS8, importSPKI, jwtVerify, SignJWT, type CryptoKey } from 'jose'
-import { CLIENT_TYPES, ROLES, type ClientType, type Role, type UserType } from '@ecommerce-analytics/contracts'
+import { CLIENT_TYPES, ROLES, type ClientType, type Role, type UserType } from '@basketline/contracts'
 import { isUuid } from './checks.ts'
 
 export const JWT_ALGORITHM = 'ES256'
-export const JWT_ISSUER = 'ecommerce-analytics-auth'
-export const JWT_AUDIENCE = 'ecommerce-analytics-api'
+export const JWT_ISSUER = 'basketline-auth'
+export const JWT_AUDIENCE = 'basketline-api'
 export const ACCESS_TOKEN_TTL_SECONDS = 30 * 60
 /** Visitor tokens are only accepted by event ingestion: any other API rejects this audience. */
-export const VISITOR_AUDIENCE = 'ecommerce-analytics-events'
+export const VISITOR_AUDIENCE = 'basketline-events'
 export const VISITOR_TOKEN_TTL_SECONDS = 30 * 60
 
 export interface AccessTokenClaims {

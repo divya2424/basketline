@@ -1,5 +1,5 @@
 image:
-  repository: ecommerce-analytics/gateway
+  repository: basketline/gateway
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -41,7 +41,7 @@ secrets:
 existingSecret: ""
 
 jwt:
-  secretName: ecommerce-analytics-jwt
+  secretName: basketline-jwt
   privateKey: false
 
 resources:

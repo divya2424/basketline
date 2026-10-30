@@ -6,8 +6,8 @@
  *   node src/cli.ts republish
  */
 import { parseArgs } from 'node:util'
-import { TOPICS } from '@ecommerce-analytics/contracts'
-import { closeDb, createBusFromEnv, createEventPublisher, createLogger, requireEnv } from '@ecommerce-analytics/platform'
+import { TOPICS } from '@basketline/contracts'
+import { closeDb, createBusFromEnv, createEventPublisher, createLogger, requireEnv } from '@basketline/platform'
 import { createProductDb, migrateProductDb } from './db/client.ts'
 import { listAllProducts } from './repositories/product.repository.ts'
 import { stateEvent } from './services/product.service.ts'

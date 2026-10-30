@@ -1,5 +1,0 @@
-apiVersion: v2
-name: ecommerce-analytics-lib
-description: Templates shared by the E-commerce Analytics service charts. Not installable on its own.
-type: library
-version: 0.1.0

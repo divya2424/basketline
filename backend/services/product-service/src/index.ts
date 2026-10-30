@@ -1,4 +1,4 @@
-import { TOPICS } from '@ecommerce-analytics/contracts'
+import { TOPICS } from '@basketline/contracts'
 import {
   closeDb,
   createBusFromEnv,
@@ -10,7 +10,7 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
-} from '@ecommerce-analytics/platform'
+} from '@basketline/platform'
 import { buildProductApp } from './app.ts'
 import { createProductDb, migrateProductDb } from './db/client.ts'
 import { createTenantSeeder } from './events/tenant.consumer.ts'

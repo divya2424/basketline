@@ -1,4 +1,4 @@
-import { isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@ecommerce-analytics/platform'
+import { isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
 
 export interface RegisterInput {
   username: string

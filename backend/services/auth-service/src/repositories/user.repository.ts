@@ -1,5 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm'
-import type { Role } from '@ecommerce-analytics/contracts'
+import type { Role } from '@basketline/contracts'
 import type { DbOrTx } from '../db/client.ts'
 import { users } from '../db/schema.ts'
 

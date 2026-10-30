@@ -1,5 +1,5 @@
 {
-  "name": "@ecommerce-analytics/auth-service",
+  "name": "@basketline/auth-service",
   "version": "1.0.0",
   "private": true,
   "type": "module",

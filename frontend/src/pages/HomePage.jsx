@@ -14,7 +14,7 @@ export function HomePage() {
   return (
     <AnalyticsWrapper featureName="home" pageName="home">
       <div className="container page">
-        <h1 className="visually-hidden">E-commerce Analytics storefront</h1>
+        <h1 className="visually-hidden">Basketline storefront</h1>
         {catalog.status === 'loading' ? (
           <div className="page-loading" role="status">
             <Spinner size="lg" />

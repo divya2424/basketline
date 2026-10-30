@@ -1,4 +1,4 @@
-# flink: Kafka → Flink SQL → Kafka → ClickHouse
+# Basketline: Flink job (Kafka → Flink SQL → Kafka → ClickHouse)
 
 A Flink SQL job ([`sql/`](sql/)) that reads every analytics topic analytics-service publishes to (`analytics.<eventName>.v1`) and writes three topics, which ClickHouse loads ([`../infra/clickhouse/kafka.sql`](../infra/clickhouse/kafka.sql)):
 
@@ -126,7 +126,7 @@ Flink writes each match (one row per basket addition and candidate click). **The
 ```bash
 docker compose up -d --build flink-streaming
 docker compose logs -f flink-streaming        # "Job ID: …", then "Restoring from …" after a restart
-docker compose exec clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev \
+docker compose exec clickhouse clickhouse-client --user basketline --password basketline_dev \
   --query "SELECT count() FROM analytics.attributed_baskets"
 ```
 

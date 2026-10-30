@@ -6,8 +6,8 @@
  * Open to anyone (see the README's warning): for demos, not production tenants.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantOnboardedPayload } from '@ecommerce-analytics/contracts'
-import { event, type NewEvent, type PublishEvents } from '@ecommerce-analytics/platform'
+import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantOnboardedPayload } from '@basketline/contracts'
+import { event, type NewEvent, type PublishEvents } from '@basketline/platform'
 import { withTenant, type Db } from '../db/client.ts'
 import { insertAccount, listAccounts, type Account } from '../repositories/account.repository.ts'
 import type { OnboardInput } from '../validators/account.validator.ts'

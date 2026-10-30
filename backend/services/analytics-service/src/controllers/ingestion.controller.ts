@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { forbidden, type EventSender } from '@ecommerce-analytics/platform'
+import { forbidden, type EventSender } from '@basketline/platform'
 import type { IngestionService } from '../services/ingestion.service.ts'
 import type { IngestIdentity } from '../validators/analytics.validator.ts'
 

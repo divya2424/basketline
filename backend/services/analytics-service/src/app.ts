@@ -9,7 +9,7 @@ import {
   type EventBus,
   type Health,
   type Logger,
-} from '@ecommerce-analytics/platform'
+} from '@basketline/platform'
 import { pingClickHouse, type ClickHouse } from './clickhouse.ts'
 import { createIngestionController } from './controllers/ingestion.controller.ts'
 import { createMetricsController } from './controllers/metrics.controller.ts'

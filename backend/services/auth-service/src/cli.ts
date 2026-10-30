@@ -13,8 +13,8 @@
  */
 import { randomUUID } from 'node:crypto'
 import { parseArgs } from 'node:util'
-import { ROLES, TOPICS, type Role } from '@ecommerce-analytics/contracts'
-import { closeDb, createBusFromEnv, createEventPublisher, createLogger, isUuid, requireEnv } from '@ecommerce-analytics/platform'
+import { ROLES, TOPICS, type Role } from '@basketline/contracts'
+import { closeDb, createBusFromEnv, createEventPublisher, createLogger, isUuid, requireEnv } from '@basketline/platform'
 import { createAuthDb, migrateAuthDb, withTenant } from './db/client.ts'
 import { accountTier } from './db/schema.ts'
 import { findAccount, insertAccount } from './repositories/account.repository.ts'

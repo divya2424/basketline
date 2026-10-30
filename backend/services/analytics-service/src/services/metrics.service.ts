@@ -1,4 +1,4 @@
-import { badRequest } from '@ecommerce-analytics/platform'
+import { badRequest } from '@basketline/platform'
 import type { ClickHouse } from '../clickhouse.ts'
 import { countDaily, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
 

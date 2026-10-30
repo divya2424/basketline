@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express'
-import { validate } from '@ecommerce-analytics/platform'
+import { validate } from '@basketline/platform'
 import type { AuthController } from '../controllers/auth.controller.ts'
 import { validateLogin, validateRegister, validateVisitor } from '../validators/auth.validator.ts'
 

@@ -10,7 +10,7 @@
 -- create them again, and ClickHouse's Kafka consumers resume from their
 -- committed offsets:
 --
---   CH="docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery"
+--   CH="docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery"
 --   $CH < infra/clickhouse/migrations/010_monthly_daily_partitions.sql
 --   $CH < infra/clickhouse/init.sql
 --   $CH < infra/clickhouse/kafka.sql

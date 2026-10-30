@@ -4,7 +4,7 @@
 -- Stored events are not kept: their tenants were free-form strings with no UUID
 -- to map to.
 --
---   CH="docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery"
+--   CH="docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery"
 --   docker compose stop flink-streaming
 --   $CH < infra/clickhouse/migrations/004_uuid_tenants.sql
 --   $CH < infra/clickhouse/init.sql

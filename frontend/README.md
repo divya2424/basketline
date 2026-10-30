@@ -1,6 +1,6 @@
-# E-commerce Analytics: frontend
+# Basketline: frontend
 
-A React + Vite storefront for the E-commerce Analytics backend (`../backend`):
+The web app of [Basketline](../README.md), a React + Vite app on the Basketline backend (`../backend`):
 
 - **Onboarding page:** create tenants and open their stores.
 - **Storefront:** a catalog and campaign carousel from the API, product pages and a cart.
@@ -75,7 +75,7 @@ The app opens on the onboarding page (`/`), open to everyone.
   - **Open store** and **Analytics:** sign in as the tenant's `onboarding` user and open `/store` or `/analytics`;
   - **Log in:** sign in as any of its users, then open its store.
 
-The tenant's pages (`/store`, `/store/products/:id`, `/cart`, `/analytics`) require signing in to that tenant. Signed out, they redirect to `/`. The chosen tenant is remembered in `localStorage` (`ecommerce-analytics:tenant`), and each store has its own cart.
+The tenant's pages (`/store`, `/store/products/:id`, `/cart`, `/analytics`) require signing in to that tenant. Signed out, they redirect to `/`. The chosen tenant is remembered in `localStorage` (`basketline:tenant`), and each store has its own cart.
 
 **Header:** inside a tenant it shows:
 - the tenant's name;
@@ -86,7 +86,7 @@ The tenant's pages (`/store`, `/store/products/:id`, `/cart`, `/analytics`) requ
 
 | | |
 |---|---|
-| **Session** | Kept in `sessionStorage` (`ecommerce-analytics:session:v3`: profile, role, token and expiry, tenant; never the password), so it lasts until the tab closes. Switching stores means signing in again. |
+| **Session** | Kept in `sessionStorage` (`basketline:session:v3`: profile, role, token and expiry, tenant; never the password), so it lasts until the tab closes. Switching stores means signing in again. |
 | **Expiry** | The token lasts 30 minutes, then the app signs out. |
 | **Logout** | Ends the session on the server too. |
 | **Roles** | Only `campaign-manager` users see **Analytics**. Anyone else opening `/analytics` sees "Access restricted", and the dashboard code is never downloaded. The API enforces the role on every request regardless. |
@@ -132,7 +132,7 @@ The screenshots use mock data (`VITE_ANALYTICS_MODE=mock`).
 
 ## Analytics events
 
-Components call `trackEvent()` (or `track()` from `useAnalytics()` inside an `<AnalyticsWrapper>`). Every event is also kept in the browser: run `__ecommerceAnalytics.getEvents()` in the console.
+Components call `trackEvent()` (or `track()` from `useAnalytics()` inside an `<AnalyticsWrapper>`). Every event is also kept in the browser: run `__basketline.getEvents()` in the console.
 
 | Event | Emitted when |
 |---|---|
@@ -159,7 +159,7 @@ Add to cart is never an ad click itself, even on a campaign card. Sending never 
 | | `userId` | `userType` | Token |
 |---|---|---|---|
 | Signed in | the user's ID | `registered` | the user's access token |
-| Visitor | this browser's UUID for the store (localStorage `ecommerce-analytics:anonymous-id:<tenant>`, or one per page if storage is blocked) | `visitor` | a visitor token for that UUID (`POST /auth/visitor`, `clientType: web`) |
+| Visitor | this browser's UUID for the store (localStorage `basketline:anonymous-id:<tenant>`, or one per page if storage is blocked) | `visitor` | a visitor token for that UUID (`POST /auth/visitor`, `clientType: web`) |
 
 The backend rejects a batch whose identity doesn't match its token.
 
@@ -194,7 +194,7 @@ src/
   features/catalog/   CatalogProvider: products + active campaigns from the API
   features/products/  ProductCard, ProductGrid; productData.js = sample data
   features/campaigns/ CampaignCarousel; campaignData.js = sample data
-  features/cart/      CartContext, CartPage (saved in localStorage: ecommerce-analytics:cart:v2)
+  features/cart/      CartContext, CartPage (saved in localStorage: basketline:cart:v2)
   features/analytics/ the dashboard (MetricCard, CampaignMetricsPanel, CampaignComparison) and the /ad client
   features/auth/      sign-in, session, LoginModal, RequireRole
   pages/HomePage.jsx

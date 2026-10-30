@@ -5,7 +5,7 @@
 -- Stop the Flink job first, so no events are stored between the fill and the
 -- live views starting:
 --
---   CH="docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery"
+--   CH="docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery"
 --   docker compose stop flink-streaming
 --   $CH < infra/clickhouse/migrations/007_daily_campaign_aggregation.sql
 --   $CH < infra/clickhouse/init.sql

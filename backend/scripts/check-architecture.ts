@@ -38,7 +38,7 @@ export function scanSource(service: string, file: string, source: string): strin
   for (const match of source.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
     const target = match[1]!
     const other = Object.keys(SERVICE_DATABASES).find(
-      (name) => name !== service && (target.includes(`/services/${name}/`) || target.includes(`../${name}/`) || target === `@ecommerce-analytics/${name}`),
+      (name) => name !== service && (target.includes(`/services/${name}/`) || target.includes(`../${name}/`) || target === `@basketline/${name}`),
     )
     if (other) problems.push(`${service}/${file} imports code from ${other}`)
   }

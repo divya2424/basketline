@@ -30,7 +30,7 @@ const pageIds = new Map()
  * One per store, so stores can't link a shopper.
  */
 export function anonymousId(tenantId) {
-  const key = `ecommerce-analytics:anonymous-id:${tenantId}`
+  const key = `basketline:anonymous-id:${tenantId}`
   try {
     const stored = localStorage.getItem(key)
     if (UUID.test(stored ?? '')) return stored

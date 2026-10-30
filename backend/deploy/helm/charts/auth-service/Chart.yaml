@@ -1,10 +1,10 @@
 apiVersion: v2
 name: auth-service
-description: E-commerce Analytics auth-service. Users, logins and tokens; the only holder of the JWT private key.
+description: Basketline auth-service. Users, logins and tokens; the only holder of the JWT private key.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
-  - name: ecommerce-analytics-lib
+  - name: basketline-lib
     version: 0.1.0
-    repository: file://../ecommerce-analytics-lib
+    repository: file://../basketline-lib

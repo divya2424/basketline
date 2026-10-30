@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, isNull, max, sql, type SQL } from 'drizzle-orm'
-import type { CampaignStatus } from '@ecommerce-analytics/contracts'
+import type { CampaignStatus } from '@basketline/contracts'
 import type { DbOrTx } from '../db/client.ts'
 import { campaignProducts, campaigns, products } from '../db/schema.ts'
 

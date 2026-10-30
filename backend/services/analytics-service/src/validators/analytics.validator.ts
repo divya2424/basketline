@@ -1,5 +1,5 @@
-import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@ecommerce-analytics/platform'
-import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, METRIC_EVENT_NAMES, USER_TYPES, type AnalyticsEventName, type UserType } from '@ecommerce-analytics/contracts'
+import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
+import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, METRIC_EVENT_NAMES, USER_TYPES, type AnalyticsEventName, type UserType } from '@basketline/contracts'
 
 export const MAX_EVENTS_PER_REQUEST = 100
 

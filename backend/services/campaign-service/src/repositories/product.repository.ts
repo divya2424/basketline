@@ -5,7 +5,7 @@
  * event (same version, same state) at most rewrites the same values.
  */
 import { and, eq, inArray, lte, sql } from 'drizzle-orm'
-import type { ProductState } from '@ecommerce-analytics/contracts'
+import type { ProductState } from '@basketline/contracts'
 import type { DbOrTx } from '../db/client.ts'
 import { products } from '../db/schema.ts'
 

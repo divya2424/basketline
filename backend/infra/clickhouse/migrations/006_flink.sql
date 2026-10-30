@@ -4,7 +4,7 @@
 -- attributed_baskets instead of joining raw events), then kafka.sql loads the
 -- serving topics. Stored events are kept.
 --
---   CH="docker compose exec -T clickhouse clickhouse-client --user ecommerce_analytics --password ecommerce_analytics_dev --multiquery"
+--   CH="docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery"
 --   docker compose stop spark-streaming && docker compose rm -f spark-streaming
 --   $CH < infra/clickhouse/migrations/006_flink.sql
 --   $CH < infra/clickhouse/init.sql        # creates the table and the two views again

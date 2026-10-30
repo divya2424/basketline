@@ -1,13 +1,13 @@
 /**
  * identity_db tables — the source of truth for the schema. After a change run
- * `npm run db:generate -w @ecommerce-analytics/auth-service`; migrations apply on startup.
+ * `npm run db:generate -w @basketline/auth-service`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, index, pgEnum, pgPolicy, pgTable, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
-import { ROLES } from '@ecommerce-analytics/contracts'
-import { timestamptz } from '@ecommerce-analytics/platform'
+import { ROLES } from '@basketline/contracts'
+import { timestamptz } from '@basketline/platform'
 
-export { auditLog } from '@ecommerce-analytics/platform'
+export { auditLog } from '@basketline/platform'
 
 export const userRole = pgEnum('user_role', ROLES)
 export const clientType = pgEnum('client_type', ['web', 'mobile'])

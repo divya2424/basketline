@@ -149,7 +149,7 @@ describe('header', () => {
     renderApp('/', SIGNED_OUT)
     await onboardingHeading()
     const header = screen.getByRole('banner')
-    expect(within(header).getByRole('link', { name: 'E-commerce Analytics: onboarding' })).toHaveTextContent('E-commerce Analytics')
+    expect(within(header).getByRole('link', { name: 'Basketline: onboarding' })).toHaveTextContent('Basketline')
     expect(within(header).queryByRole('button', { name: 'Login' })).not.toBeInTheDocument()
     expect(within(header).queryByRole('link', { name: /^Cart,/ })).not.toBeInTheDocument()
   })
@@ -190,7 +190,7 @@ describe('session handling', () => {
   })
 
   it('does not restore an expired session', async () => {
-    sessionStorage.setItem('ecommerce-analytics:session:v3', JSON.stringify({ ...MANAGER, tenantId: DEFAULT_TENANT_ID, expiresAt: new Date(Date.now() - 1000).toISOString() }))
+    sessionStorage.setItem('basketline:session:v3', JSON.stringify({ ...MANAGER, tenantId: DEFAULT_TENANT_ID, expiresAt: new Date(Date.now() - 1000).toISOString() }))
     renderApp('/store', { authProps: {} })
     expect(await onboardingHeading()).toBeInTheDocument()
   })
@@ -211,13 +211,13 @@ describe('user identity on analytics events', () => {
   })
 
   it('attributes the first event after a reload to the restored session', () => {
-    sessionStorage.setItem('ecommerce-analytics:session:v3', JSON.stringify({ ...MANAGER, tenantId: DEFAULT_TENANT_ID }))
+    sessionStorage.setItem('basketline:session:v3', JSON.stringify({ ...MANAGER, tenantId: DEFAULT_TENANT_ID }))
     renderApp('/store', { authProps: {} })
     expect(eventsNamed('home_view')[0].userId).toBe(MANAGER.userId)
   })
 
   it("doesn't restore a session that belongs to another tenant (store)", async () => {
-    sessionStorage.setItem('ecommerce-analytics:session:v3', JSON.stringify({ ...MANAGER, tenantId: '33333333-3333-4333-8333-333333333333' }))
+    sessionStorage.setItem('basketline:session:v3', JSON.stringify({ ...MANAGER, tenantId: '33333333-3333-4333-8333-333333333333' }))
     renderApp('/store', { authProps: {} })
     expect(await onboardingHeading()).toBeInTheDocument()
     expect(eventsNamed('home_view')).toHaveLength(0)
@@ -272,7 +272,7 @@ describe('role-based access to analytics', () => {
     const { unmount } = renderApp('/', { authProps: {} })
     await signIn(user, 'maya', 'correct horse battery')
     await screen.findByRole('button', { name: 'Logout' })
-    expect(sessionStorage.getItem('ecommerce-analytics:session:v3')).not.toMatch(/correct horse battery/)
+    expect(sessionStorage.getItem('basketline:session:v3')).not.toMatch(/correct horse battery/)
     unmount()
     renderApp('/store', { authProps: {} })
     expect(analyticsLink()).toBeInTheDocument()

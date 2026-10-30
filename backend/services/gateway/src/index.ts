@@ -1,4 +1,4 @@
-import { TOPICS } from '@ecommerce-analytics/contracts'
+import { TOPICS } from '@basketline/contracts'
 import {
   closeDb,
   createBusFromEnv,
@@ -11,7 +11,7 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
-} from '@ecommerce-analytics/platform'
+} from '@basketline/platform'
 import { buildGateway } from './app.ts'
 import { createGatewayDb, migrateGatewayDb } from './db/client.ts'
 import { handleAccessEvent } from './events/access.consumer.ts'

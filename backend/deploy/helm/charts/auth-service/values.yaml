@@ -1,5 +1,5 @@
 image:
-  repository: ecommerce-analytics/auth-service
+  repository: basketline/auth-service
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -21,7 +21,7 @@ secrets:
 existingSecret: ""
 
 jwt:
-  secretName: ecommerce-analytics-jwt
+  secretName: basketline-jwt
   # Signs the tokens. No other service mounts it.
   privateKey: true
 

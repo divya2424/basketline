@@ -1,4 +1,4 @@
-import { isNonEmptyString, isPlainObject, isPrice, unknownKeys } from '@ecommerce-analytics/platform'
+import { isNonEmptyString, isPlainObject, isPrice, unknownKeys } from '@basketline/platform'
 
 const FIELDS = ['name', 'description', 'price', 'image', 'category'] as const
 

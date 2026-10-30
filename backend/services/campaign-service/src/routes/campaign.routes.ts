@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express'
-import { requireRole, uuidParam, validate } from '@ecommerce-analytics/platform'
+import { requireRole, uuidParam, validate } from '@basketline/platform'
 import type { CampaignController } from '../controllers/campaign.controller.ts'
 import {
   validateAddProducts,

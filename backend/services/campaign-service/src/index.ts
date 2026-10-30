@@ -1,4 +1,4 @@
-import { TOPICS } from '@ecommerce-analytics/contracts'
+import { TOPICS } from '@basketline/contracts'
 import {
   closeDb,
   createBusFromEnv,
@@ -10,7 +10,7 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
-} from '@ecommerce-analytics/platform'
+} from '@basketline/platform'
 import { buildCampaignApp } from './app.ts'
 import { createCampaignDb, migrateCampaignDb } from './db/client.ts'
 import { handleProductEvent } from './events/product.consumer.ts'

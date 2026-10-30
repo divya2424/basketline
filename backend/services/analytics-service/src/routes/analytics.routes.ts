@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express'
-import { requireRole, uuidParam, validate } from '@ecommerce-analytics/platform'
+import { requireRole, uuidParam, validate } from '@basketline/platform'
 import type { IngestionController } from '../controllers/ingestion.controller.ts'
 import type { MetricsController } from '../controllers/metrics.controller.ts'
 import { validateIngest, validateMetricQuery } from '../validators/analytics.validator.ts'

@@ -1,4 +1,4 @@
-# airflow: batch jobs: the Iceberg archive of raw events, and history backfills
+# Basketline: Airflow batch jobs (the Iceberg archive and history backfills)
 
 ClickHouse keeps raw events and credited basket additions for 14 days; the `/ad` daily totals keep every day. Airflow copies each raw day to an **Iceberg archive on S3**, which keeps them forever at object-storage prices and can be queried with Athena (or Spark, Trino, Snowflake, DuckDB) without touching ClickHouse.
 

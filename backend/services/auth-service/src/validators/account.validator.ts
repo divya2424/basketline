@@ -1,4 +1,4 @@
-import { isNonEmptyString, isOneOf, isPlainObject, unknownKeys } from '@ecommerce-analytics/platform'
+import { isNonEmptyString, isOneOf, isPlainObject, unknownKeys } from '@basketline/platform'
 import { accountTier } from '../db/schema.ts'
 
 export interface OnboardInput {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { EventEnvelope, EventPayloads } from '@ecommerce-analytics/contracts'
-import { event, writeAudit, type NewEvent, type PublishEvents } from '@ecommerce-analytics/platform'
+import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
+import { event, writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
 import { insertAssociation, insertCampaignIfAbsent } from '../repositories/campaign.repository.ts'
 import { stateEvent } from '../services/campaign.service.ts'

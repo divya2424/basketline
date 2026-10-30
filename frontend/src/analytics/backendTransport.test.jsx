@@ -173,9 +173,9 @@ describe('createEventSender', () => {
   })
 
   it('replaces a stored visitor UUID that is not a UUID', () => {
-    localStorage.setItem('ecommerce-analytics:anonymous-id:tenant-x', 'tampered')
+    localStorage.setItem('basketline:anonymous-id:tenant-x', 'tampered')
     expect(anonymousId('tenant-x')).toMatch(/^[0-9a-f-]{36}$/)
-    expect(localStorage.getItem('ecommerce-analytics:anonymous-id:tenant-x')).toBe(anonymousId('tenant-x'))
+    expect(localStorage.getItem('basketline:anonymous-id:tenant-x')).toBe(anonymousId('tenant-x'))
   })
 
   it('asks for a new visitor token after a failed request', async () => {

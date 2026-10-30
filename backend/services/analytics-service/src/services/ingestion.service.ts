@@ -1,5 +1,5 @@
-import { ANALYTICS_EVENT_TYPE, analyticsTopic, METRIC_EVENT_NAMES, type AnalyticsEventPayload } from '@ecommerce-analytics/contracts'
-import { AppError, isOneOf, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@ecommerce-analytics/platform'
+import { ANALYTICS_EVENT_TYPE, analyticsTopic, METRIC_EVENT_NAMES, type AnalyticsEventPayload } from '@basketline/contracts'
+import { AppError, isOneOf, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@basketline/platform'
 import type { ClickHouse } from '../clickhouse.ts'
 import { findActiveCampaigns } from '../repositories/campaign.repository.ts'
 import type { IncomingEvent } from '../validators/analytics.validator.ts'

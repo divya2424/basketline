@@ -1,5 +1,5 @@
-import type { CampaignStatus } from '@ecommerce-analytics/contracts'
-import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@ecommerce-analytics/platform'
+import type { CampaignStatus } from '@basketline/contracts'
+import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
 
 export const STATUSES: readonly CampaignStatus[] = ['draft', 'active', 'paused', 'completed']
 

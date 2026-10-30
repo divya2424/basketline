@@ -1,12 +1,12 @@
 /**
  * product_db tables — the source of truth for the schema. After a change run
- * `npm run db:generate -w @ecommerce-analytics/product-service`; migrations apply on startup.
+ * `npm run db:generate -w @basketline/product-service`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, numeric, pgTable, text, uuid, varchar } from 'drizzle-orm/pg-core'
-import { timestamptz } from '@ecommerce-analytics/platform'
+import { timestamptz } from '@basketline/platform'
 
-export { auditLog } from '@ecommerce-analytics/platform'
+export { auditLog } from '@basketline/platform'
 
 export const products = pgTable(
   'products',

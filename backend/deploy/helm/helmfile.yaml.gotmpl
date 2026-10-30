@@ -23,14 +23,14 @@ repositories:
 releases:
 {{- range list "gateway" "auth-service" "product-service" "campaign-service" "analytics-service" "flink-streaming" }}
   - name: {{ . }}
-    namespace: ecommerce-analytics
+    namespace: basketline
     chart: ./charts/{{ . }}
     values:
       - environments/{{ $.Environment.Name }}/{{ . }}.yaml
 {{- end }}
   # The batch jobs (backend/airflow), on the official chart.
   - name: airflow
-    namespace: ecommerce-analytics
+    namespace: basketline
     chart: apache-airflow/airflow
     version: 1.22.0
     values:

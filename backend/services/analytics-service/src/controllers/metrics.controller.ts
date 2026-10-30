@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { badRequest } from '@ecommerce-analytics/platform'
+import { badRequest } from '@basketline/platform'
 import { METRICS, type MetricName, type MetricsService } from '../services/metrics.service.ts'
 
 /** :campaignId has already been checked to be a UUID by router.param. */

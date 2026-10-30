@@ -1,10 +1,10 @@
 apiVersion: v2
 name: campaign-service
-description: E-commerce Analytics campaign-service. Campaigns and their products.
+description: Basketline campaign-service. Campaigns and their products.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
-  - name: ecommerce-analytics-lib
+  - name: basketline-lib
     version: 0.1.0
-    repository: file://../ecommerce-analytics-lib
+    repository: file://../basketline-lib

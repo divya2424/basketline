@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { event, notFound, writeAudit, type NewEvent, type PublishEvents } from '@ecommerce-analytics/platform'
+import { event, notFound, writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   findProductById,

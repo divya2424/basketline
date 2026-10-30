@@ -22,12 +22,12 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ANALYTICS_EVENT_TYPE, analyticsTopic, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@ecommerce-analytics/contracts'
-import { createKafkaEventBus, createLogger, type BusMessage, type EventBus } from '@ecommerce-analytics/platform'
+import { ANALYTICS_EVENT_TYPE, analyticsTopic, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@basketline/contracts'
+import { createKafkaEventBus, createLogger, type BusMessage, type EventBus } from '@basketline/platform'
 import { createClickHouse } from '../services/analytics-service/src/clickhouse.ts'
 
 const BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',')
-const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://ecommerce_analytics:ecommerce_analytics_dev@localhost:8123/analytics')
+const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
 const TENANT = randomUUID()
 const OTHER_TENANT = randomUUID()
 const HOUR = 60 * 60 * 1000

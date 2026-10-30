@@ -11,7 +11,7 @@ import {
   type EventBus,
   type Health,
   type Logger,
-} from '@ecommerce-analytics/platform'
+} from '@basketline/platform'
 import type { Db } from './db/client.ts'
 import { createAccountController } from './controllers/account.controller.ts'
 import { createAuthController } from './controllers/auth.controller.ts'

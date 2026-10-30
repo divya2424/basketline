@@ -1,5 +1,5 @@
 image:
-  repository: ecommerce-analytics/flink-streaming
+  repository: basketline/flink-streaming
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent

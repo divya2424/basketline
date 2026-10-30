@@ -1,6 +1,6 @@
 dependencies:
-- name: ecommerce-analytics-lib
-  repository: file://../ecommerce-analytics-lib
+- name: basketline-lib
+  repository: file://../basketline-lib
   version: 0.1.0
-digest: sha256:7b057222328ff3a26014b5e552c06209e41b50edd46c301b3c3dd1748ebc4b74
-generated: "2026-10-28T20:31:56.495117075Z"
+digest: sha256:ce2d1003b21a090c638ca50f07af2e3c2b3e23bc5e0b6a40aaa41c36b5103784
+generated: "2026-10-30T04:42:13.459565647Z"

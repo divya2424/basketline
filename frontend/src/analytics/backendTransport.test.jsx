@@ -68,7 +68,7 @@ describe('toBackendEvents', () => {
   })
 })
 
-/** A stand-in for the Basketline SDK that records what the storefront hands it (sdk/ has its own tests). */
+/** A stand-in for the Basketline SDK that records what the storefront hands it (the SDK repo has its own tests). */
 function recordingSdk() {
   const clients = []
   const createClient = ({ tenantId }) => {

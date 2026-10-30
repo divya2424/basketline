@@ -10,10 +10,10 @@
  * click on the product in the last 7 days (click-to-basket), so the browser
  * keeps no record of clicks.
  *
- * Sending is the Basketline SDK's (sdk/), the same package vendors install;
+ * Sending is the Basketline SDK's (@divya2424/basketline-sdk), the same package vendors install;
  * its failures are logged and never affect the shopper.
  */
-import { createBasketline } from '@basketline/sdk'
+import { createBasketline } from '@divya2424/basketline-sdk'
 import { randomEventId } from './analytics.js'
 import { getRequestContext } from '../api/requestContext.js'
 
@@ -63,7 +63,7 @@ export function toBackendEvents(event) {
 }
 
 /**
- * Sends the storefront's events through the Basketline SDK (sdk/), as any
+ * Sends the storefront's events through the Basketline SDK, as any
  * vendor's site does: one client per store, which batches the events and sends
  * them with the right identity. Signed in, the user's access token (Basketline
  * users' tokens are accepted for events); signed out, this browser's visitor.

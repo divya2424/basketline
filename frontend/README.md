@@ -22,10 +22,13 @@ docker compose up -d --build
 
 # 2. Frontend
 cd ../frontend
+export NODE_AUTH_TOKEN=<GitHub token with read:packages>   # for the SDK, see below
 npm install
 cp .env.example .env         # points at the gateway on http://localhost:8080/api/v1
 npm run dev                  # http://localhost:5173
 ```
+
+**The SDK:** the storefront sends its events through [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk), the same package vendors install. It's on GitHub Packages, which needs a token even to install: a classic personal access token with `read:packages`, in `NODE_AUTH_TOKEN` (`.npmrc` reads it from there). To use a new SDK version, publish it from its repo, then `npm install @divya2424/basketline-sdk@<version>` here. `src/analytics/sdkContract.test.js` checks that its event names match the API's.
 
 On http://localhost:5173, onboard a tenant, then click **Analytics** on its row. You're signed in as its `onboarding` campaign manager (password `test`), with demo products and campaigns already seeded.
 

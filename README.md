@@ -5,7 +5,7 @@
 Basketline is a multi-tenant platform for online retailers and the marketers who advertise on their sites:
 - **Capture:** it collects shopper and ad events as people browse.
 - **Attribute:** it credits each add to cart to the ad click that led to it.
-- **Integrate:** retailers add the browser SDK, [`@basketline/sdk`](sdk/README.md), to their site. Their backend vouches for signed-in shoppers with an API key.
+- **Integrate:** retailers add the browser SDK, [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk) (its own repo, on GitHub Packages), to their site. Their backend vouches for signed-in shoppers with an API key.
 - **Report:** campaign managers see, for each campaign:
   - impressions, clicks and click-to-basket, with the customers behind each;
   - unique customers and sessions;
@@ -87,7 +87,6 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 | Folder | What it is | Docs |
 |---|---|---|
 | [`frontend/`](frontend/) | The storefront, tenant onboarding and the campaign dashboard (React 19, Vite) | [frontend/README.md](frontend/README.md) |
-| [`sdk/`](sdk/) | `@basketline/sdk`: the browser SDK vendors install to send events (the storefront uses it too) | [sdk/README.md](sdk/README.md) |
 | [`backend/`](backend/) | The gateway and four services, Kafka contracts, Postgres and ClickHouse schemas | [backend/README.md](backend/README.md) |
 | [`backend/flink/`](backend/flink/) | The Flink SQL job: validation, click→basket attribution, sessions | [flink/README.md](backend/flink/README.md) |
 | [`backend/airflow/`](backend/airflow/) | The nightly Iceberg archive export and the Spark history backfill | [airflow/README.md](backend/airflow/README.md) |
@@ -99,7 +98,6 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 | Command | Covers | Needs |
 |---|---|---|
 | `cd frontend && npm test` | The frontend | Nothing |
-| `cd sdk && npm test` | The SDK: batching, identity, retries, validation, event names in step with the API | Nothing |
 | `cd backend && npm run verify` | Typecheck, architecture check, unit and integration tests | postgres, kafka, clickhouse |
 | `cd backend && npm run test:e2e` | The full flow through the gateway, with real Kafka | The whole stack |
 | `cd backend && npm run test:flink` | Click→basket attribution through Kafka → Flink → ClickHouse | The whole stack |

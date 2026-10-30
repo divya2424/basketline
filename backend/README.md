@@ -137,7 +137,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
   - **Where it works:** the token is accepted only by event ingestion, where it counts as `registered`.
   - **Errors:** a wrong, revoked or other tenant's key gets `401 INVALID_API_KEY`.
   - **Keys:** every tenant gets a first key at onboarding (`apiKey`, named "Default"). Its campaign managers create and revoke keys in the dashboard (`/auth/api-keys`) or with the CLI. Keys are stored hashed, so a key is shown only when it's created.
-  - **The client side:** see the SDK, [sdk/README.md](../sdk/README.md).
+  - **The client side:** see the SDK, [divya2424/basketline-sdk](https://github.com/divya2424/basketline-sdk).
 - **Register with a visitor token:** the new user keeps the visitor's UUID, so their analytics stay one person. An invalid token, another tenant's, or a UUID that's already a user gets a random ID instead; the sign-up never fails over it. A `role` field is rejected.
 
 ### Catalog

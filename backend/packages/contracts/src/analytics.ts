@@ -2,7 +2,7 @@
  * Analytics events. analytics-service publishes each accepted event to the
  * topic for its event name; the Flink job (backend/flink) reads all of them
  * (pattern `analytics\..+\.v1`) and writes the SERVING_TOPICS, which ClickHouse
- * loads (infra/clickhouse/kafka.sql).
+ * loads (infra/clickhouse/03_kafka.sql).
  */
 
 /** The app an event was sent from; every metric is counted per client type and in total. */
@@ -47,6 +47,15 @@ export const SERVING_TOPICS = {
   attributedBaskets: 'serving.attributed_baskets.v1',
   sessions: 'serving.sessions.v1',
 } as const
+
+/**
+ * analytics-service publishes the current time here every 30 s. It matches the
+ * Flink job's topic pattern, so the session windows' watermark keeps moving when
+ * no events arrive (after a replay, or a quiet night); without it, sessions would
+ * stay open until the next event. It has no eventId or tenantId, so the job's
+ * events view drops it before anything is written.
+ */
+export const WATERMARK_HEARTBEAT_TOPIC = 'analytics.heartbeat.v1'
 
 /** e.g. analytics.add_to_cart.v1 */
 export function analyticsTopic(eventName: AnalyticsEventName): string {

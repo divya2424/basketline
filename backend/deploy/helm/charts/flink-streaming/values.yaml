@@ -8,7 +8,7 @@ imagePullSecrets: []
 # One job per checkpoint, so exactly one pod (the chart refuses other values).
 replicaCount: 1
 
-# No secrets: the job only talks to Kafka. ClickHouse reads the serving topics itself (infra/clickhouse/kafka.sql).
+# No secrets: the job only talks to Kafka. ClickHouse reads the serving topics itself (infra/clickhouse/03_kafka.sql).
 config:
   KAFKA_BOOTSTRAP_SERVERS: kafka:19092
   KAFKA_GROUP_ID: events-to-clickhouse
@@ -16,7 +16,7 @@ config:
   KAFKA_STARTUP_MODE: earliest-offset
   CHECKPOINT_DIR: /checkpoints
 
-# The checkpoints: Kafka offsets and the attribution join's state (up to 6 days
+# The checkpoints: Kafka offsets and the attribution join's state (up to 13 days
 # of clicks and baskets). Losing them replays Kafka from KAFKA_STARTUP_MODE.
 # The volume outlives `helm uninstall`; delete the PVC to reset it.
 persistence:

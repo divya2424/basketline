@@ -1,10 +1,10 @@
 # Basketline: Airflow batch jobs (the Iceberg archive and history backfills)
 
-ClickHouse keeps raw events and credited basket additions for 14 days; the `/ad` daily totals keep every day. Airflow copies each raw day to an **Iceberg archive on S3**, which keeps them forever at object-storage prices and can be queried with Athena (or Spark, Trino, Snowflake, DuckDB) without touching ClickHouse.
+ClickHouse keeps raw events and credited basket additions for 20 days; the `/ad` daily totals keep every day. Airflow copies each raw day to an **Iceberg archive on S3**, which keeps them forever at object-storage prices and can be queried with Athena (or Spark, Trino, Snowflake, DuckDB) without touching ClickHouse.
 
 ```
-ClickHouse events, attributed_baskets ──(nightly, day D-6)──► jobs/export_archive.py ──► Iceberg archive.events, archive.attributed_baskets
-  (14 days)                                                     PyIceberg                  S3 + Glue catalog (forever)
+ClickHouse events, attributed_baskets ──(nightly, day D-7)──► jobs/export_archive.py ──► Iceberg archive.events, archive.attributed_baskets
+  (20 days)                                                     PyIceberg                  S3 + Glue catalog (forever)
 ```
 
 | | Locally (`docker-compose.yml`) | On AWS |
@@ -33,7 +33,7 @@ tests/                 the jobs against the running stack
 
 ## The nightly export
 
-**Which day.** Each run exports the day six days before its date. analytics-service accepts events up to 5 days late, so by then the day is complete. ClickHouse keeps 14 days, so a failed export can be retried for another week. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
+**Which day.** Each run exports the day seven days before its date. analytics-service accepts events up to 5 days late, so the day is complete from midnight five days after it; the extra day lets the last of those events reach ClickHouse even when Flink or ClickHouse is behind. ClickHouse keeps 20 days, so a failed export can be retried for almost two weeks. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
 
 **Safe to re-run.** `export_archive.py --table T --day D` deletes day D from the Iceberg table and appends ClickHouse's rows for D **in one commit**. A retry or a backfill replaces the day instead of duplicating it, and a run that fails half-way commits nothing. It reads with `FINAL`, so copies ClickHouse hasn't merged away yet are archived once. It refuses a day ClickHouse no longer keeps, since that would replace the archived day with nothing.
 
@@ -57,7 +57,7 @@ docker compose exec airflow airflow backfill create --dag-id archive_export --fr
 docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/export_archive.py --table events --day 2026-10-24
 ```
 
-A backfill covers the runs scheduled between the two dates (the 01:00 run of 10-30 here), and each run exports the day six days before it (10-24). Query the archive from Python:
+A backfill covers the runs scheduled between the two dates (the 01:00 run of 10-30 here), and each run exports the day seven days before it (10-23). Query the archive from Python:
 
 ```bash
 docker compose exec airflow /opt/jobs/bin/python -c "
@@ -69,7 +69,7 @@ print(load_catalog('archive').load_table('archive.events').scan().to_arrow().gro
 
 ## Backfilling history
 
-ClickHouse's daily tables keep every day, but the nightly check can only correct the 14 days whose raw events ClickHouse still holds. To correct older days, for example after a bug fix or a change to the attribution or session rules, the `history_backfill` DAG recomputes them from the archive's raw events, with the current rules. It can cover one tenant, several or all, and any number of months.
+ClickHouse's daily tables keep every day, but the nightly check can only correct the 20 days whose raw events ClickHouse still holds. To correct older days, for example after a bug fix or a change to the attribution or session rules, the `history_backfill` DAG recomputes them from the archive's raw events, with the current rules. It can cover one tenant, several or all, and any number of months.
 
 ```
 validate → spark_backfill (local or EMR Serverless) → prepare → check → swap (only with apply=true)
@@ -84,7 +84,7 @@ validate → spark_backfill (local or EMR Serverless) → prepare → check → 
 
 - **Nothing live changes before `swap`.** Without `apply`, the run is a dry run: read `prepare`'s log.
 - **Dashboards never see an empty or partial month.** Nothing is deleted from a live table. Each `REPLACE PARTITION` swaps a month's parts atomically, so a query sees the whole old month or the whole new one. The whole swap is metadata operations and takes seconds, whatever the backfill's size. For those seconds, one month can be corrected while the next isn't yet.
-- **Only closed months.** The daily tables are partitioned by month (rows stay one per day). A month can be backfilled once its last day is more than 6 days ago: events arrive at most 5 days late, and the archive holds a day from 6 days after it. No live view or nightly check writes to such a month, so a swap can't race them.
+- **Only closed months.** The daily tables are partitioned by month (rows stay one per day). A month can be backfilled once its last day is more than 7 days ago: events arrive at most 5 days late, and the archive holds a day from 7 days after it. No live view or nightly check writes to such a month, so a swap can't race them.
 - **Why Spark and ClickHouse.** Spark does the heavy part (the 7-day join and sessions over months of raw events) away from the cluster that serves dashboards. ClickHouse builds the sketches, because they must be byte-compatible with the live rows. Its part reads only Spark's reduced rows, under its own limits (`BACKFILL_MAX_THREADS`, `BACKFILL_MAX_MEMORY_BYTES`).
 - **The same rules as Flink.** A rule change must change [`02_attributed_baskets.sql`](../flink/sql/pipelines/02_attributed_baskets.sql) and `spark_backfill.py` together. [`tests/fixtures/attribution_cases.json`](tests/fixtures/attribution_cases.json) runs the same cases through both (`pnpm test:flink`, `pnpm test:backfill`).
 - **Context.** Basket additions in the first week need clicks from the week before `from`. The run refuses if the archive starts later, unless `allow_partial_context` is set. A session longer than 7 days that starts before the range is seen only from that point.

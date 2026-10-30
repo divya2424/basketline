@@ -30,11 +30,13 @@ let clickhouse: ClickHouse
 let bus: MemoryEventBus
 let app: ReturnType<typeof buildAnalyticsApp>
 
-/** A throwaway ClickHouse database with the real schema (infra/clickhouse/init.sql). */
+/** A throwaway ClickHouse database with the real schema, without the Kafka tables (infra/clickhouse). */
 async function createTestClickHouse() {
   database = `analytics_test_${randomUUID().replaceAll('-', '')}`
   admin = createClickHouse(CLICKHOUSE)
-  const schema = readFileSync(path.join(import.meta.dirname, '../../../infra/clickhouse/init.sql'), 'utf8')
+  const schema = ['01_tables.sql', '02_materialized_views.sql']
+    .map((file) => readFileSync(path.join(import.meta.dirname, '../../../infra/clickhouse', file), 'utf8'))
+    .join('\n')
     .replace(/--.*$/gm, '')
     .replaceAll(/\banalytics\b/g, database)
   for (const statement of schema.split(';').map((s) => s.trim()).filter(Boolean)) await admin.command({ query: statement })
@@ -111,6 +113,17 @@ async function activeCampaign() {
 }
 
 describe('ingestion: publish to the topic for each event type', () => {
+  it('publishes IDs in lowercase, whatever case the client sent them in', async () => {
+    const before = bus.published.length
+    const campaignId = await activeCampaign()
+    const [eventId, productId] = [randomUUID(), randomUUID()]
+    const res = await send([{ eventId: eventId.toUpperCase(), campaignId: campaignId.toUpperCase(), productId: productId.toUpperCase(), eventName: 'click' }])
+    expect(res.body).toMatchObject({ accepted: 1 })
+    const [message] = bus.published.slice(before)
+    expect(message!.key).toBe(eventId)
+    expect(message!.envelope).toMatchObject({ eventId, aggregateId: eventId, payload: { eventId, campaignId, productId } })
+  })
+
   it('publishes every accepted event to analytics.<eventName>.v1 with the full payload', async () => {
     const before = bus.published.length
     const campaignId = await activeCampaign()
@@ -639,7 +652,7 @@ describe('daily_campaign_customers_aggregation: unique customers', () => {
   })
 })
 
-/** Sessions as the Flink job writes them (through Kafka); kafka.sql derives session_id. */
+/** Sessions as the Flink job writes them (through Kafka); 03_kafka.sql derives session_id. */
 async function insertSession(session: { campaigns: string[]; clicked?: string[]; added?: string[]; minutes: number; start?: string; session_id?: string }) {
   const start = session.start ?? ago(10 * HOUR)
   await clickhouse.insert({

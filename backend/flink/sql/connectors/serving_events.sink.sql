@@ -1,4 +1,4 @@
--- Every valid event, one JSON row per event, loaded into analytics.events (infra/clickhouse/kafka.sql).
+-- Every valid event, one JSON row per event, loaded into analytics.events (infra/clickhouse/03_kafka.sql).
 CREATE TABLE serving_events (
   event_id       STRING,
   event_name     STRING,

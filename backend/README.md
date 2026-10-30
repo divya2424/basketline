@@ -220,7 +220,7 @@ A user's events with no gap of 6 hours or more form a session, built by Flink in
 
 | Table | Holds | Read by |
 |---|---|---|
-| `analytics.events`, `attributed_baskets`, `sessions` | Raw rows, partitioned by day, **kept 14 days** | The nightly check, the archive export |
+| `analytics.events`, `attributed_baskets`, `sessions` | Raw rows, partitioned by day, **kept 20 days** (longer than a Kafka replay reaches: 14 days of arrivals + 5 days late) | The nightly check, the archive export |
 | `analytics.daily_campaign_aggregation` | Event counts per day, tenant and campaign, total and per client type (`SummingMergeTree`) | `/ad/:id/impressions`, `clicks`, `clickToBasket` |
 | `analytics.daily_campaign_customers_aggregation` | `uniqCombined64` sketches of the customers per day: everyone (`has_visited*`) and per metric (`customers_*`) | `/ad/:id/uniqueCustomers`, and `customers` on the others |
 | `analytics.daily_campaign_sessions_aggregation` | Sessions, converted sessions and average duration per day | `/ad/:id/sessions` |
@@ -239,8 +239,8 @@ A user's events with no gap of 6 hours or more form a session, built by Flink in
   - basket additions are recounted with their latest click, so a campaign that lost the credit is corrected down.
 
   Run it now with `SYSTEM REFRESH VIEW analytics.daily_campaign_aggregation_check_mv`, then `SYSTEM WAIT VIEW …`.
-- **Older days** (beyond the 14 raw ones): the `history_backfill` Airflow DAG recomputes closed months from the Iceberg archive with Spark, for one tenant or all, and swaps them in atomically. See [airflow/README.md § Backfilling history](airflow/README.md#backfilling-history).
-- **Archive:** each raw day is copied to Iceberg on S3 six days after it ends and kept forever ([airflow/README.md](airflow/README.md)).
+- **Older days** (beyond the 20 raw ones): the `history_backfill` Airflow DAG recomputes closed months from the Iceberg archive with Spark, for one tenant or all, and swaps them in atomically. See [airflow/README.md § Backfilling history](airflow/README.md#backfilling-history).
+- **Archive:** each raw day is copied to Iceberg on S3 seven days after it and kept forever ([airflow/README.md](airflow/README.md)).
 - **Freshness:** dashboards show data under a minute old. In the worst case:
   - the storefront batches events every 2 s;
   - Flink writes within about a second;
@@ -266,9 +266,10 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 | `product.v1` | ProductCreated, ProductUpdated, ProductDeactivated | campaign-service (its `products` table) |
 | `campaign.v1` | CampaignCreated, CampaignUpdated, CampaignProductAssociated, CampaignProductRemoved | analytics-service (`analytics.campaigns`) |
 | `analytics.<eventName>.v1` | AnalyticsEventRecorded (key = the client's `eventId`). Kept **14 days** | flink-streaming |
-| `serving.events.v1`, `serving.attributed_baskets.v1`, `serving.sessions.v1` | Flink's output, one JSON row per ClickHouse row. Kept **48 hours** | ClickHouse (Kafka engine tables, `infra/clickhouse/kafka.sql`) |
+| `analytics.heartbeat.v1` | WatermarkHeartbeat: the current time, every 30 s from analytics-service, so sessions close when no events arrive. Kept **1 hour** | flink-streaming (moves the watermark only; nothing is stored) |
+| `serving.events.v1`, `serving.attributed_baskets.v1`, `serving.sessions.v1` | Flink's output, one JSON row per ClickHouse row. Kept **48 hours** | ClickHouse (Kafka engine tables, `infra/clickhouse/03_kafka.sql`) |
 
-- **Retention:** analytics-service sets it when it creates a topic. Flink keeps clicks for 12 days, so the analytics topics' 14 days let a replay rebuild all of it. Other topics keep Kafka's default of 7 days.
+- **Retention:** analytics-service sets it when it creates a topic. Flink keeps clicks for 13 days, so the analytics topics' 14 days let a replay rebuild all of it. Other topics keep Kafka's default of 7 days.
 - **`analytics.click_to_basket.v1`** holds only events from before attribution moved to Flink.
 - **Consumers:**
   - the gateway records each `eventId` in `processed_events`, so a redelivery applies once;
@@ -329,34 +330,40 @@ Consumer groups: `campaign-service`, `gateway`, `analytics-service`. When the ev
 
 ### Resetting and replaying ClickHouse
 
-ClickHouse holds only what was derived from Kafka, so it can be rebuilt from the topics, for example after a schema change. Only what Kafka still keeps comes back (14 days of analytics events).
+ClickHouse holds only what was derived from Kafka, so it can be rebuilt from the topics, for example after a schema change, or for a volume older than the schema files (`infra/clickhouse/`, which run only on a new volume). Three small tables can't come back from Kafka, so they are copied aside first: campaign statuses, deleted tenants (restored before the replay, so their events stay out) and backfill runs.
 
 ```bash
 ch() { docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery "$@"; }
 kg() { docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "$@" < /dev/null; }
+# backfill_runs exists once a history backfill has run; leave its lines out before that.
+ch -q "CREATE DATABASE analytics_backup;
+  CREATE TABLE analytics_backup.campaigns AS analytics.campaigns; INSERT INTO analytics_backup.campaigns SELECT * FROM analytics.campaigns;
+  CREATE TABLE analytics_backup.deleted_tenants AS analytics.deleted_tenants; INSERT INTO analytics_backup.deleted_tenants SELECT * FROM analytics.deleted_tenants;
+  CREATE TABLE analytics_backup.backfill_runs AS analytics.backfill_runs; INSERT INTO analytics_backup.backfill_runs SELECT * FROM analytics.backfill_runs" < /dev/null
 docker compose stop flink-streaming analytics-service
 ch -q "DROP DATABASE analytics SYNC" < /dev/null
 # ClickHouse reads only what Flink writes from now on, not the old rows.
 kg --group clickhouse-events --topic serving.events.v1 --reset-offsets --to-latest --execute
 kg --group clickhouse-attributed-baskets --topic serving.attributed_baskets.v1 --reset-offsets --to-latest --execute
 kg --group clickhouse-sessions --topic serving.sessions.v1 --reset-offsets --to-latest --execute
-# Rebuilds analytics.campaigns from campaign.v1.
-kg --group analytics-service --topic campaign.v1 --reset-offsets --to-earliest --execute
-ch < infra/clickhouse/init.sql
-# analytics-service creates the serving topics kafka.sql reads.
+ch < infra/clickhouse/01_tables.sql && ch < infra/clickhouse/02_materialized_views.sql
+ch -q "INSERT INTO analytics.campaigns SELECT * FROM analytics_backup.campaigns;
+  INSERT INTO analytics.deleted_tenants SELECT * FROM analytics_backup.deleted_tenants;
+  CREATE TABLE analytics.backfill_runs AS analytics_backup.backfill_runs; INSERT INTO analytics.backfill_runs SELECT * FROM analytics_backup.backfill_runs" < /dev/null
+# analytics-service creates the serving topics 03_kafka.sql reads.
 docker compose up -d --build --wait analytics-service
-ch < infra/clickhouse/kafka.sql
+ch < infra/clickhouse/03_kafka.sql
 # No checkpoint: Flink replays every analytics topic from the earliest offset.
 docker compose run --rm --no-deps --entrypoint sh flink-streaming -c 'rm -rf /checkpoints/*'
 docker compose up -d --build flink-streaming
+ch -q "DROP DATABASE analytics_backup" < /dev/null   # once the counts look right
 ```
 
 Once the counts stop changing, run the nightly check so closed days are exact. Sessions come back as the replay's watermark passes them.
 
 **What's lost:**
-- days Kafka no longer keeps;
-- rows written straight into ClickHouse (by tests);
-- campaigns whose last `campaign.v1` event has expired. Update each once to republish it.
+- days Kafka no longer keeps (14 days of analytics events). Their daily totals come back from the archive with the `history_backfill` DAG ([airflow/README.md](airflow/README.md#backfilling-history));
+- rows written straight into ClickHouse (by tests).
 
 ### Looking at the data
 
@@ -369,20 +376,16 @@ Once the counts stop changing, run the nightly check so closed days are exact. S
 
 ## Upgrading an existing setup
 
-`init.sql` runs only on a new volume. For an older one, apply these once, in order. Each migration has its commands at its top.
+**ClickHouse.** The schema files in `infra/clickhouse/` (tables, materialized views, Kafka tables, run in name order) apply only to a new volume. Rebuild an older one from them: see [Resetting and replaying ClickHouse](#resetting-and-replaying-clickhouse). A schema change that an existing volume needs applied in place goes in `infra/clickhouse/migrations/`, numbered from `001`, with its commands at its top.
+
+**Everything else.** Apply these once, in order:
 
 | Upgrade | Do |
 |---|---|
-| Tenant IDs became UUIDs | `infra/clickhouse/migrations/004_uuid_tenants.sql` (drops and recreates the analytics tables). Then update each campaign once to republish it |
-| Raw events expire | `infra/clickhouse/migrations/005_events_ttl.sql` |
-| Spark replaced by Flink | `infra/clickhouse/migrations/006_flink.sql` (then load `kafka.sql`) |
-| Hourly aggregates → daily totals | `infra/clickhouse/migrations/007_daily_campaign_aggregation.sql` |
-| Raw tables by day, kept 14 days | `infra/clickhouse/migrations/008_raw_daily_partitions.sql` |
-| Less frequent Kafka engine flushes | `infra/clickhouse/migrations/009_kafka_flush_interval.sql` |
-| Daily tables partitioned by month (for backfills) | `infra/clickhouse/migrations/010_monthly_daily_partitions.sql` |
-| Renamed to Basketline | Docker volumes are now `basketline_*`. Before the first start, copy the old ones across: `for v in pgdata chdata flink-checkpoints archive-data; do docker run --rm -v ecommerce-analytics_$v:/from -v basketline_$v:/to alpine cp -a /from/. /to/; done`. Then, once ClickHouse is up, run `infra/clickhouse/migrations/011_basketline_user.sql` and `init.sql` (the ClickHouse user is now `basketline`). Everyone signs in again |
+| Renamed to Basketline | Docker volumes are now `basketline_*`. Before the first start, copy the old ones across: `for v in pgdata chdata flink-checkpoints archive-data; do docker run --rm -v ecommerce-analytics_$v:/from -v basketline_$v:/to alpine cp -a /from/. /to/; done`. Then, once ClickHouse is up, rebuild it (above; the ClickHouse user is now `basketline`). Everyone signs in again |
+| IDs lowercased once, in analytics-service | Rebuild analytics-service first (`docker compose up -d --build analytics-service`). Flink no longer lowercases IDs, so reset its checkpoint (`flink/README.md`, "Resetting the checkpoint") only once no event in Kafka has an uppercase ID: wait 14 days, or check the analytics topics. A replay would drop such events |
 | Per-tenant allowed websites | Rebuild auth-service and the gateway (`docker compose up -d --build auth-service gateway`); their migrations add `accounts.allowed_origins` and `tenant_origins` |
-| Tenants can be deleted | `infra/clickhouse/migrations/012_deleted_tenants.sql`, then `init.sql` and `kafka.sql`. Rebuild auth-service and the gateway (`docker compose up -d --build`) for their migrations |
+| Tenants can be deleted | Rebuild auth-service and the gateway (`docker compose up -d --build`) for their migrations |
 | Analytics topics kept 14 days | `for t in $(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list \| grep '^analytics\..*\.v1$'); do docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name $t --add-config retention.ms=1209600000; done` |
 | Serving topics kept 48 h | `kafka-configs.sh … --entity-name serving.events.v1 --add-config retention.ms=172800000` (and the other two) |
 | Airflow and the Iceberg catalog on an old `pgdata` | `docker compose exec postgres psql -U postgres -c "CREATE ROLE airflow_svc LOGIN PASSWORD 'airflow_svc_dev'" -c "CREATE ROLE iceberg_svc LOGIN PASSWORD 'iceberg_svc_dev'" -c 'CREATE DATABASE airflow_db OWNER airflow_svc' -c 'CREATE DATABASE iceberg_catalog_db OWNER iceberg_svc' -c 'REVOKE CONNECT ON DATABASE airflow_db, iceberg_catalog_db FROM PUBLIC' -c 'GRANT CONNECT ON DATABASE airflow_db TO airflow_svc' -c 'GRANT CONNECT ON DATABASE iceberg_catalog_db TO iceberg_svc'` |

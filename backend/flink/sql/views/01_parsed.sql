@@ -1,17 +1,18 @@
--- The envelope's payload, as typed columns. analytics-service writes timestamps
--- with toISOString() ("2026-10-28T12:00:00.000Z", always UTC).
+-- The envelope's payload, as typed columns. analytics-service writes IDs in
+-- lowercase (ingestion.service.ts) and timestamps with toISOString()
+-- ("2026-10-28T12:00:00.000Z", always UTC), so both are used as they come.
 CREATE TEMPORARY VIEW parsed AS
 SELECT
-  LOWER(JSON_VALUE(`value`, '$.payload.eventId'))       AS event_id,
+  JSON_VALUE(`value`, '$.payload.eventId')              AS event_id,
   JSON_VALUE(`value`, '$.payload.eventName')            AS event_name,
-  LOWER(JSON_VALUE(`value`, '$.payload.campaignId'))    AS campaign_id,
-  LOWER(JSON_VALUE(`value`, '$.payload.productId'))     AS product_id,
-  LOWER(JSON_VALUE(`value`, '$.payload.userId'))        AS user_id,
+  JSON_VALUE(`value`, '$.payload.campaignId')           AS campaign_id,
+  JSON_VALUE(`value`, '$.payload.productId')            AS product_id,
+  JSON_VALUE(`value`, '$.payload.userId')               AS user_id,
   JSON_VALUE(`value`, '$.payload.userType')             AS user_type,
   -- Only in events published before every visitor had a userId.
-  LOWER(JSON_VALUE(`value`, '$.payload.anonymousId'))   AS anonymous_id,
+  JSON_VALUE(`value`, '$.payload.anonymousId')          AS anonymous_id,
   JSON_VALUE(`value`, '$.payload.clientType')           AS client_type,
-  LOWER(JSON_VALUE(`value`, '$.payload.tenantId'))      AS tenant_id,
+  JSON_VALUE(`value`, '$.payload.tenantId')             AS tenant_id,
   JSON_VALUE(`value`, '$.payload.pageName')             AS page_name,
   JSON_VALUE(`value`, '$.payload.featureName')          AS feature_name,
   COALESCE(JSON_QUERY(`value`, '$.payload.properties'), '{}') AS properties,

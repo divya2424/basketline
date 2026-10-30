@@ -1,4 +1,4 @@
--- Each basket addition credited to a click, loaded into analytics.attributed_baskets (infra/clickhouse/kafka.sql).
+-- Each basket addition credited to a click, loaded into analytics.attributed_baskets (infra/clickhouse/03_kafka.sql).
 CREATE TABLE serving_attributed_baskets (
   basket_event_id STRING,
   click_event_id  STRING,

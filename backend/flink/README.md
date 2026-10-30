@@ -1,6 +1,6 @@
 # Basketline: Flink job (Kafka → Flink SQL → Kafka → ClickHouse)
 
-A Flink SQL job ([`sql/`](sql/)) that reads every analytics topic analytics-service publishes to (`analytics.<eventName>.v1`) and writes three topics, which ClickHouse loads ([`../infra/clickhouse/kafka.sql`](../infra/clickhouse/kafka.sql)):
+A Flink SQL job ([`sql/`](sql/)) that reads every analytics topic analytics-service publishes to (`analytics.<eventName>.v1`) and writes three topics, which ClickHouse loads ([`../infra/clickhouse/03_kafka.sql`](../infra/clickhouse/03_kafka.sql)):
 
 | Topic | One message per | ClickHouse table | Used by |
 |---|---|---|---|
@@ -58,7 +58,7 @@ sql/
 - **Any arrival order.** The join is a *regular* join, not an event-time window. Each side waits in state for the other, so a basket published before its click, or a click that arrives days late, still matches. It uses no watermark, so nothing is dropped as "too late". (The Spark job once lost late events to a watermark; see the git history.) Only sessions use one (below).
 - **Through Kafka, not straight into ClickHouse.**
   - The job needs only Flink's own Kafka connector.
-  - A ClickHouse outage doesn't stop the job: Kafka buffers the serving topics until ClickHouse reads them again. They keep 48 hours, which bounds what they cost (a second copy of each event); a longer outage is recovered by resetting the checkpoint, which replays the analytics topics (7 days).
+  - A ClickHouse outage doesn't stop the job: Kafka buffers the serving topics until ClickHouse reads them again. They keep 48 hours, which bounds what they cost (a second copy of each event); a longer outage is recovered by resetting the checkpoint, which replays the analytics topics (14 days).
   - Flink SQL can't write to ClickHouse with an official connector: ClickHouse's own Flink sink supports only the Java DataStream API so far. Once it supports Flink SQL, a sink file in `connectors/` can replace this hop.
   - The serving topics can feed other stores later, such as a lakehouse table, without touching the job.
 
@@ -76,14 +76,24 @@ Flink writes each match (one row per basket addition and candidate click). **The
 
 **Why 7 days.** Retail media networks credit purchases days after a click (Amazon Ads and Walmart Connect use 14-day windows); 24 hours missed shoppers who come back later. The window is one constant in [`02_attributed_baskets.sql`](sql/pipelines/02_attributed_baskets.sql); a per-tenant window would keep candidates for the longest one and filter per tenant in ClickHouse.
 
-**State size.** Each side is kept for **12 days after it arrives** (`STATE_TTL`): analytics-service accepts events up to 5 days old (`MAX_EVENT_AGE_MS`), and the window adds 7. So a pair that can match is always both in state. At most 12 days of clicks and basket additions are held, in RocksDB on the checkpoint volume (incremental checkpoints copy only what changed). The analytics topics keep 14 days, so a replay can rebuild all of it.
+**State size.** Each side is kept for **13 days after it arrives** (`STATE_TTL`): analytics-service accepts events up to 5 days old (`MAX_EVENT_AGE_MS`), the window adds 7, and one day of slack covers the job being down or behind, since the TTL counts wall-clock time, not event time. So a pair that can match is always both in state. At most 13 days of clicks and basket additions are held, in RocksDB on the checkpoint volume (incremental checkpoints copy only what changed). The analytics topics keep 14 days, so a replay can rebuild all of it.
 
 ## Sessions
 
 [`03_sessions.sql`](sql/pipelines/03_sessions.sql): a user's events (per tenant) with no gap of **6 hours** or more between them form one session, an event-time `SESSION` window partitioned by `(tenant_id, user_id)`. Each session is one row in `analytics.sessions`: start, last event, counts per event type, web/mobile, the campaigns it saw or clicked, its clicks' `campaign:product` pairs and the products it added to the cart. ClickHouse counts, per campaign seen, the sessions, the converted ones (it added a product it clicked in that campaign) and their average duration (`/ad/:id/sessions`).
 
-- **Event time and the watermark.** A session window needs to know when no more events of a session can come. The source's watermark trails the newest event time by **1 hour** (`analytics_events.source.sql`), and a topic partition with no new events stops holding it back after a minute (`table.exec.source.idle-timeout`).
-- **Late events are left out of sessions** (only): an event more than an hour behind the watermark (a phone that was offline) is dropped from sessions, but still stored and counted everywhere else. Flink's `numLateRecordsDropped` metric shows how many.
+- **Event time and the watermark.** A session window needs to know when no more events of a session can come. The source's watermark trails the newest event time by **1 hour** (`analytics_events.source.sql`), and a topic partition with no new events stops holding it back after a minute (`table.exec.source.idle-timeout`). Once every partition is idle, nothing would move it, so analytics-service publishes the current time to `analytics.heartbeat.v1` every 30 s: the source reads it like any analytics topic, the watermark follows it, and the `events` view drops it (it has no event or tenant ID). Without it, sessions would stay open after a replay or a quiet night until the next event.
+- **Late events are left out of sessions** (only): an event behind the watermark, so more than an hour older than the newest event time (a phone that was offline), is dropped from sessions, but still stored and counted everywhere else. analytics-service accepts events up to 5 days late, so events between 1 hour and 5 days late are in the event counts and click-to-basket but never in sessions, and nothing corrects that later: the nightly check covers only `daily_campaign_aggregation`. Flink's `numLateRecordsDropped` metric shows how many, and this shows their share per day (arrival time is close to `received_at`):
+
+  ```sql
+  SELECT toDate(event_time) AS day, count() AS events,
+         countIf(received_at > event_time + INTERVAL 1 HOUR) AS late,
+         round(100 * late / events, 2) AS late_pct
+  FROM analytics.events FINAL
+  GROUP BY day ORDER BY day
+  ```
+
+  If the share matters, recompute closed days' sessions from raw events (kept 20 days); a session's ID is derived from `(tenant, user, start)`, so a rewritten session replaces the old one. `daily_campaign_sessions_aggregation` holds sketches, which can't be corrected by subtracting, so its changed days would be rebuilt whole.
 - **Lag.** A session is written once, when the watermark passes its last event + 6 hours: about 7 hours after it. Session numbers run that far behind the other metrics.
 - **Attribution doesn't depend on sessions.** The 7-day window spans sessions on purpose, so a shopper who comes back the next day is credited; sessions add the same-session conversion next to it.
 - **Duplicates.** At least once, like the rest: a session written again after a restart has the same `(tenant, user, start)`, so the same `session_id`, and is merged away and counted once.
@@ -149,7 +159,7 @@ The job then reads Kafka from `KAFKA_STARTUP_MODE` (`earliest-offset`), which is
 | Variable | Default | Purpose |
 |---|---|---|
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Brokers (`kafka:19092` inside compose) |
-| `KAFKA_TOPIC_PREFIX` | empty | Must match analytics-service's `KAFKA_TOPIC_PREFIX`. `kafka.sql` reads unprefixed topics |
+| `KAFKA_TOPIC_PREFIX` | empty | Must match analytics-service's `KAFKA_TOPIC_PREFIX`. `03_kafka.sql` reads unprefixed topics |
 | `KAFKA_GROUP_ID` | `events-to-clickhouse` | The consumer group Flink commits offsets to at each checkpoint (for lag monitoring) |
 | `KAFKA_STARTUP_MODE` | `earliest-offset` | Used only when there is no checkpoint: `earliest-offset`, `latest-offset` or `group-offsets` |
 | `CHECKPOINT_DIR` | `/checkpoints` | Keep it on a persistent volume; never share it between jobs |

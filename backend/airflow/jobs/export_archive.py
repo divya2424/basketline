@@ -23,9 +23,9 @@ from pyiceberg.schema import Schema
 from pyiceberg.transforms import BucketTransform, DayTransform
 from pyiceberg.types import BooleanType, ListType, LongType, NestedField, StringType, TimestamptzType
 
-# ClickHouse keeps raw rows this many days (TTL in infra/clickhouse/init.sql).
+# ClickHouse keeps raw rows this many days (TTL in infra/clickhouse/01_tables.sql).
 # An older day is already gone there, so exporting it would empty it here.
-RAW_RETENTION_DAYS = 14
+RAW_RETENTION_DAYS = 20
 # Rows per append. Each append writes one file per partition, so bigger appends
 # mean fewer, larger files.
 APPEND_ROWS = 500_000

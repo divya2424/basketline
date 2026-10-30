@@ -2,7 +2,7 @@
 -- (add_to_cart) is matched with every click by the same user, on the same
 -- product, of the same tenant, in the 7 days before it. One row per (basket,
 -- candidate click); ClickHouse credits the latest one (last click,
--- infra/clickhouse/init.sql, attributed_baskets), since a click that arrives late
+-- infra/clickhouse/02_materialized_views.sql), since a click that arrives late
 -- would otherwise have to retract a match already written.
 --
 -- The equality columns (tenant_id, user_id, product_id) are the join's key: Flink
@@ -14,12 +14,13 @@
 --
 -- A regular join, not an event-time window: each side waits in state for the
 -- other, so a basket that arrives before its click, or a click that arrives late,
--- still matches. Each side is kept 12 days after it arrives: analytics-service
--- accepts events up to 5 days old, plus the 7-day window. The analytics topics
--- keep 14 days, so a replay rebuilds all of it. The basket addition's client
--- type is the one it is counted under.
+-- still matches. Each side is kept 13 days after it arrives: analytics-service
+-- accepts events up to 5 days old, plus the 7-day window, plus a day because the
+-- TTL runs on the wall clock, so time the job is down or behind uses it up. The
+-- analytics topics keep 14 days, so a replay rebuilds all of it. The basket
+-- addition's client type is the one it is counted under.
 INSERT INTO serving_attributed_baskets
-SELECT /*+ STATE_TTL('b' = '12d', 'c' = '12d') */
+SELECT /*+ STATE_TTL('b' = '13d', 'c' = '13d') */
   b.event_id, c.event_id, b.tenant_id, c.campaign_id, b.product_id, b.user_id, b.user_type, b.client_type, b.event_time, c.event_time
 FROM baskets AS b
 JOIN clicks AS c

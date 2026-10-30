@@ -1,4 +1,4 @@
--- Each user session, loaded into analytics.sessions (infra/clickhouse/kafka.sql).
+-- Each user session, loaded into analytics.sessions (infra/clickhouse/03_kafka.sql).
 CREATE TABLE serving_sessions (
   tenant_id       STRING,
   user_id         STRING,

@@ -2,8 +2,8 @@
 -- analytics.events, analytics.attributed_baskets and analytics.sessions: a Kafka engine table reads
 -- each topic, and a materialized view inserts what it reads.
 --
--- Kept out of init.sql: analytics-service's tests load init.sql into throwaway
--- databases, which must not consume these topics.
+-- ClickHouse schema, part 3 of 3. Kept apart: the tests load 01_tables.sql and
+-- 02_materialized_views.sql into throwaway databases, which must not consume these topics.
 --
 -- Delivery is at least once (a restart may read a few messages again); the
 -- target tables merge copies away and every count uses uniqExact, so they count once.

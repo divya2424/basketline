@@ -8,7 +8,7 @@ const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 /**
  * Late arrivals older than this are rejected (keeps reports stable). ClickHouse
- * keeps raw events for 14 days (init.sql TTL), and the nightly check recounts a
+ * keeps raw events for 20 days (01_tables.sql TTL), and the nightly check recounts a
  * late event's day from them, so this leaves days of margin.
  */
 export const MAX_EVENT_AGE_MS = 5 * 24 * HOUR
@@ -71,11 +71,14 @@ export function createIngestionService({
 
   function toMessage(event: IncomingEvent, sender: EventSender, receivedAt: string): BusMessage {
     const { campaignId, productId, ...properties } = event.properties ?? {}
+    // IDs are lowercased here, once, so every consumer (Flink joins on them as
+    // text) sees one form; the API accepts UUIDs in either case.
+    const eventId = event.eventId.toLowerCase()
     const payload: AnalyticsEventPayload = {
-      eventId: event.eventId,
+      eventId,
       eventName: event.eventName,
       campaignId: campaignId?.toLowerCase() ?? null,
-      productId: productId ?? null,
+      productId: productId?.toLowerCase() ?? null,
       userId: sender.userId,
       userType: sender.userType,
       clientType: sender.clientType,
@@ -88,15 +91,15 @@ export function createIngestionService({
     }
     return {
       topic: analyticsTopic(event.eventName),
-      key: event.eventId,
+      key: eventId,
       envelope: {
         // The client's eventId, so a retried event keeps the same ID all the way to ClickHouse.
-        eventId: event.eventId,
+        eventId,
         eventType: ANALYTICS_EVENT_TYPE,
         eventVersion: 1,
         occurredAt: payload.timestamp,
         producer: 'analytics-service',
-        aggregateId: event.eventId,
+        aggregateId: eventId,
         aggregateVersion: 1,
         payload,
       },

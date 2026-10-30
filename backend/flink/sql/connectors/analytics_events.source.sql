@@ -1,4 +1,6 @@
--- Every analytics topic, including ones created later. The value is the
+-- Every analytics topic, including ones created later, and analytics.heartbeat.v1,
+-- which carries only payload.timestamp: it moves the watermark when no events
+-- arrive, and views/02_events.sql drops it. The value is the
 -- EventEnvelope from analytics-service (packages/contracts/src/analytics.ts),
 -- read as text so a malformed record becomes NULLs instead of failing the job.
 -- rowtime is the event's own time (payload.timestamp), for the session windows

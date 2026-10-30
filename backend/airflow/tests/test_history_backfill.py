@@ -37,7 +37,9 @@ import load_backfill as load  # noqa: E402
 import spark_backfill  # noqa: E402
 from export_archive import iceberg_table  # noqa: E402
 
-INIT_SQL = Path(os.environ.get("CLICKHOUSE_INIT_SQL", "/opt/airflow/clickhouse/init.sql"))
+# The schema without its Kafka tables (03_kafka.sql), so the test database consumes no topics.
+SCHEMA_DIR = Path(os.environ.get("CLICKHOUSE_SCHEMA_DIR", "/opt/airflow/clickhouse"))
+SCHEMA_FILES = ["01_tables.sql", "02_materialized_views.sql"]
 CASES = json.loads((Path(__file__).parent / "fixtures" / "attribution_cases.json").read_text())["cases"]
 # The attribution cases' reference time; every month here is long closed.
 REF = dt.datetime(2026, 8, 10, 12, tzinfo=dt.UTC)
@@ -77,7 +79,7 @@ def attribution_events():
 @pytest.fixture(scope="module")
 def ch():
     admin = clickhouse_connect.get_client(dsn=CLICKHOUSE)
-    schema = re.sub(r"--.*$", "", INIT_SQL.read_text(), flags=re.M)
+    schema = re.sub(r"--.*$", "", "\n".join((SCHEMA_DIR / name).read_text() for name in SCHEMA_FILES), flags=re.M)
     for statement in filter(None, (s.strip() for s in re.sub(r"\banalytics\b", DATABASE, schema).split(";"))):
         admin.command(statement)
     client = load.client()

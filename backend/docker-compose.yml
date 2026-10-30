@@ -56,9 +56,9 @@ services:
     ports: ["8123:8123"]
     ulimits: { nofile: { soft: 262144, hard: 262144 } }
     volumes:
-      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      # Runs after init.sql (alphabetical): loads the Flink job's serving topics.
-      - ./infra/clickhouse/kafka.sql:/docker-entrypoint-initdb.d/kafka.sql:ro
+      # Tables, then materialized views, then the Kafka tables for the Flink job's
+      # serving topics: the files run in name order, on a new volume only.
+      - ./infra/clickhouse:/docker-entrypoint-initdb.d:ro
       - chdata:/var/lib/clickhouse
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user basketline --password basketline_dev --query 'SELECT 1' >/dev/null"]
@@ -113,7 +113,7 @@ services:
     depends_on: { clickhouse: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
   # Reads every analytics.<eventName>.v1 topic, credits basket additions to clicks,
-  # and writes both to the serving topics ClickHouse loads (infra/clickhouse/kafka.sql).
+  # and writes both to the serving topics ClickHouse loads (infra/clickhouse/03_kafka.sql).
   flink-streaming:
     build: { context: ./flink }
     environment:
@@ -172,7 +172,7 @@ services:
       ARCHIVE_S3_URL: http://archive-storage:8333/ad-insights-archive
     ports: ["127.0.0.1:8082:8080"]
     # Also baked into the image; mounted so edits apply without a rebuild. The
-    # tests and init.sql are for the backfill test, which runs here (it needs Java).
+    # tests and the ClickHouse schema are for the backfill test, which runs here (it needs Java).
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
       - ./airflow/jobs:/opt/airflow/jobs:ro

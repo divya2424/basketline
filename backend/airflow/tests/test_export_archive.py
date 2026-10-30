@@ -94,4 +94,4 @@ def test_exports_a_day_once_however_often_it_runs(clickhouse):
 
 def test_refuses_a_day_clickhouse_no_longer_keeps():
     with pytest.raises(SystemExit, match="retention"):
-        export("events", TODAY - dt.timedelta(days=14))
+        export("events", TODAY - dt.timedelta(days=20))

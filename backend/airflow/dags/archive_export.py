@@ -1,9 +1,11 @@
-"""Nightly: copies the raw events of the day six days ago from ClickHouse to the
+"""Nightly: copies the raw events of the day seven days ago from ClickHouse to the
 Iceberg archive (jobs/export_archive.py), one task per table.
 
-Six days, because analytics-service accepts events up to 5 days late: by then
-the day is complete. ClickHouse keeps raw events 14 days, so a failed run can be
-retried or backfilled for another week before the day is gone. A run that is
+Seven days, because analytics-service accepts events up to 5 days late: the day
+is complete from midnight five days after it, and the extra day lets events
+accepted just before then reach ClickHouse even when Flink or ClickHouse is
+behind. ClickHouse keeps raw events 20 days, so a failed run can be retried or
+backfilled for almost two weeks before the day is gone. A run that is
 missed while the scheduler is down is caught up when it is back (catchup).
 
 start_date is a week before the first deployment, so its first catch-up also
@@ -33,8 +35,8 @@ EXPORT = "/opt/airflow/jobs/export_archive.py"
 def archive_export():
     @task.bash
     def export(table: str) -> str:
-        # ds is the run's date (UTC); the day exported is six days before it.
-        return f"{JOBS_PYTHON} {EXPORT} --table {table} --day {{{{ macros.ds_add(ds, -6) }}}}"
+        # ds is the run's date (UTC); the day exported is seven days before it.
+        return f"{JOBS_PYTHON} {EXPORT} --table {table} --day {{{{ macros.ds_add(ds, -7) }}}}"
 
     export.expand(table=["events", "attributed_baskets", "sessions"])
 

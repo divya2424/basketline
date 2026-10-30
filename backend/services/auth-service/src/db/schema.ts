@@ -5,9 +5,11 @@
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, index, integer, pgEnum, pgPolicy, pgTable, primaryKey, text, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { ROLES } from '@basketline/contracts'
-import { timestamptz } from '@basketline/platform'
+// The tables module, not the package root: drizzle-kit loads this file with require(),
+// and the root also loads the Kafka bus, which is ESM only.
+import { timestamptz } from '@basketline/platform/tables'
 
-export { auditLog } from '@basketline/platform'
+export { auditLog } from '@basketline/platform/tables'
 
 export const userRole = pgEnum('user_role', ROLES)
 export const clientType = pgEnum('client_type', ['web', 'mobile'])

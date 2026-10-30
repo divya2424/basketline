@@ -4,9 +4,11 @@
  * auth service). After a change run `pnpm --filter @basketline/gateway db:generate`.
  */
 import { bigint, boolean, index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core'
-import { timestamptz } from '@basketline/platform'
+// The tables module, not the package root: drizzle-kit loads this file with require(),
+// and the root also loads the Kafka bus, which is ESM only.
+import { timestamptz } from '@basketline/platform/tables'
 
-export { processedEvents } from '@basketline/platform'
+export { processedEvents } from '@basketline/platform/tables'
 
 export const revokedSessions = pgTable(
   'revoked_sessions',

@@ -43,7 +43,7 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | campaign-service | not published | `campaign-service:4003` | Campaigns |
 | analytics-service | not published | `analytics-service:4004` | Event ingestion and `/ad` metrics |
 | **Flink** web UI | http://localhost:8081 | `flink-streaming:8081` | Job graph, checkpoints, backpressure |
-| **Airflow** UI | http://localhost:8082 | `airflow:8080` | DAGs `archive_export`, `history_backfill`; no login (local only) |
+| **Airflow** UI | http://localhost:8082 | `airflow:8080` | DAGs `archive_export`, `archive_maintenance`, `history_backfill`, `tenant_purge`; no login (local only) |
 | **ClickHouse** HTTP / SQL console | http://localhost:8123 · http://localhost:8123/play | `clickhouse:8123` | User `basketline`, password `basketline_dev`, database `analytics` |
 | **Kafka** | `localhost:9092` | `kafka:19092` | No UI; use the CLI in the container (see [Operations](#operations)) |
 | **Postgres** | `localhost:5432` | `postgres:5432` | Superuser `postgres` / `postgres`; one database and login per service (`infra/postgres/init.sql`) |
@@ -220,7 +220,7 @@ A user's events with no gap of 6 hours or more form a session, built by Flink in
 
 | Table | Holds | Read by |
 |---|---|---|
-| `analytics.events`, `attributed_baskets`, `sessions` | Raw rows, partitioned by day, **kept 20 days** (longer than a Kafka replay reaches: 14 days of arrivals + 5 days late): the newest 7 on local disk, older ones on S3 (`config/storage.xml`) | The nightly check, the sessions export |
+| `analytics.events`, `attributed_baskets`, `sessions` | Raw rows, partitioned by day, **kept 20 days** (longer than a Kafka replay reaches: 14 days of arrivals + 5 days late): the newest 7 on local disk, older ones on S3 (`infra/clickhouse/config/storage.xml`) | The nightly check, the sessions export |
 | `analytics.daily_campaign_aggregation` | Event counts per day, tenant and campaign, total and per client type (`SummingMergeTree`) | `/ad/:id/impressions`, `clicks`, `clickToBasket` |
 | `analytics.daily_campaign_customers_aggregation` | `uniqCombined64` sketches of the customers per day: everyone (`has_visited*`) and per metric (`customers_*`) | `/ad/:id/uniqueCustomers`, and `customers` on the others |
 | `analytics.daily_campaign_sessions_aggregation` | Sessions, converted sessions and average duration per day | `/ad/:id/sessions` |
@@ -464,7 +464,7 @@ To change a service's tables:
 
 ```bash
 # edit services/<service>/src/db/schema.ts, then:
-pnpm db:generate -w @basketline/<service>   # writes services/<service>/drizzle/<n>.sql
+pnpm --filter @basketline/<service> db:generate   # writes services/<service>/drizzle/<n>.sql
 pnpm db:generate                                      # or every service
 # commit the file; it is applied when the service starts
 ```

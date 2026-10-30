@@ -4,9 +4,11 @@
  */
 import { relations, sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, integer, numeric, pgEnum, pgTable, text, unique, uuid, varchar } from 'drizzle-orm/pg-core'
-import { timestamptz } from '@basketline/platform'
+// The tables module, not the package root: drizzle-kit loads this file with require(),
+// and the root also loads the Kafka bus, which is ESM only.
+import { timestamptz } from '@basketline/platform/tables'
 
-export { auditLog } from '@basketline/platform'
+export { auditLog } from '@basketline/platform/tables'
 
 export const campaignStatus = pgEnum('campaign_status', ['draft', 'active', 'paused', 'completed'])
 

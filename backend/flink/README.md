@@ -83,7 +83,7 @@ Flink writes each match (one row per basket addition and candidate click). **The
 **State size.** Kept only as long as a match is still possible (`STATE_TTL`), since this join is most of the job's state:
 - **Clicks: 13 days after they arrive.** analytics-service accepts events up to 5 days old (`MAX_EVENT_AGE_MS`), the window adds 7, and one day of slack covers the job being down or behind, since the TTL counts wall-clock time, not event time.
 - **Basket additions: 6 days.** A basket addition only waits for a click from before it that arrives late, and a click arrives at most 5 days after it happened; plus the same day of slack.
-- Only clicks that can be credited are held (on a campaign, with a product, by a known user: `views/03_clicks_and_baskets.sql`).
+- Only clicks that can be credited are held (on a campaign, with a product, by a known user: `sql/views/03_clicks_and_baskets.sql`).
 
 So a pair that can match is always both in state. The state is in RocksDB, checkpointed incrementally (only what changed is copied). Each checkpoint is also kept on the task manager's disk, so a failed task restores locally (`settings.sql`). The analytics topics keep 14 days, so a replay can rebuild all of it.
 

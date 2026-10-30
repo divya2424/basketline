@@ -17,7 +17,7 @@ export const TOPICS = {
 } as const
 
 // The envelope every message carries is defined with the event bus.
-export { isEnvelope, type EventEnvelope } from '@divya2424/basketline-kafka'
+export type { EventEnvelope } from '@divya2424/basketline-kafka'
 
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed'
 

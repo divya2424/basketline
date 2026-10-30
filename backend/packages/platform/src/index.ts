@@ -10,26 +10,7 @@ export * from './inbox.ts'
 export * from './jwt.ts'
 export * from './lifecycle.ts'
 export * from './logger.ts'
-// The event bus is its own package; everything but its Logger (this package's is pino's).
-export {
-  createKafkaEventBus,
-  createMemoryEventBus,
-  DEFAULT_RETRY,
-  dlqTopic,
-  ensureTopics,
-  processWithRetry,
-  type BusMessage,
-  type DeadLetter,
-  type DeliveryContext,
-  type EventBus,
-  type EventHandler,
-  type KafkaBusOptions,
-  type MemoryEventBus,
-  type ProcessOutcome,
-  type RetryPolicy,
-  type SubscribeOptions,
-  type Subscription,
-  type TopicSpec,
-} from '@divya2424/basketline-kafka'
+// What the services use of the event bus, which is its own package.
+export { createKafkaEventBus, createMemoryEventBus, ensureTopics, type BusMessage, type EventBus, type MemoryEventBus } from '@divya2424/basketline-kafka'
 export * from './pagination.ts'
 export * from './tables.ts'

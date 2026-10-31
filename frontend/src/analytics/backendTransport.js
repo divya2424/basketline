@@ -13,7 +13,7 @@
  * Sending is the Basketline SDK's (@divya2424/basketline-sdk), the same package vendors install;
  * its failures are logged and never affect the shopper.
  */
-import { createBasketline } from '@divya2424/basketline-sdk'
+import { createBasketline, IDENTITY_EVENTS } from '@divya2424/basketline-sdk'
 import { randomEventId } from './analytics.js'
 import { getRequestContext } from '../api/requestContext.js'
 
@@ -67,17 +67,21 @@ export function toBackendEvents(event) {
  * vendor's site does: one client per store, which batches the events and sends
  * them with the right identity. Signed in, the user's access token (Basketline
  * users' tokens are accepted for events); signed out, this browser's visitor.
- * Sign-in and sign-out are picked up from the request context on each event.
+ * Sign-in and sign-out are picked up from the request context on each event:
+ * the SDK then sends login and logout. Sign-in activity (login_click, …) goes
+ * through identity(), everything else through track().
  */
 export function createBackendTransport({ apiUrl = import.meta.env.VITE_API_BASE_URL, createClient = createBasketline } = {}) {
-  const clients = new Map() // tenantId → { sdk, userId }
+  const clients = new Map() // tenantId → { sdk, userId, token }
 
   function clientFor(tenantId) {
     if (!clients.has(tenantId)) clients.set(tenantId, { sdk: createClient({ apiUrl, tenantId }), userId: null })
     const client = clients.get(tenantId)
     const { userId, accessToken } = getRequestContext()
+    if (accessToken) client.token = accessToken
     if (accessToken && client.userId !== userId) {
-      client.sdk.identify({ userId, getToken: () => getRequestContext().accessToken })
+      // After sign-out the context has no token, but the logout event is still the user's: their last one.
+      client.sdk.identify({ userId, getToken: () => getRequestContext().accessToken ?? client.token })
       client.userId = userId
     } else if (!accessToken && client.userId) {
       client.sdk.reset()
@@ -90,7 +94,8 @@ export function createBackendTransport({ apiUrl = import.meta.env.VITE_API_BASE_
     send(event) {
       const sdk = clientFor(getRequestContext().tenantId)
       for (const { eventName, campaignId, productId, pageName, featureName, properties } of toBackendEvents(event)) {
-        sdk.sendEvent(eventName, { campaignId, productId, pageName, featureName, properties })
+        if (IDENTITY_EVENTS.includes(eventName)) sdk.identity(eventName, { pageName, featureName, properties })
+        else sdk.track(eventName, { campaignId, productId, pageName, featureName, properties })
       }
     },
     /** Sends what is queued now (tests; the SDK also does it when the page is hidden). */

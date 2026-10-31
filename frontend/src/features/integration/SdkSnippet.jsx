@@ -13,10 +13,11 @@ const bl = createBasketline({
   tenantId: '${tenantId}',
 })
 
-bl.sendEvent('impression', { campaignId })             // an ad was seen
-bl.sendEvent('click', { campaignId, productId })       // an ad was clicked
-bl.sendEvent('add_to_cart', { productId, quantity: 1 }) // credited to that click
-bl.sendEvent('cart_view', { pageName: 'cart' })        // anything else`
+bl.track('impression', { campaignId })             // an ad was seen
+bl.track('click', { campaignId, productId })       // an ad was clicked
+bl.track('add_to_cart', { productId, quantity: 1 }) // credited to that click
+bl.track('cart_view', { pageName: 'cart' })        // anything else
+bl.identity('login_click')                         // sign-in activity`
   return (
     <div className="sdk-snippet">
       <CopyField label="Tenant ID" value={tenantId} testId="integration-tenant-id" />

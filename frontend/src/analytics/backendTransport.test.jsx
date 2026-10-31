@@ -73,8 +73,12 @@ function recordingSdk() {
   const clients = []
   const createClient = ({ tenantId }) => {
     const client = { tenantId, tracked: [], identities: [] }
-    client.sendEvent = (eventName, fields) => client.tracked.push({ eventName, ...fields })
-    client.identify = ({ userId, getToken }) => client.identities.push({ userId, token: getToken() })
+    client.track = (eventName, fields) => client.tracked.push({ eventName, ...fields })
+    client.identity = (eventName, fields) => client.tracked.push({ eventName, identity: true, ...fields })
+    client.identify = ({ userId, getToken }) => {
+      client.getToken = getToken
+      client.identities.push({ userId, token: getToken() })
+    }
     client.reset = () => client.identities.push('reset')
     client.flush = async () => {}
     clients.push(client)
@@ -94,15 +98,20 @@ describe('createBackendTransport', () => {
     setRequestUser({ userId: 'user_1001', accessToken: 'token-1' })
     transport.send(homeView())
     transport.send(homeView())
+    transport.send(frontendEvent('login_click', {}, 'header'))
     setRequestUser(null)
     transport.send(homeView())
+    // The logout the SDK sends on reset() still has the signed-out user's token.
+    expect(clients[0].getToken()).toBe('token-1')
     setRequestTenant('2b6f3e10-0000-4000-8000-000000000012')
     transport.send(homeView())
 
     expect(clients.map((c) => c.tenantId)).toEqual(['2b6f3e10-0000-4000-8000-000000000011', '2b6f3e10-0000-4000-8000-000000000012'])
     // Identified once with the user's own access token, reset on sign-out.
     expect(clients[0].identities).toEqual([{ userId: 'user_1001', token: 'token-1' }, 'reset'])
-    expect(clients[0].tracked).toHaveLength(4)
+    expect(clients[0].tracked).toHaveLength(5)
+    // Sign-in activity goes through identity(), the rest through track().
+    expect(clients[0].tracked.filter((e) => e.identity).map((e) => e.eventName)).toEqual(['login_click'])
     expect(clients[1].tracked).toHaveLength(1)
   })
 })

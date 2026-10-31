@@ -42,6 +42,16 @@ export const MANAGER = {
   accessToken: 'manager-token',
   expiresAt: inHalfAnHour(),
 }
+/** A seller manager: analytics for one seller's campaigns. */
+export const SELLER = {
+  userId: '33333333-3333-4333-8333-333333333333',
+  username: 'seller01',
+  displayName: 'seller01',
+  role: 'seller-manager',
+  sellerId: 'aaaaaaaa-0000-4000-8000-000000000001',
+  accessToken: 'seller-token',
+  expiresAt: inHalfAnHour(),
+}
 export const SHOPPER = {
   userId: '22222222-2222-4222-8222-222222222222',
   username: 'sam',

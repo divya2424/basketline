@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { EventEnvelope } from '@basketline/contracts'
-import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus } from '@basketline/platform'
+import { TOPICS, type EventEnvelope } from '@basketline/contracts'
+import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor } from '@basketline/platform/testing'
 import { buildCampaignApp } from '../src/app.ts'
 import { createCampaignDb, migrateCampaignDb, type Db } from '../src/db/client.ts'
 import { handleProductEvent } from '../src/events/product.consumer.ts'
+import { fillCampaignSellers } from '../src/repositories/campaign.repository.ts'
 import { createTenantSeeder, handleTenantDeleted } from '../src/events/tenant.consumer.ts'
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
@@ -14,6 +15,13 @@ let db: Db
 let bus: MemoryEventBus
 let app: ReturnType<typeof buildCampaignApp>
 const TENANT = '5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01'
+// The tenant's seller running the test campaigns, and another of its sellers.
+const SELLER = randomUUID()
+const OTHER_SELLER = randomUUID()
+
+/** What the service sent to Basketline's reference API, as a retailer's backend. */
+const sent: { tenantId: string; endpoint: string; updates: ReferenceUpdate[] }[] = []
+const retailer: RetailerIntegration = { send: async (tenantId, endpoint, updates) => void sent.push({ tenantId, endpoint, updates }) }
 let manager: string
 let managerId: string
 // Another manager of the same tenant.
@@ -32,7 +40,7 @@ beforeAll(async () => {
   const keys = await createTestKeys()
   const logger = createLogger('campaign-test')
   bus = createMemoryEventBus(logger)
-  app = buildCampaignApp({ db, bus, logger, publicKey: keys.publicKey })
+  app = buildCampaignApp({ db, bus, logger, publicKey: keys.publicKey, retailer })
   const managerToken = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
   manager = managerToken.header
   managerId = managerToken.sub
@@ -66,7 +74,8 @@ function productEvent(eventType: string, productId: string, version: number, pay
 
 // The product manager in product events.
 const PRODUCT_ACTOR = randomUUID()
-const productState = (name: string, isActive = true) => ({
+const productState = (name: string, isActive = true, sellerId = SELLER) => ({
+  sellerId,
   name,
   price: 999,
   image: null,
@@ -79,16 +88,32 @@ const productState = (name: string, isActive = true) => ({
 })
 
 /** Simulates the product service announcing a product of `tenantId` over Kafka. */
-async function knownProduct(name = 'Product', isActive = true, tenantId = TENANT) {
+async function knownProduct(name = 'Product', isActive = true, tenantId = TENANT, sellerId = SELLER) {
   const id = randomUUID()
-  await applyProductEvent(productEvent('ProductCreated', id, 1, productState(name, isActive), randomUUID(), tenantId))
+  await applyProductEvent(productEvent('ProductCreated', id, 1, productState(name, isActive, sellerId), randomUUID(), tenantId))
   return id
 }
 
-const create = (body: object, auth = manager) => request(app).post('/api/v1/campaigns').set('Authorization', auth).send(body)
+// The test seller unless the body names one (or none: sellerId undefined).
+const create = (body: object, auth = manager) => request(app).post('/api/v1/campaigns').set('Authorization', auth).send({ sellerId: SELLER, ...body })
 const campaignCount = async () => (await db.$client.query('SELECT count(*)::int AS n FROM campaigns')).rows[0].n as number
 
 describe('creating campaigns', () => {
+  it("is one seller's, with only that seller's products, and goes to Basketline with them", async () => {
+    const [ours, theirs] = [await knownProduct('Ours'), await knownProduct('Theirs', true, TENANT, OTHER_SELLER)]
+    expect((await create({ title: 'No seller', type: 'banner', sellerId: undefined })).status).toBe(400)
+    const mixed = await create({ title: 'Mixed', type: 'banner', productIds: [ours, theirs] })
+    expect(mixed.status).toBe(422)
+    expect(mixed.body.error).toMatchObject({ code: 'PRODUCT_OF_ANOTHER_SELLER', details: { productIds: [theirs] } })
+    // Nor added later.
+    const { body } = await create({ title: 'Ours only', type: 'banner', productIds: [ours] })
+    expect(body.sellerId).toBe(SELLER)
+    expect((await request(app).post(`/api/v1/campaigns/${body.id}/products`).set('Authorization', manager).send({ productIds: [theirs] })).status).toBe(422)
+
+    const update = sent.flatMap((s) => s.updates).findLast((u) => u.data.campaignId === body.id)
+    expect(update).toMatchObject({ eventName: 'campaign_upserted', data: { campaignId: body.id, sellerId: SELLER, title: 'Ours only', productIds: [ours], archived: false } })
+  })
+
   it('saves the campaign with its products in order and publishes the events', async () => {
     const [a, b] = [await knownProduct('A'), await knownProduct('B')]
     const res = await create({
@@ -107,7 +132,7 @@ describe('creating campaigns', () => {
     expect(events.map((e) => e.eventType)).toEqual(['CampaignCreated', 'CampaignProductAssociated', 'CampaignProductAssociated'])
     expect(events[0]!.payload).toMatchObject({ campaignId: res.body.id, tenantId: TENANT })
     expect(events[1]).toMatchObject({ aggregateVersion: 1, payload: { productId: a, position: 1 } })
-    expect(bus.published.every((m) => m.topic === 'campaign.v1')).toBe(true)
+    expect(bus.published.every((m) => m.topic === TOPICS.campaigns)).toBe(true)
   })
 
   it('returns a retryable 409 for products the projection has not seen yet', async () => {
@@ -328,14 +353,33 @@ describe('products copy (Kafka consumer)', () => {
   })
 })
 
+describe('campaigns from before sellers (cli.ts republish)', () => {
+  it("get their products' seller when all of them share one, and only then", async () => {
+    const [a, b, theirs] = [await knownProduct('A'), await knownProduct('B'), await knownProduct('Theirs', true, TENANT, OTHER_SELLER)]
+    const one = (await create({ title: 'One seller', type: 'banner', productIds: [a, b] })).body.id as string
+    const mixed = (await create({ title: 'Mixed', type: 'banner', productIds: [a] })).body.id as string
+    // As saved before sellers: no seller; the mixed one also got another seller's product.
+    await db.$client.query('UPDATE campaigns SET seller_id = NULL WHERE id = ANY($1)', [[one, mixed]])
+    await db.$client.query(
+      "INSERT INTO campaign_products (id, tenant_id, campaign_id, product_id, position, created_by, updated_by) VALUES ($1, $2, $3, $4, 2, $5, $5)",
+      [randomUUID(), TENANT, mixed, theirs, managerId],
+    )
+
+    expect(await fillCampaignSellers(db)).toBe(1)
+    const sellers = await db.$client.query('SELECT id, seller_id FROM campaigns WHERE id = ANY($1)', [[one, mixed]])
+    expect(Object.fromEntries(sellers.rows.map((row) => [row.id, row.seller_id]))).toEqual({ [one]: SELLER, [mixed]: null })
+  })
+})
+
 describe('seeding an onboarded tenant (TenantOnboarded)', () => {
   it('creates the 2 planned active campaigns with their 2 and 3 products, once', async () => {
     const tenantId = randomUUID()
     const onboardedBy = randomUUID()
     const products = Array.from({ length: 5 }, () => randomUUID())
+    const sellers = [randomUUID(), randomUUID()]
     const plan = [
-      { campaignId: randomUUID(), productIds: products.slice(0, 2) },
-      { campaignId: randomUUID(), productIds: products.slice(2) },
+      { campaignId: randomUUID(), sellerId: sellers[0]!, productIds: products.slice(0, 2) },
+      { campaignId: randomUUID(), sellerId: sellers[1]!, productIds: products.slice(2) },
     ]
     const envelope: EventEnvelope = {
       eventId: randomUUID(),
@@ -345,7 +389,10 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
       producer: 'auth-service',
       aggregateId: tenantId,
       aggregateVersion: 1,
-      payload: { tenantId, name: 'Seed Co', tier: 'pro', onboardedBy, seed: { productIds: [...products, randomUUID()], campaigns: plan } },
+      payload: {
+        tenantId, name: 'Seed Co', tier: 'pro', onboardedBy,
+        seed: { productIds: [...products, randomUUID()], sellers: plan.map((p) => ({ sellerId: p.sellerId, name: 'Seller', productIds: p.productIds })), campaigns: plan },
+      },
     }
     const seed = createTenantSeeder({ db, publish: createEventPublisher(bus, 'campaign-service', createLogger('campaign-test')) })
     await seed(envelope)
@@ -361,6 +408,7 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
         status: 'active',
         archived: false,
         createdBy: onboardedBy,
+        sellerId: planned.sellerId,
         productIds: planned.productIds,
       })
     }

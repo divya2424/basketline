@@ -36,6 +36,13 @@
       "when": 1793370514775,
       "tag": "0004_allowed_origins",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793401624425,
+      "tag": "0005_seller_managers",
+      "breakpoints": true
     }
   ]
 }

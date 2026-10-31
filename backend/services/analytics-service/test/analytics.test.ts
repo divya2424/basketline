@@ -4,11 +4,13 @@ import path from 'node:path'
 import request from 'supertest'
 import { decodeJwt } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createLogger, createMemoryEventBus, signShopperToken, type EventBus, type MemoryEventBus } from '@basketline/platform'
+import { CATALOG_TOPIC, externalId, IDENTITY_TOPIC, INTERACTIONS_TOPIC } from '@basketline/contracts'
+import { createLogger, createMemoryEventBus, signIntegrationToken, signShopperToken, type EventBus, type MemoryEventBus } from '@basketline/platform'
 import { createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildAnalyticsApp } from '../src/app.ts'
 import { createClickHouse, type ClickHouse } from '../src/clickhouse.ts'
-import { handleCampaignEvent } from '../src/events/campaign.consumer.ts'
+import { handleIdentityEvent } from '../src/events/identity.consumer.ts'
+import { handleReferenceEvent } from '../src/events/reference.consumer.ts'
 import { handleTenantEvent } from '../src/events/tenant.consumer.ts'
 
 const CLICKHOUSE = process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123'
@@ -91,18 +93,26 @@ const send = (events: TestEvent[], auth = visitor, target = app, identity: objec
     .set('Authorization', auth)
     .send({ ...identity, events: events.map(toWire) })
 
-/** Applies a campaign.v1 event, as the Kafka consumer does. */
-function campaignEvent(campaignId: string, version: number, state: { status?: string; archived?: boolean; tenantId?: string } = {}) {
-  const payload = { campaignId, tenantId: TENANT, title: 'Sale', type: 'banner', status: 'active', startTime: null, endTime: null, archived: false, updatedAt: new Date().toISOString(), ...state }
-  return handleCampaignEvent(clickhouse, {
+const SELLER = randomUUID()
+
+/** Applies a reference event (retail.catalog-events.v1 / retail.campaign-events.v1), as the Kafka consumer does; version orders them. */
+function referenceEvent(eventType: string, aggregateId: string, version: number, payload: object) {
+  return handleReferenceEvent(clickhouse, {
     eventId: randomUUID(),
-    eventType: version === 1 ? 'CampaignCreated' : 'CampaignUpdated',
+    eventType,
     eventVersion: 1,
-    occurredAt: payload.updatedAt,
-    producer: 'campaign-service',
-    aggregateId: campaignId,
+    occurredAt: new Date().toISOString(),
+    producer: 'analytics-service',
+    aggregateId,
     aggregateVersion: version,
-    payload,
+    payload: { tenantId: TENANT, updatedAt: new Date().toISOString(), ...payload },
+  })
+}
+
+/** A campaign_upserted, by default an active campaign of SELLER with no products. */
+function campaignEvent(campaignId: string, version: number, state: { status?: string; archived?: boolean; tenantId?: string; sellerId?: string; productIds?: string[] } = {}) {
+  return referenceEvent('campaign_upserted', campaignId, version, {
+    campaignId, sellerId: SELLER, title: 'Sale', status: 'active', startTime: null, endTime: null, archived: false, productIds: [], ...state,
   })
 }
 
@@ -113,6 +123,22 @@ async function activeCampaign() {
 }
 
 describe('ingestion: publish to the topic for each event type', () => {
+  it("rejects a declared bot's batch as invalid traffic, publishes none of it, and counts it", async () => {
+    const counted = async () =>
+      Number((await (await clickhouse.query({ query: `SELECT sum(events) AS n FROM invalid_traffic_daily WHERE tenant_id = '${TENANT}' AND reason = 'bot_user_agent'`, format: 'JSONEachRow' })).json<{ n: string }>())[0]?.n ?? 0)
+    const before = { published: bus.published.length, counted: await counted() }
+    const googlebot = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+    const res = await send([{ eventName: 'home_view' }, { eventName: 'cart_view' }]).set('User-Agent', googlebot)
+    expect(res.body).toMatchObject({ accepted: 0, rejected: 2, results: [{ reason: 'INVALID_TRAFFIC' }, { reason: 'INVALID_TRAFFIC' }] })
+    expect(bus.published.length).toBe(before.published)
+    // Counted asynchronously (ClickHouse batches the inserts).
+    await expect.poll(counted, { timeout: 10_000 }).toBe(before.counted + 2)
+
+    // A browser is not a bot.
+    const chrome = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+    expect((await send([{ eventName: 'home_view' }]).set('User-Agent', chrome)).body).toMatchObject({ accepted: 1 })
+  })
+
   it('publishes IDs in lowercase, whatever case the client sent them in', async () => {
     const before = bus.published.length
     const campaignId = await activeCampaign()
@@ -124,7 +150,7 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(message!.envelope).toMatchObject({ eventId, aggregateId: eventId, payload: { eventId, campaignId, productId } })
   })
 
-  it('publishes every accepted event to analytics.<eventName>.v1 with the full payload', async () => {
+  it('publishes every accepted event to the interactions topic with the full payload', async () => {
     const before = bus.published.length
     const campaignId = await activeCampaign()
     const productId = randomUUID()
@@ -141,15 +167,20 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(res.body).toMatchObject({ accepted: 4, rejected: 0 })
 
     const published = bus.published.slice(before)
-    expect(published.map((m) => m.topic)).toEqual(['analytics.impression.v1', 'analytics.click.v1', 'analytics.add_to_cart.v1', 'analytics.cart_view.v1'])
+    // One shared topic, whatever the event name; the name is in the payload.
+    expect(published.map((m) => m.topic)).toEqual(Array(4).fill(INTERACTIONS_TOPIC))
+    expect(published.map((m) => m.envelope.payload)).toMatchObject([{ eventName: 'impression' }, { eventName: 'click' }, { eventName: 'add_to_cart' }, { eventName: 'cart_view' }])
     const click = published[1]!
     expect(click.key).toBe(clickId)
     expect(click.envelope).toMatchObject({ eventId: clickId, eventType: 'AnalyticsEventRecorded', producer: 'analytics-service' })
     expect(click.envelope.payload).toEqual({
       eventId: clickId,
+      eventType: 'interaction',
       eventName: 'click',
       campaignId,
       productId,
+      // The catalog hasn't sent this product: no seller yet.
+      sellerId: null,
       userId: visitorId,
       userType: 'visitor',
       clientType: 'web',
@@ -231,8 +262,7 @@ describe('ingestion: publish to the topic for each event type', () => {
     await campaignEvent(laterActive, 2)
     await campaignEvent(laterActive, 1, { status: 'draft' })
     await campaignEvent(otherTenants, 1, { tenantId: OTHER_TENANT })
-    // An event from before campaigns had tenants is ignored.
-    await campaignEvent(noTenant, 1, { tenantId: undefined })
+    // noTenant: a campaign the retailer never sent is not active either.
     const res = await send([
       { campaignId: active, eventName: 'impression' },
       { campaignId: paused, eventName: 'impression' },
@@ -278,7 +308,7 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(malformed.body.error.details.errors).toEqual(
       expect.arrayContaining(['events[0].eventId must be a UUID', 'events[0].timestamp must be an ISO 8601 date-time']),
     )
-    expect((await send([{ eventName: 'click' }])).body.error.details.errors).toEqual(['events[0].properties.campaignId must be a UUID'])
+    expect((await send([{ eventName: 'click' }])).body.error.details.errors).toEqual(['events[0].properties.campaignId must be a campaign ID (a UUID or your own ID)'])
     // The IDs belong in properties, not at the top level of the event.
     const topLevel = { eventId: randomUUID(), timestamp: ago(60_000), eventName: 'click', campaignId: randomUUID(), productId: randomUUID() }
     expect((await request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ ...identityOf(visitor), events: [topLevel] })).body.error.details.errors).toEqual(
@@ -474,8 +504,8 @@ const midnight = (days: number) => new Date(Math.floor(Date.now() / DAY) * DAY -
 const atDay = (days: number, hour: number) => new Date(midnight(days).getTime() + hour * HOUR).toISOString()
 const dayString = (days: number) => midnight(days).toISOString().slice(0, 10)
 
-/** What runs every night: recount the closed days that changed, and add the difference. */
-async function runNightlyCheck() {
+/** What runs every hour: recount the days that changed, today included, and add the difference. */
+async function runCheck() {
   await admin.command({ query: `SYSTEM REFRESH VIEW ${database}.daily_campaign_aggregation_check_mv` })
   await admin.command({ query: `SYSTEM WAIT VIEW ${database}.daily_campaign_aggregation_check_mv` })
 }
@@ -526,7 +556,7 @@ describe('daily_campaign_aggregation: the daily totals /ad reads', () => {
     ].sort((a, b) => a.tenant_id.localeCompare(b.tenant_id)))
   })
 
-  it('counts a copy stored in another batch until the nightly check corrects past days', async () => {
+  it('counts a copy stored in another batch until the hourly check corrects the day, today included', async () => {
     const campaignId = randomUUID()
     const product = randomUUID()
     const [click, todaysClick, clickWithBasket] = [randomUUID(), randomUUID(), randomUUID()]
@@ -543,19 +573,19 @@ describe('daily_campaign_aggregation: the daily totals /ad reads', () => {
     expect((await metric(campaignId, 'clicks', lastTwoDays)).body.count).toBe(4)
     expect((await metric(campaignId, 'clickToBasket', lastTwoDays)).body.count).toBe(2)
 
-    await runNightlyCheck()
-    // Yesterday is exact now; today is checked the night after it ends.
+    await runCheck()
+    // Yesterday and today are exact now.
     expect(await dailyTotals(campaignId)).toEqual([
       { day: dayString(1), tenant_id: TENANT, impressions: 0, clicks: 1, click_to_basket: 1 },
-      { day: dayString(0), tenant_id: TENANT, impressions: 0, clicks: 2, click_to_basket: 0 },
+      { day: dayString(0), tenant_id: TENANT, impressions: 0, clicks: 1, click_to_basket: 0 },
     ])
 
     // Running it again changes nothing: a day that is right gets no correction.
-    await runNightlyCheck()
-    expect((await metric(campaignId, 'clicks', lastTwoDays)).body.count).toBe(3)
+    await runCheck()
+    expect((await metric(campaignId, 'clicks', lastTwoDays)).body.count).toBe(2)
   })
 
-  it('moves a basket addition to a later click that arrives in another batch, once the nightly check runs', async () => {
+  it('moves a basket addition to a later click that arrives in another batch, once the hourly check runs', async () => {
     const [first, second] = [randomUUID(), randomUUID()]
     const basket = { basket_event_id: randomUUID(), product_id: randomUUID(), user_id: randomUUID(), event_time: atDay(1, 12) }
     await insertAttributed([{ ...basket, click_event_id: randomUUID(), campaign_id: first, click_time: atDay(1, 8) }])
@@ -566,7 +596,7 @@ describe('daily_campaign_aggregation: the daily totals /ad reads', () => {
     expect((await metric(first, 'clickToBasket', yesterday)).body.count).toBe(1)
     expect((await metric(second, 'clickToBasket', yesterday)).body.count).toBe(1)
 
-    await runNightlyCheck()
+    await runCheck()
     // The first campaign had nothing else that day, and is corrected to 0.
     expect((await metric(first, 'clickToBasket', yesterday)).body.count).toBe(0)
     expect((await metric(second, 'clickToBasket', yesterday)).body.count).toBe(1)
@@ -810,5 +840,102 @@ describe('the /ad cache', () => {
     // Other days are another entry. The app without a cache sees the new click at once.
     expect((await clicks(`?from=${midnight(1).toISOString()}`)).body.count).toBe(2)
     expect((await metric(campaignId, 'clicks')).body.count).toBe(2)
+  })
+})
+
+describe('sellers, retailer IDs and the four event types', () => {
+  const integration = async (tenantId = TENANT) => `Bearer ${(await signIntegrationToken(keys.privateKey, tenantId)).token}`
+  const retail = (path: string, events: object[], auth: string) => request(app).post(`/api/v1/retail/${path}`).set('Authorization', auth).send({ events })
+  const productEvent = (productId: string, sellerId: string) =>
+    referenceEvent('product_upserted', productId, 1, { productId, sellerId, name: 'Product', category: null, price: null, isActive: true })
+
+  it("stamps each event with its product's seller from the catalog, and maps a retailer's own IDs", async () => {
+    const [sellerId, productId] = [randomUUID(), randomUUID()]
+    await productEvent(productId, sellerId)
+    // The retailer's own campaign code, registered through its campaign feed.
+    const code = `SPRING-${randomUUID().slice(0, 8)}`
+    await campaignEvent(externalId(TENANT, 'campaign', code), 1, { sellerId })
+    const before = bus.published.length
+    const res = await send([{ campaignId: code, productId, eventName: 'click' }, { productId: randomUUID(), eventName: 'product_click' }])
+    expect(res.body).toMatchObject({ accepted: 2 })
+    const [click, unknown] = bus.published.slice(before).map((m) => m.envelope.payload as Record<string, unknown>)
+    expect(click).toMatchObject({ eventType: 'interaction', campaignId: externalId(TENANT, 'campaign', code), productId, sellerId })
+    // A product the catalog hasn't sent: accepted, with no seller yet.
+    expect(unknown!.sellerId).toBeNull()
+  })
+
+  it('sends login activity to the identity topic, and refuses server-only identity events from a client', async () => {
+    const before = bus.published.length
+    expect((await send([{ eventName: 'login_click' }])).body).toMatchObject({ accepted: 1 })
+    const [message] = bus.published.slice(before)
+    expect(message!.topic).toBe(IDENTITY_TOPIC)
+    expect(message!.envelope.payload).toMatchObject({ eventType: 'identity', eventName: 'login_click' })
+    expect((await send([{ eventName: 'user_deleted' as never }])).status).toBe(400)
+  })
+
+  it("takes reference data only with an integration token, mapping the retailer's IDs and its first-party seller", async () => {
+    const product = [{ eventName: 'product_upserted', data: { productId: 'SKU-1', name: 'Trail shoe' } }]
+    expect((await retail('catalog', product, visitor)).status).toBe(401)
+    expect((await retail('catalog', product, reader)).status).toBe(401)
+    expect((await retail('campaigns', [{ eventName: 'campaign_upserted', data: { campaignId: 'C-1', title: 'x', status: 'active', productIds: [] } }], await integration())).status).toBe(400)
+
+    const before = bus.published.length
+    expect((await retail('catalog', product, await integration())).status).toBe(202)
+    const firstParty = externalId(TENANT, 'seller', 'first-party')
+    const published = bus.published.slice(before)
+    expect(published.every((m) => m.topic === CATALOG_TOPIC)).toBe(true)
+    expect(published.map((m) => [m.envelope.eventType, m.envelope.payload])).toEqual([
+      ['seller_upserted', expect.objectContaining({ sellerId: firstParty, tenantId: TENANT })],
+      ['product_upserted', expect.objectContaining({ productId: externalId(TENANT, 'product', 'SKU-1'), sellerId: firstParty, name: 'Trail shoe', isActive: true })],
+    ])
+  })
+
+  it("flags a campaign that includes another seller's product, and keeps it", async () => {
+    const [ours, theirs, campaignId] = [randomUUID(), randomUUID(), randomUUID()]
+    const sellerId = randomUUID()
+    await productEvent(ours, sellerId)
+    await productEvent(theirs, randomUUID())
+    await campaignEvent(campaignId, 1, { sellerId, productIds: [ours, theirs] })
+    const result = await clickhouse.query({ query: `SELECT issues FROM campaigns FINAL WHERE campaign_id = '${campaignId}'`, format: 'JSONEachRow' })
+    expect(await result.json()).toEqual([{ issues: [`product ${theirs} belongs to another seller`] }])
+  })
+
+  it("erases a shopper's rows on user_deleted, and records it for the archive", async () => {
+    const [gone, kept] = [randomUUID(), randomUUID()]
+    await insert([{ event_name: 'home_view', user_id: gone }, { event_name: 'home_view', user_id: kept }])
+    const now = new Date().toISOString()
+    await handleIdentityEvent(clickhouse, {
+      eventId: randomUUID(), eventType: 'AnalyticsEventRecorded', eventVersion: 1, occurredAt: now, producer: 'analytics-service', aggregateId: gone, aggregateVersion: 1,
+      payload: { eventName: 'user_deleted', tenantId: TENANT, userId: gone, receivedAt: now },
+    })
+    const count = async (userId: string) => Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM events WHERE user_id = '${userId}'`, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
+    expect(await count(gone)).toBe(0)
+    expect(await count(kept)).toBe(1)
+    const deleted = await (await clickhouse.query({ query: `SELECT toString(user_id) AS u FROM deleted_users WHERE user_id = '${gone}'`, format: 'JSONEachRow' })).json()
+    expect(deleted).toEqual([{ u: gone }])
+  })
+
+  it("shows a seller-manager only its own seller's campaigns, and a seller's totals across them", async () => {
+    const [mine, other] = [randomUUID(), randomUUID()]
+    const [first, second, theirs] = [randomUUID(), randomUUID(), randomUUID()]
+    for (const [campaignId, sellerId] of [[first, mine], [second, mine], [theirs, other]] as const) await campaignEvent(campaignId, 1, { sellerId })
+    const [alice, bob] = [randomUUID(), randomUUID()]
+    await insert([
+      { event_name: 'click', campaign_id: first, user_id: alice },
+      { event_name: 'click', campaign_id: second, user_id: alice },
+      { event_name: 'click', campaign_id: second, user_id: bob },
+      { event_name: 'click', campaign_id: theirs, user_id: bob },
+    ])
+    const sellerManager = (await tokenFor(keys, 'seller-manager', { tid: TENANT, sel: mine })).header
+    const sellerTotals = (sellerId: string, auth: string) => request(app).get(`/api/v1/ad/sellers/${sellerId}/clicks`).set('Authorization', auth)
+
+    expect((await metric(first, 'clicks', '', sellerManager)).body.count).toBe(1)
+    // Another seller's campaign doesn't exist for it.
+    expect((await metric(theirs, 'clicks', '', sellerManager)).status).toBe(404)
+    // Its totals: both of its campaigns, Alice counted once among the customers.
+    expect((await sellerTotals(mine, sellerManager)).body).toMatchObject({ sellerId: mine, campaigns: 2, count: 3, customers: 2 })
+    expect((await sellerTotals(other, sellerManager)).status).toBe(403)
+    // The retailer's campaign managers see every seller.
+    expect((await sellerTotals(other, reader)).body).toMatchObject({ campaigns: 1, count: 1 })
   })
 })

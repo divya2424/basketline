@@ -8,6 +8,11 @@ import { campaigns } from '../campaigns/campaignData.js'
 import { mockFetch } from '../../test/mockFetch.js'
 import { DEFAULT_TIME_RANGE, formatRangeLabel, toPeriod } from './timeRange.js'
 import { REFRESH_MS } from './useCampaignMetrics.js'
+import { AuthProvider } from '../auth/AuthContext.jsx'
+import { MANAGER } from '../../test/utils.jsx'
+
+/** The dashboard as a campaign manager sees it. */
+const AsManager = ({ children }) => <AuthProvider persist={false} initialUser={MANAGER}>{children}</AuthProvider>
 
 /** Fake API whose requests are settled manually from the test. */
 function createDeferredApi(mode = 'live') {
@@ -103,7 +108,7 @@ describe('rate calculations', () => {
 describe('AnalyticsPage', () => {
   it('requests every metric for the selected campaign and shows counts and rates', async () => {
     const { api, resolveAll } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
 
     expect(screen.getByRole('heading', { name: 'Campaign Analytics' })).toBeInTheDocument()
     const requested = api.fetchMetric.mock.calls.map(([id, metric]) => `${id}/${metric}`)
@@ -141,7 +146,7 @@ describe('AnalyticsPage', () => {
 
   it('shows a loader while requests are in flight and removes it when all finish', async () => {
     const { api, settle } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     expect(screen.getByTestId('metrics-loading')).toHaveTextContent('Loading metrics for Featured Picks… (0 of 5 loaded)')
     expect(within(card('Ad clicks')).getByRole('status')).toHaveTextContent('Loading Ad clicks')
 
@@ -158,7 +163,7 @@ describe('AnalyticsPage', () => {
 
   it('shows the loader again while a failed metric is retried', async () => {
     const { api, settle, resolveAll } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await resolveAll('campaign_001', { impressions: 1, clickToBasket: 1, uniqueCustomers: 1, sessions: 1 })
     await settle('campaign_001', 'clicks', new Error('Request failed with status 500'))
     expect(screen.queryByTestId('metrics-loading')).not.toBeInTheDocument()
@@ -168,7 +173,7 @@ describe('AnalyticsPage', () => {
 
   it('renders zero counts and shows — for zero denominators', async () => {
     const { api, resolveAll } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await resolveAll('campaign_001', { impressions: 0, clicks: 0, clickToBasket: 0 })
     expect(card('Ad clicks')).toHaveTextContent('0')
     expect(card('Click-through rate (CTR)')).toHaveTextContent('—')
@@ -178,7 +183,7 @@ describe('AnalyticsPage', () => {
 
   it('keeps successful metrics visible when one endpoint fails, and retries just that one', async () => {
     const { api, settle } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await settle('campaign_001', 'impressions', 1000)
     await settle('campaign_001', 'clicks', new Error('Request failed with status 500'))
     await settle('campaign_001', 'clickToBasket', 25)
@@ -199,7 +204,7 @@ describe('AnalyticsPage', () => {
 
   it('refreshes on campaign change and ignores stale responses from the previous campaign', async () => {
     const { api, resolveAll } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await userEvent.selectOptions(screen.getByLabelText('Campaign'), 'campaign_002')
 
     expect(api.fetchMetric.mock.calls.some(([id]) => id === 'campaign_002')).toBe(true)
@@ -217,7 +222,7 @@ describe('AnalyticsPage', () => {
     vi.useFakeTimers()
     try {
       const { api, settle, resolveAll } = createDeferredApi()
-      render(<AnalyticsPage campaigns={campaigns} api={api} />)
+      render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
       await resolveAll('campaign_001', { impressions: 12450, clicks: 1240, clickToBasket: 312 })
       const calls = api.fetchMetric.mock.calls.length
 
@@ -244,7 +249,7 @@ describe('AnalyticsPage', () => {
 
   it('compares all campaigns side by side without summing counts', async () => {
     const { api, resolveAll } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await userEvent.selectOptions(screen.getByLabelText('Campaign'), 'all')
     await resolveAll('campaign_001', { impressions: 100, clicks: 10, clickToBasket: 5 })
     await resolveAll('campaign_002', { impressions: 200, clicks: 20, clickToBasket: 2 })
@@ -259,15 +264,15 @@ describe('AnalyticsPage', () => {
   })
 
   it('labels the data source clearly in live and mock mode', () => {
-    const { unmount } = render(<AnalyticsPage campaigns={campaigns} api={createDeferredApi('live').api} />)
+    const { unmount } = render(<AnalyticsPage campaigns={campaigns} api={createDeferredApi('live').api} />, { wrapper: AsManager })
     expect(screen.getByTestId('data-source')).toHaveTextContent('Live API')
     unmount()
-    render(<AnalyticsPage campaigns={campaigns} api={createAnalyticsApi({ mode: 'mock' })} />)
+    render(<AnalyticsPage campaigns={campaigns} api={createAnalyticsApi({ mode: 'mock' })} />, { wrapper: AsManager })
     expect(screen.getByTestId('data-source')).toHaveTextContent('Mock data')
   })
 
   it('serves labelled demo numbers in mock mode', async () => {
-    render(<AnalyticsPage campaigns={campaigns} api={createAnalyticsApi({ mode: 'mock' })} />)
+    render(<AnalyticsPage campaigns={campaigns} api={createAnalyticsApi({ mode: 'mock' })} />, { wrapper: AsManager })
     expect(await screen.findByText('12,450', {}, { timeout: 2000 })).toBeInTheDocument()
   })
 })
@@ -277,7 +282,7 @@ describe('time range filter', () => {
 
   it('loads the last 30 days (including today) by default and shows which days', () => {
     const { api } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     expect(screen.getByLabelText('Time range (UTC days)')).toHaveValue('30d')
     expect(periodsRequested(api.fetchMetric.mock.calls)).toEqual(new Set([JSON.stringify(toPeriod({ preset: '30d' }))]))
     expect(screen.getByTestId('analytics-period')).toHaveTextContent(formatRangeLabel({ preset: '30d' }))
@@ -285,7 +290,7 @@ describe('time range filter', () => {
 
   it('reloads every metric for a new preset and ignores late answers for the old range', async () => {
     const { api, settle } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await userEvent.selectOptions(screen.getByLabelText('Time range (UTC days)'), '7d')
 
     const sevenDays = toPeriod({ preset: '7d' })
@@ -303,7 +308,7 @@ describe('time range filter', () => {
 
   it('applies a valid custom range only when Apply is pressed', async () => {
     const { api } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await userEvent.selectOptions(screen.getByLabelText('Time range (UTC days)'), 'custom')
     const callsBefore = api.fetchMetric.mock.calls.length
 
@@ -323,7 +328,7 @@ describe('time range filter', () => {
 
   it('applies the range to the campaign comparison too', async () => {
     const { api } = createDeferredApi()
-    render(<AnalyticsPage campaigns={campaigns} api={api} />)
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
     await userEvent.selectOptions(screen.getByLabelText('Campaign'), 'all')
     await userEvent.selectOptions(screen.getByLabelText('Time range (UTC days)'), '90d')
     const ninetyDays = toPeriod({ preset: '90d' })

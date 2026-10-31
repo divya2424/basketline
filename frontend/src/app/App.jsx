@@ -48,7 +48,7 @@ export function App({ cartProps, authProps, catalogProps, onboardingProps }) {
                     path="/analytics"
                     element={
                       <RequireTenant>
-                        <RequireRole role={ROLES.CAMPAIGN_MANAGER} pageName="analytics">
+                        <RequireRole role={[ROLES.CAMPAIGN_MANAGER, ROLES.SELLER_MANAGER]} pageName="analytics">
                           <AnalyticsPage />
                         </RequireRole>
                       </RequireTenant>

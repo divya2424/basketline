@@ -3,7 +3,8 @@ import type { ClickHouse } from '../clickhouse.ts'
 /** One tenant's campaign over the UTC days [from, to); both are midnights. */
 export interface MetricScope {
   tenantId: string
-  campaignId: string
+  /** One campaign, or all of a seller's (their sketches merge: a customer counts once). */
+  campaignIds: string[]
   from: Date
   to: Date
 }
@@ -62,15 +63,15 @@ export interface MetricCount {
  * clause follows the tables' sort key, so ClickHouse reads only that campaign's
  * days, and the aggregates combine rows that background merges haven't combined yet.
  */
-export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignId, from, to }: MetricScope, metric: DailyMetric): Promise<MetricCount> {
+export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignIds, from, to }: MetricScope, metric: DailyMetric): Promise<MetricCount> {
   const sources = DAILY_METRICS[metric]
   const rows = await Promise.all(
     sources.map(async ({ table, aggregate, columns }) => {
       const result = await clickhouse.query({
         query: `SELECT ${columns.map((column) => `${aggregate}(${column}) AS ${column}`).join(', ')} FROM ${table}
-                WHERE tenant_id = {tenantId:UUID} AND campaign_id = {campaignId:UUID}
+                WHERE tenant_id = {tenantId:UUID} AND campaign_id IN {campaignIds:Array(UUID)}
                   AND day >= {from:Date} AND day < {to:Date}`,
-        query_params: { tenantId, campaignId, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+        query_params: { tenantId, campaignIds, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
         format: 'JSONEachRow',
       })
       const [row = {}] = await result.json<Record<string, string | number | null>>()

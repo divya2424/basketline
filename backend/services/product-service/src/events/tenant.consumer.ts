@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
-import { writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
+import { writeAudit, type NewEvent, type PublishEvents, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
-import { deleteTenantProducts, insertProductIfAbsent } from '../repositories/product.repository.ts'
+import { deleteTenantProducts, insertProductIfAbsent, insertSellerIfAbsent } from '../repositories/product.repository.ts'
 import { SAMPLE_CATALOG } from '../seed/sampleCatalog.ts'
-import { stateEvent } from '../services/product.service.ts'
+import { productUpdate, stateEvent } from '../services/product.service.ts'
 
 /** The catalog in an order fixed by the tenant, so applying the event again picks the same products. */
 function samplesFor(tenantId: string) {
@@ -19,23 +19,31 @@ function samplesFor(tenantId: string) {
  * created by its onboarding user. Products are inserted by their planned IDs, so a
  * redelivered event creates nothing twice; ProductCreated goes out for new ones only.
  */
-export function createTenantSeeder({ db, publish }: { db: Db; publish: PublishEvents }) {
+export function createTenantSeeder({ db, publish, retailer }: { db: Db; publish: PublishEvents; retailer?: RetailerIntegration }) {
   return async (envelope: EventEnvelope): Promise<void> => {
     if (envelope.eventType !== 'TenantOnboarded') return
     const { tenantId, onboardedBy, seed } = envelope.payload as EventPayloads['TenantOnboarded']
     const samples = samplesFor(tenantId)
-    const events = await db.transaction(async (tx) => {
+    const sellerOf = new Map(seed.sellers.flatMap((seller) => seller.productIds.map((productId) => [productId, seller.sellerId] as const)))
+    const { events, updates } = await db.transaction(async (tx) => {
       const created: NewEvent[] = []
+      const updates: ReferenceUpdate[] = []
+      for (const seller of seed.sellers) {
+        const inserted = await insertSellerIfAbsent(tx, { id: seller.sellerId, tenantId, name: seller.name })
+        if (inserted) updates.push({ eventName: 'seller_upserted', updatedAt: inserted.createdAt.toISOString(), data: { sellerId: inserted.id, name: inserted.name } })
+      }
       for (const [index, id] of seed.productIds.entries()) {
         const sample = samples[index % samples.length]!
-        const product = await insertProductIfAbsent(tx, { id, tenantId, ...sample, createdBy: onboardedBy, updatedBy: onboardedBy })
+        const product = await insertProductIfAbsent(tx, { id, tenantId, sellerId: sellerOf.get(id)!, ...sample, createdBy: onboardedBy, updatedBy: onboardedBy })
         if (!product) continue
         await writeAudit(tx, { actorId: onboardedBy, action: 'product.created', subjectType: 'product', subjectId: id, details: { seededFrom: envelope.eventId } })
         created.push(stateEvent(product, 'ProductCreated'))
+        updates.push(productUpdate(product))
       }
-      return created
+      return { events: created, updates }
     })
     await publish(events)
+    await retailer?.send(tenantId, 'catalog', updates)
   }
 }
 

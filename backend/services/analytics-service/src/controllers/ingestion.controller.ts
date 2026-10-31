@@ -24,7 +24,7 @@ export function createIngestionController(service: IngestionService) {
     async ingest(req: Request, res: Response) {
       assertSameIdentity(req.body, req.headers.tenant_id, req.sender!)
       // Tenant, user and client type are then taken from the token itself.
-      const results = await service.ingest(req.body.events, req.sender!)
+      const results = await service.ingest(req.body.events, req.sender!, req.get('user-agent'))
       const tally = (status: string) => results.filter((result) => result.status === status).length
       res.json({ accepted: tally('accepted'), rejected: tally('rejected'), results })
     },

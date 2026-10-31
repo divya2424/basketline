@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
+import { useAuth } from '../auth/AuthContext.jsx'
+import { ROLES } from '../auth/authService.js'
 import { useCatalog } from '../catalog/CatalogContext.jsx'
 import { analyticsApi } from './analyticsService.js'
 import { ALL_CAMPAIGNS, CampaignSelector } from './CampaignSelector.jsx'
@@ -14,7 +16,11 @@ import './analytics.css'
 export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) {
   // Campaigns come from the catalog (active campaigns from the API) unless passed in.
   const catalog = useCatalog()
-  const campaigns = campaignsProp ?? catalog.campaigns
+  const { user } = useAuth()
+  // A seller manager reports on their own seller's campaigns only (the API refuses the others).
+  const isSellerManager = user?.role === ROLES.SELLER_MANAGER
+  const allCampaigns = campaignsProp ?? catalog.campaigns
+  const campaigns = isSellerManager ? allCampaigns.filter((campaign) => campaign.sellerId === user.sellerId) : allCampaigns
   const [pickedId, setPickedId] = useState(null)
   // Until the user picks one, show the first campaign (the list may still be loading).
   const selectedId = pickedId ?? campaigns[0]?.id ?? ALL_CAMPAIGNS
@@ -27,7 +33,9 @@ export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) 
       <div className="analytics-header">
         <div>
           <h1>Campaign Analytics</h1>
-          <p className="muted">Ad impressions, clicks and cart additions per campaign.</p>
+          <p className="muted">
+            Ad impressions, clicks and cart additions per campaign{isSellerManager ? ', for your seller’s campaigns' : ''}.
+          </p>
         </div>
         <DataSourceBadge api={api} />
       </div>
@@ -69,7 +77,7 @@ export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) 
           )}
         </>
       )}
-      <ApiKeysPanel />
+      {isSellerManager ? null : <ApiKeysPanel />}
     </div>
   )
 }

@@ -10,6 +10,7 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
+  retailerIntegrationFromEnv
 } from '@basketline/platform'
 import { buildProductApp } from './app.ts'
 import { createProductDb, migrateProductDb } from './db/client.ts'
@@ -25,7 +26,9 @@ health.addCheck('kafka', () => bus.healthCheck())
 
 // Seeds each newly onboarded tenant's catalog (TenantOnboarded from auth-service), and
 // deletes a deleted tenant's (TenantDeleted).
-const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', logger) })
+// Acting as each tenant's backend: products also go to Basketline's catalog API.
+const retailer = retailerIntegrationFromEnv(logger)
+const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', logger), retailer })
 await bus.subscribe({
   groupId: 'product-service',
   topics: [TOPICS.tenants],
@@ -35,7 +38,7 @@ await bus.subscribe({
   },
 })
 
-const app = buildProductApp({ db, bus, logger, health, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+const app = buildProductApp({ db, bus, logger, health, retailer, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4002)
 const server = app.listen(port, () => {
   health.markStarted()

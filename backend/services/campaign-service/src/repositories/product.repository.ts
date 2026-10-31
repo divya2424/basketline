@@ -15,17 +15,18 @@ const isNotOlder = lte(products.productVersion, sql`excluded.product_version`)
  * Active flag of each known product of the tenant (another tenant's product is not
  * known); FOR SHARE blocks a concurrent deactivation until commit.
  */
-export async function findKnownProducts(db: DbOrTx, tenantId: string, productIds: string[]): Promise<Map<string, boolean>> {
+export async function findKnownProducts(db: DbOrTx, tenantId: string, productIds: string[]): Promise<Map<string, { isActive: boolean; sellerId: string | null }>> {
   const rows = await db
-    .select({ productId: products.productId, isActive: products.isActive })
+    .select({ productId: products.productId, isActive: products.isActive, sellerId: products.sellerId })
     .from(products)
     .where(and(eq(products.tenantId, tenantId), inArray(products.productId, productIds)))
     .for('share')
-  return new Map(rows.map((row) => [row.productId, row.isActive]))
+  return new Map(rows.map(({ productId, ...known }) => [productId, known]))
 }
 
 export async function upsertProductState(db: DbOrTx, product: ProductState, version: number) {
   const values = {
+    sellerId: product.sellerId ?? null,
     name: product.name,
     price: product.price,
     image: product.image,

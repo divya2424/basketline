@@ -28,7 +28,7 @@ EXPORT = "/opt/airflow/jobs/export_archive.py"
 
 
 @dag(
-    # After the 00:30 nightly check in ClickHouse; independent of it (raw rows only).
+    # Independent of ClickHouse's hourly check (raw rows only).
     schedule="0 1 * * *",
     start_date=pendulum.datetime(2026, 10, 23, tz="UTC"),
     catchup=True,

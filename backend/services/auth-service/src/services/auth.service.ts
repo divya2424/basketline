@@ -86,7 +86,7 @@ export function createAuthService({
 
       const now = new Date()
       const sessionId = randomUUID()
-      const { token, expiresAt } = await signAccessToken(privateKey, { sub: user.id, sid: sessionId, role: user.role, tid: user.tenantId, client: input.clientType }, now)
+      const { token, expiresAt } = await signAccessToken(privateKey, { sub: user.id, sid: sessionId, role: user.role, tid: user.tenantId, client: input.clientType, ...(user.sellerId ? { sel: user.sellerId } : {}) }, now)
       const session = await withTenant(db, user.tenantId, async (tx) => {
         const created = await insertSession(tx, { id: sessionId, tenantId: user.tenantId, userId: user.id, clientType: input.clientType, sessionStartTime: now, expiresAt })
         await setLastLogin(tx, user.id, now)

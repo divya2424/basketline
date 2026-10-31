@@ -1,6 +1,6 @@
 /**
  * The signed-in session lives in sessionStorage (cleared when the tab closes):
- * profile, role, access token and its expiry, and the tenant the token belongs
+ * profile, role (and a seller manager's seller), access token and its expiry, and the tenant the token belongs
  * to. Never the password.
  * Note: script running on the page can read sessionStorage, so the app must
  * stay free of XSS; an httpOnly cookie would avoid that but needs backend support.
@@ -29,9 +29,9 @@ export function loadSession() {
 export function saveSession(session) {
   try {
     if (session) {
-      const { userId, username, displayName, role, accessToken, expiresAt } = session
+      const { userId, username, displayName, role, sellerId = null, accessToken, expiresAt } = session
       const { tenantId } = getRequestContext()
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, displayName, role, accessToken, expiresAt, tenantId }))
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, displayName, role, sellerId, accessToken, expiresAt, tenantId }))
     } else {
       sessionStorage.removeItem(SESSION_KEY)
     }

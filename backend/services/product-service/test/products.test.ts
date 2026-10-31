@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus } from '@basketline/platform'
+import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildProductApp } from '../src/app.ts'
 import { createProductDb, migrateProductDb, type Db } from '../src/db/client.ts'
@@ -22,7 +22,13 @@ let user: string
 let otherManager: string
 let otherUser: string
 
-const sample = { name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, image: '/images/aurora-earbuds.svg', category: 'Audio' }
+const SELLER = randomUUID()
+const OTHER_TENANT_SELLER = randomUUID()
+const sample = { sellerId: SELLER, name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, image: '/images/aurora-earbuds.svg', category: 'Audio' }
+
+/** What the service sent to Basketline's reference API, as a retailer's backend. */
+const sent: { tenantId: string; endpoint: string; updates: ReferenceUpdate[] }[] = []
+const retailer: RetailerIntegration = { send: async (tenantId, endpoint, updates) => void sent.push({ tenantId, endpoint, updates }) }
 
 beforeAll(async () => {
   testDb = await createTestDatabase()
@@ -31,7 +37,7 @@ beforeAll(async () => {
   keys = await createTestKeys()
   const logger = createLogger('product-test')
   bus = createMemoryEventBus(logger)
-  app = buildProductApp({ db, bus, logger, publicKey: keys.publicKey })
+  app = buildProductApp({ db, bus, logger, publicKey: keys.publicKey, retailer })
   const managerToken = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
   manager = managerToken.header
   managerId = managerToken.sub
@@ -40,6 +46,7 @@ beforeAll(async () => {
   colleagueId = colleagueToken.sub
   user = (await tokenFor(keys, 'standard-user', { tid: TENANT })).header
   const otherTenant = randomUUID()
+  await db.$client.query("INSERT INTO sellers (id, tenant_id, name) VALUES ($1, $2, 'Northwind'), ($3, $4, 'Elsewhere')", [SELLER, TENANT, OTHER_TENANT_SELLER, otherTenant])
   otherManager = (await tokenFor(keys, 'campaign-manager', { tid: otherTenant })).header
   otherUser = (await tokenFor(keys, 'standard-user', { tid: otherTenant })).header
 })
@@ -159,6 +166,20 @@ describe('products', () => {
     expect((await request(app).get(path).set('Authorization', manager)).body).toMatchObject({ name: 'Ours', price: sample.price, isActive: true })
   })
 
+  it("needs one of the tenant's own sellers, lists them, and sends each product's state to Basketline", async () => {
+    expect((await create({ ...sample, sellerId: undefined })).status).toBe(400)
+    expect((await create({ ...sample, sellerId: randomUUID() })).body.error.code).toBe('SELLER_NOT_FOUND')
+    // Another tenant's seller is unknown here.
+    expect((await create({ ...sample, sellerId: OTHER_TENANT_SELLER })).body.error.code).toBe('SELLER_NOT_FOUND')
+    expect((await request(app).get('/api/v1/sellers').set('tenant_id', TENANT)).body.sellers).toEqual([{ sellerId: SELLER, name: 'Northwind' }])
+
+    const { body: created } = await create({ ...sample, name: 'Sent along' })
+    expect(created.sellerId).toBe(SELLER)
+    const update = sent.flatMap((s) => s.updates).find((u) => u.data.productId === created.id)
+    expect(update).toMatchObject({ eventName: 'product_upserted', data: { productId: created.id, sellerId: SELLER, name: 'Sent along', isActive: true } })
+    expect(sent.find((s) => s.updates.includes(update!))).toMatchObject({ tenantId: TENANT, endpoint: 'catalog' })
+  })
+
   it('returns 404 for unknown products and 400 for malformed IDs', async () => {
     expect((await request(app).get('/api/v1/products/00000000-0000-4000-8000-000000000000').set('Authorization', user)).status).toBe(404)
     expect((await request(app).get('/api/v1/products/not-a-uuid').set('Authorization', user)).status).toBe(400)
@@ -170,6 +191,10 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
     const tenantId = randomUUID()
     const onboardedBy = randomUUID()
     const productIds = Array.from({ length: 12 }, () => randomUUID())
+    const sellers = [
+      { sellerId: randomUUID(), name: 'First', productIds: productIds.slice(0, 5) },
+      { sellerId: randomUUID(), name: 'Second', productIds: productIds.slice(5) },
+    ]
     const envelope = {
       eventId: randomUUID(),
       eventType: 'TenantOnboarded',
@@ -178,11 +203,18 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
       producer: 'auth-service',
       aggregateId: tenantId,
       aggregateVersion: 1,
-      payload: { tenantId, name: 'Seed Co', tier: 'free', onboardedBy, seed: { productIds, campaigns: [] } },
+      payload: { tenantId, name: 'Seed Co', tier: 'free', onboardedBy, seed: { productIds, sellers, campaigns: [] } },
     }
-    const seed = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', createLogger('product-test')) })
+    const seed = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', createLogger('product-test')), retailer })
+    const sentBefore = sent.length
     await seed(envelope)
     await seed(envelope)
+    // Each product is its planned seller's, and the sellers and products went to Basketline once.
+    const { rows: owned } = await db.$client.query('SELECT id, seller_id FROM products WHERE tenant_id = $1', [tenantId])
+    expect(Object.fromEntries(owned.map((row) => [row.id, row.seller_id]))).toEqual(Object.fromEntries(sellers.flatMap((s) => s.productIds.map((id) => [id, s.sellerId]))))
+    const seededUpdates = sent.slice(sentBefore).flatMap((s) => s.updates)
+    expect(seededUpdates.filter((u) => u.eventName === 'seller_upserted')).toHaveLength(2)
+    expect(seededUpdates.filter((u) => u.eventName === 'product_upserted')).toHaveLength(12)
 
     const { rows } = await db.$client.query('SELECT id, name, created_by, updated_by, is_active FROM products WHERE tenant_id = $1', [tenantId])
     expect(rows.map((row) => row.id).sort()).toEqual([...productIds].sort())

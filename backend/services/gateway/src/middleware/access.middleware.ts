@@ -5,17 +5,17 @@
  */
 import type { RequestHandler } from 'express'
 import type { CryptoKey } from 'jose'
-import { forbidden, isUuid, notFound, unauthorized, verifyAccessToken, verifyEventToken, type AccessTokenClaims } from '@basketline/platform'
+import { forbidden, isUuid, notFound, unauthorized, verifyAccessToken, verifyEventToken, verifyIntegrationToken, type AccessTokenClaims } from '@basketline/platform'
 import type { AccessService } from '../services/access.service.ts'
 
 /** 'events': an access token, or an events-only token: a visitor's, or a vendor's shopper's. */
-type Access = 'public' | 'optional' | 'authenticated' | 'campaign-manager' | 'events'
+type Access = 'public' | 'optional' | 'authenticated' | 'campaign-manager' | 'metrics-reader' | 'events' | 'integration'
 
 /** Who may call what. Returns null for paths the gateway doesn't expose. */
 export function accessFor(method: string, path: string): Access | null {
   const read = method === 'GET' || method === 'HEAD'
-  // shopper-token: a vendor's backend, with its API key (auth-service checks it).
-  if (['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token'].includes(path)) {
+  // shopper-token and integration-token: a vendor's backend, with its API key (auth-service checks it).
+  if (['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token', '/api/v1/auth/integration-token'].includes(path)) {
     return method === 'POST' ? 'public' : null
   }
   // A tenant's API keys and allowed websites: its campaign managers only.
@@ -26,8 +26,13 @@ export function accessFor(method: string, path: string): Access | null {
   // Deleting a tenant: open like onboarding, by choice (its name must be typed again).
   if (/^\/api\/v1\/accounts\/[^/]+$/.test(path)) return method === 'DELETE' ? 'public' : null
   if (path === '/api/v1/analytics/events') return method === 'POST' ? 'events' : null
-  // Campaign metrics are for campaign managers, and only their own tenant's (the service reads it from the token).
-  if (path.startsWith('/api/v1/ad/')) return read ? 'campaign-manager' : null
+  // Campaign metrics: campaign managers (every seller) and seller-managers (their own seller, which
+  // analytics-service checks), only their own tenant's (the service reads it from the token).
+  if (path.startsWith('/api/v1/ad/')) return read ? 'metrics-reader' : null
+  // Reference data and server-side identity from a retailer's backend, with an integration token.
+  if (path.startsWith('/api/v1/retail/')) return method === 'POST' ? 'integration' : null
+  // The tenant's sellers: public, like the catalog.
+  if (path === '/api/v1/sellers') return read ? 'optional' : null
   if (path.startsWith('/api/v1/analytics/')) return read ? 'authenticated' : null
   // Catalog reads are public so visitors can browse the store; writes need a campaign manager.
   if (/^\/api\/v1\/(products|campaigns)(\/|$)/.test(path)) return read ? 'optional' : 'campaign-manager'
@@ -56,7 +61,10 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService, co
       const [scheme, token] = header.split(' ')
       try {
         if (scheme !== 'Bearer' || !token) throw new Error('bad scheme')
-        if (rule === 'events') {
+        if (rule === 'integration') {
+          // A retailer's backend: no user, only its tenant; analytics-service verifies it again.
+          eventsTenant = (await verifyIntegrationToken(token, publicKey)).tid
+        } else if (rule === 'events') {
           // A visitor's or shopper's token has no claims to check here; analytics-service verifies it again.
           const sender = await verifyEventToken(token, publicKey)
           claims = sender.claims
@@ -71,11 +79,15 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService, co
       else if (eventsTenant) await access.assertTenantActive(eventsTenant)
     }
     if (rule === 'events' && !header) throw unauthorized('UNAUTHENTICATED', 'A bearer token (access or visitor) is required')
-    if (!claims && (rule === 'authenticated' || rule === 'campaign-manager')) {
+    if (rule === 'integration' && !header) throw unauthorized('UNAUTHENTICATED', 'An integration token is required (POST /api/v1/auth/integration-token with your API key)')
+    if (!claims && (rule === 'authenticated' || rule === 'campaign-manager' || rule === 'metrics-reader')) {
       throw unauthorized('UNAUTHENTICATED', 'A bearer token is required')
     }
     if (rule === 'campaign-manager' && claims?.role !== 'campaign-manager') {
       throw forbidden('FORBIDDEN', 'Requires role: campaign-manager')
+    }
+    if (rule === 'metrics-reader' && claims?.role !== 'campaign-manager' && claims?.role !== 'seller-manager') {
+      throw forbidden('FORBIDDEN', 'Requires role: campaign-manager or seller-manager')
     }
     const origin = req.headers.origin
     if (origin && !corsOrigins.includes(origin)) {

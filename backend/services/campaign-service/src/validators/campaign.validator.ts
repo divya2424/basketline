@@ -4,6 +4,8 @@ import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKey
 export const STATUSES: readonly CampaignStatus[] = ['draft', 'active', 'paused', 'completed']
 
 export interface CreateCampaignInput {
+  /** The seller running it (one of the tenant's: product-service GET /sellers); its products must be this seller's. */
+  sellerId: string
   title: string
   type: string
   description?: string | null
@@ -44,9 +46,10 @@ function checkCommonFields(body: Record<string, unknown>, errors: string[]) {
 
 export function validateCreateCampaign(body: unknown): string[] {
   if (!isPlainObject(body)) return ['body must be a JSON object']
-  const errors = unknownKeys(body, ['title', 'type', 'description', 'status', 'startTime', 'endTime', 'productIds']).map(
+  const errors = unknownKeys(body, ['sellerId', 'title', 'type', 'description', 'status', 'startTime', 'endTime', 'productIds']).map(
     (key) => `unknown field "${key}"`,
   )
+  if (!isUuid(body.sellerId)) errors.push("sellerId is required: the seller running the campaign (GET /sellers)")
   if (!isNonEmptyString(body.title, 255)) errors.push('title is required (max 255 characters)')
   if (!isNonEmptyString(body.type, 100)) errors.push('type is required (max 100 characters)')
   if (body.status !== undefined && !isOneOf(body.status, ['draft', 'active'])) errors.push('status must be "draft" or "active" when creating')

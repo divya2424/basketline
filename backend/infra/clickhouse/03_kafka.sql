@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS analytics.events_queue
     feature_name   Nullable(String),
     properties     String,
     event_time     DateTime64(3, 'UTC'),
-    received_at    DateTime64(3, 'UTC')
+    received_at    DateTime64(3, 'UTC'),
+    event_type     String,
+    seller_id      Nullable(UUID)
 )
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:19092',
@@ -35,10 +37,12 @@ SETTINGS kafka_broker_list = 'kafka:19092',
          kafka_format = 'JSONEachRow',
          kafka_flush_interval_ms = 15000;
 
--- A deleted tenant's rows are dropped (analytics.deleted_tenants), in case Kafka still has them.
+-- A deleted tenant's or shopper's rows are dropped (analytics.deleted_tenants,
+-- analytics.deleted_users), in case Kafka still has them.
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.events_queue_mv TO analytics.events
 AS SELECT * FROM analytics.events_queue
-WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants)
+  AND (tenant_id, user_id) NOT IN (SELECT tenant_id, user_id FROM analytics.deleted_users);
 
 CREATE TABLE IF NOT EXISTS analytics.attributed_baskets_queue
 (
@@ -51,7 +55,8 @@ CREATE TABLE IF NOT EXISTS analytics.attributed_baskets_queue
     user_type       LowCardinality(String),
     client_type     LowCardinality(String),
     event_time      DateTime64(3, 'UTC'),
-    click_time      DateTime64(3, 'UTC')
+    click_time      DateTime64(3, 'UTC'),
+    seller_id       Nullable(UUID)
 )
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:19092',
@@ -62,7 +67,8 @@ SETTINGS kafka_broker_list = 'kafka:19092',
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.attributed_baskets_queue_mv TO analytics.attributed_baskets
 AS SELECT * FROM analytics.attributed_baskets_queue
-WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants)
+  AND (tenant_id, user_id) NOT IN (SELECT tenant_id, user_id FROM analytics.deleted_users);
 
 CREATE TABLE IF NOT EXISTS analytics.sessions_queue
 (
@@ -79,7 +85,8 @@ CREATE TABLE IF NOT EXISTS analytics.sessions_queue
     mobile          Bool,
     campaigns       Array(UUID),
     clicked         Array(String),
-    added           Array(UUID)
+    added           Array(UUID),
+    sellers         Array(UUID)
 )
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:19092',
@@ -92,4 +99,5 @@ SETTINGS kafka_broker_list = 'kafka:19092',
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.sessions_queue_mv TO analytics.sessions
 AS SELECT sessionId(tenant_id, user_id, session_start) AS session_id, *
 FROM analytics.sessions_queue
-WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants)
+  AND (tenant_id, user_id) NOT IN (SELECT tenant_id, user_id FROM analytics.deleted_users);

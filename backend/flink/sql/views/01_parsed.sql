@@ -4,9 +4,13 @@
 CREATE TEMPORARY VIEW parsed AS
 SELECT
   JSON_VALUE(`value`, '$.payload.eventId')              AS event_id,
+  -- interaction or identity; absent before event types existed (all interactions then).
+  JSON_VALUE(`value`, '$.payload.eventType')            AS event_type,
   JSON_VALUE(`value`, '$.payload.eventName')            AS event_name,
   JSON_VALUE(`value`, '$.payload.campaignId')           AS campaign_id,
   JSON_VALUE(`value`, '$.payload.productId')            AS product_id,
+  -- The product's seller, stamped by analytics-service from the catalog.
+  JSON_VALUE(`value`, '$.payload.sellerId')             AS seller_id,
   JSON_VALUE(`value`, '$.payload.userId')               AS user_id,
   JSON_VALUE(`value`, '$.payload.userType')             AS user_type,
   -- Only in events published before every visitor had a userId.

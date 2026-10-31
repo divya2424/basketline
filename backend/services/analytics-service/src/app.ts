@@ -2,6 +2,7 @@ import type { CryptoKey } from 'jose'
 import {
   authenticate,
   authenticateEvents,
+  authenticateIntegration,
   createBaseApp,
   createHealth,
   errorHandler,
@@ -13,9 +14,11 @@ import {
 import { pingClickHouse, type ClickHouse } from './clickhouse.ts'
 import { createIngestionController } from './controllers/ingestion.controller.ts'
 import { createMetricsController } from './controllers/metrics.controller.ts'
-import { adMetricRoutes, analyticsRoutes } from './routes/analytics.routes.ts'
+import { createReferenceController } from './controllers/reference.controller.ts'
+import { adMetricRoutes, analyticsRoutes, referenceRoutes } from './routes/analytics.routes.ts'
 import { createIngestionService } from './services/ingestion.service.ts'
 import { createMetricsService } from './services/metrics.service.ts'
+import { createReferenceService } from './services/reference.service.ts'
 
 export interface AnalyticsAppDeps {
   bus: EventBus
@@ -40,6 +43,7 @@ export function buildAnalyticsApp({ bus, clickhouse, logger, publicKey, maxEvent
 
   app.use('/api/v1/analytics', analyticsRoutes(ingestion, authenticateEvents(publicKey)))
   app.use('/api/v1/ad', adMetricRoutes(metrics, authenticate(publicKey)))
+  app.use('/api/v1/retail', referenceRoutes(createReferenceController(createReferenceService({ bus, logger })), authenticateIntegration(publicKey)))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

@@ -2,27 +2,55 @@
   "Rules": [
     {
       "ID": "archive-events-data",
-      "Filter": { "Prefix": "archive/events/data/" },
+      "Filter": {
+        "Prefix": "archive/events/data/"
+      },
       "Status": "Enabled",
       "Transitions": [
-        { "Days": 30, "StorageClass": "STANDARD_IA" },
-        { "Days": 180, "StorageClass": "GLACIER_IR" }
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 180,
+          "StorageClass": "GLACIER_IR"
+        }
       ]
     },
     {
       "ID": "archive-attributed-baskets-data",
-      "Filter": { "Prefix": "archive/attributed_baskets/data/" },
+      "Filter": {
+        "Prefix": "archive/attributed_baskets/data/"
+      },
       "Status": "Enabled",
       "Transitions": [
-        { "Days": 30, "StorageClass": "STANDARD_IA" },
-        { "Days": 180, "StorageClass": "GLACIER_IR" }
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 180,
+          "StorageClass": "GLACIER_IR"
+        }
       ]
+    },
+    {
+      "ID": "clickhouse-backups",
+      "Filter": {
+        "Prefix": "clickhouse-backups/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 35
+      }
     },
     {
       "ID": "abort-incomplete-uploads",
       "Filter": {},
       "Status": "Enabled",
-      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
     }
   ]
 }

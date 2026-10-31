@@ -1,14 +1,15 @@
-import { ANALYTICS_EVENT_TYPE, analyticsTopic, METRIC_EVENT_NAMES, type AnalyticsEventPayload } from '@basketline/contracts'
+import { ANALYTICS_EVENT_TYPE, eventTypeOf, externalId, METRIC_EVENT_NAMES, topicOf, type AnalyticsEventPayload } from '@basketline/contracts'
 import { AppError, isOneOf, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@basketline/platform'
 import type { ClickHouse } from '../clickhouse.ts'
 import { findActiveCampaigns } from '../repositories/campaign.repository.ts'
+import { findProductSellers } from '../repositories/product.repository.ts'
 import type { IncomingEvent } from '../validators/analytics.validator.ts'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 /**
  * Late arrivals older than this are rejected (keeps reports stable). ClickHouse
- * keeps raw events for 20 days (01_tables.sql TTL), and the nightly check recounts a
+ * keeps raw events for 20 days (01_tables.sql TTL), and the hourly check recounts a
  * late event's day from them, so this leaves days of margin.
  */
 export const MAX_EVENT_AGE_MS = 5 * 24 * HOUR
@@ -18,12 +19,19 @@ export const MAX_CLOCK_SKEW_MS = 5 * MINUTE
 export const MAX_EVENTS_PER_SENDER_PER_MINUTE = 300
 /** How long a campaign's active flag is cached; a new campaign counts within about this long. */
 const CAMPAIGN_CACHE_MS = 10_000
+/**
+ * Declared bots and automation, by user agent (general invalid traffic): search
+ * and social crawlers, headless browsers, audit and uptime tools. Their batches
+ * are rejected (INVALID_TRAFFIC) and counted in invalid_traffic_daily. Generic
+ * HTTP clients (curl, okhttp, Java) are not on the list: mobile apps send them.
+ */
+const BOT_USER_AGENT = /bot\b|bot\/|crawl|spider|slurp|headless|phantomjs|lighthouse|pingdom|uptimerobot|facebookexternalhit/i
 const CAMPAIGN_CACHE_MAX = 10_000
 
 export type IngestResult = { eventId: string; status: 'accepted' } | { eventId: string; status: 'rejected'; reason: string }
 
 /**
- * Publishes each valid event to the Kafka topic for its event name. Nothing is
+ * Publishes each valid event to the interactions topic (INTERACTIONS_TOPIC). Nothing is
  * stored here: the Flink job (backend/flink) credits basket additions to their
  * click and writes both to ClickHouse, which removes duplicates.
  *
@@ -43,6 +51,7 @@ export function createIngestionService({
   maxEventsPerMinute?: number
 }) {
   const campaignCache = new Map<string, { active: boolean; until: number }>()
+  const sellerCache = new Map<string, { sellerId: string | null; until: number }>()
   let window = { start: 0, counts: new Map<string, number>() }
 
   /** Fixed one-minute windows per sender. */
@@ -69,16 +78,43 @@ export function createIngestionService({
     return new Set(ids.filter((id) => campaignCache.get(key(id))?.active))
   }
 
-  function toMessage(event: IncomingEvent, sender: EventSender, receivedAt: string): BusMessage {
-    const { campaignId, productId, ...properties } = event.properties ?? {}
+  /** The campaign and product IDs as stored: UUIDs lowercased, a retailer's own IDs mapped (externalId). */
+  function ids(event: IncomingEvent, tenantId: string) {
+    const { campaignId, productId } = event.properties ?? {}
+    return {
+      campaignId: campaignId ? externalId(tenantId, 'campaign', campaignId) : null,
+      productId: productId ? externalId(tenantId, 'product', productId) : null,
+    }
+  }
+
+  /** Cached per tenant and product: the product's seller, from the catalog; none yet for a product it hasn't sent. */
+  async function sellersOf(tenantId: string, productIds: string[], now: number): Promise<Map<string, string>> {
+    const key = (id: string) => `${tenantId}:${id}`
+    const stale = [...new Set(productIds)].filter((id) => (sellerCache.get(key(id))?.until ?? 0) <= now)
+    if (stale.length > 0) {
+      const sellers = await findProductSellers(clickhouse, tenantId, stale)
+      if (sellerCache.size + stale.length > CAMPAIGN_CACHE_MAX) sellerCache.clear()
+      for (const id of stale) sellerCache.set(key(id), { sellerId: sellers.get(id) ?? null, until: now + CAMPAIGN_CACHE_MS })
+    }
+    return new Map(productIds.flatMap((id) => {
+      const sellerId = sellerCache.get(key(id))?.sellerId
+      return sellerId ? [[id, sellerId] as const] : []
+    }))
+  }
+
+  function toMessage(event: IncomingEvent, sender: EventSender, receivedAt: string, sellers: Map<string, string>): BusMessage {
+    const { campaignId: _campaign, productId: _product, ...properties } = event.properties ?? {}
+    const { campaignId, productId } = ids(event, sender.tenantId)
     // IDs are lowercased here, once, so every consumer (Flink joins on them as
     // text) sees one form; the API accepts UUIDs in either case.
     const eventId = event.eventId.toLowerCase()
     const payload: AnalyticsEventPayload = {
       eventId,
+      eventType: eventTypeOf(event.eventName),
       eventName: event.eventName,
-      campaignId: campaignId?.toLowerCase() ?? null,
-      productId: productId?.toLowerCase() ?? null,
+      campaignId,
+      productId,
+      sellerId: (productId && sellers.get(productId)) ?? null,
       userId: sender.userId,
       userType: sender.userType,
       clientType: sender.clientType,
@@ -90,7 +126,7 @@ export function createIngestionService({
       receivedAt,
     }
     return {
-      topic: analyticsTopic(event.eventName),
+      topic: topicOf(event.eventName),
       key: eventId,
       envelope: {
         // The client's eventId, so a retried event keeps the same ID all the way to ClickHouse.
@@ -106,17 +142,35 @@ export function createIngestionService({
     }
   }
 
+  /** Counted per tenant and day received, for reporting; never fails the request. */
+  function recordInvalidTraffic(tenantId: string, reason: string, count: number, now: number) {
+    clickhouse
+      .insert({
+        table: 'invalid_traffic_daily',
+        format: 'JSONEachRow',
+        values: [{ day: new Date(now).toISOString().slice(0, 10), tenant_id: tenantId, reason, events: count }],
+        // Batched by ClickHouse, not one part per request.
+        clickhouse_settings: { async_insert: 1, wait_for_async_insert: 0 },
+      })
+      .catch((error) => logger.warn({ err: error, tenantId }, 'failed to count invalid traffic'))
+  }
+
   return {
-    async ingest(events: IncomingEvent[], sender: EventSender): Promise<IngestResult[]> {
+    async ingest(events: IncomingEvent[], sender: EventSender, userAgent = ''): Promise<IngestResult[]> {
       const now = Date.now()
+      if (BOT_USER_AGENT.test(userAgent)) {
+        recordInvalidTraffic(sender.tenantId, 'bot_user_agent', events.length, now)
+        return events.map((event) => ({ eventId: event.eventId, status: 'rejected', reason: 'INVALID_TRAFFIC' }))
+      }
       assertWithinLimit(sender, events.length, now)
       const receivedAt = new Date(now).toISOString()
       const isMetric = (event: IncomingEvent) => isOneOf(event.eventName, METRIC_EVENT_NAMES)
       const active = await activeCampaigns(
         sender.tenantId,
-        events.filter(isMetric).map((event) => event.properties!.campaignId!.toLowerCase()),
+        events.filter(isMetric).map((event) => ids(event, sender.tenantId).campaignId!),
         now,
       )
+      const sellers = await sellersOf(sender.tenantId, events.flatMap((event) => ids(event, sender.tenantId).productId ?? []), now)
 
       const results: IngestResult[] = []
       const messages: BusMessage[] = []
@@ -126,11 +180,11 @@ export function createIngestionService({
           results.push({ eventId: event.eventId, status: 'rejected', reason: 'TIMESTAMP_OUT_OF_RANGE' })
           continue
         }
-        if (isMetric(event) && !active.has(event.properties!.campaignId!.toLowerCase())) {
+        if (isMetric(event) && !active.has(ids(event, sender.tenantId).campaignId!)) {
           results.push({ eventId: event.eventId, status: 'rejected', reason: 'CAMPAIGN_NOT_ACTIVE' })
           continue
         }
-        messages.push(toMessage(event, sender, receivedAt))
+        messages.push(toMessage(event, sender, receivedAt, sellers))
         results.push({ eventId: event.eventId, status: 'accepted' })
       }
       try {

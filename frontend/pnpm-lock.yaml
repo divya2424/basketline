@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@divya2424/basketline-sdk':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       axios:
         specifier: 1.20.0
         version: 1.20.0(debug@4.4.3)
@@ -275,8 +275,8 @@ packages:
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
 
-  '@divya2424/basketline-sdk@0.2.0':
-    resolution: {integrity: sha512-WmXNGeWZVWOgsNQKw47nRA735FkuNiUJ9OIh52/74wL1qc2BK/W4gu2SEcchn/6L/OuorZw1Ljy758/uiDEn6w==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-sdk/0.2.0/57430a129bbf2e5ad7a94b1ee5b637fb5f71d5d6}
+  '@divya2424/basketline-sdk@0.3.0':
+    resolution: {integrity: sha512-OZIp2Orkb0xYclQSqxyubzqhrP2xz885zD5JuI/nn6+Ddr63KjXEhFbsVTsLvFGLYCTpvkPxZPtkueMTC1qBHA==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-sdk/0.3.0/c403ec11ace92a3b2a2d4453663f2d295a5d2a5b}
 
   '@exodus/bytes@1.16.0':
     resolution: {integrity: sha512-IcpW84uEn3N7ETtNZMlxKhfl6Pec8rUNGOTBtWbK1FKhJxIFAptZyVrvVRVBimAJxJCgc3PxepxkdWWG4DVzfA==}
@@ -1216,7 +1216,7 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.2': {}
 
-  '@divya2424/basketline-sdk@0.2.0': {}
+  '@divya2424/basketline-sdk@0.3.0': {}
 
   '@exodus/bytes@1.16.0': {}
 

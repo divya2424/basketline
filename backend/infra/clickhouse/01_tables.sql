@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS analytics.events
     event_time     DateTime64(3, 'UTC'),
     received_at    DateTime64(3, 'UTC'),
     ingested_at    DateTime64(3, 'UTC') DEFAULT now64(3),
+    -- interaction or identity (contracts: analytics.ts).
+    event_type     LowCardinality(String) DEFAULT 'interaction',
+    -- The seller of product_id, from the catalog, stamped on arrival; NULL without a
+    -- product or for one the catalog hadn't sent yet (the products table has it later).
+    seller_id      Nullable(UUID),
     -- Finds the rows stored since the daily job's last run (late or reprocessed).
     INDEX idx_ingested_at ingested_at TYPE minmax GRANULARITY 1
 )
@@ -45,10 +50,10 @@ ORDER BY (tenant_id, event_name, campaign_id, event_time, event_id)
 -- events at most 5 days old, so a recounted day still has all of its raw
 -- events. A Flink checkpoint reset replays Kafka's 14 days of arrivals, which
 -- hold events up to 19 days old: every day it writes to is still here, so the
--- nightly check deduplicates it instead of recounting a day from a few replayed
+-- hourly check deduplicates it instead of recounting a day from a few replayed
 -- rows. The extra day is margin.
 -- After 7 days a day moves to S3 (the 'tiered' policy, config/storage.xml): the
--- nightly check reads days that got late rows, at most 5 days old, so it reads
+-- hourly check reads days that got late rows, at most 5 days old, so it reads
 -- local disk; older days are read only by rebuilds and the archive.
 TTL toDateTime(event_time) + INTERVAL 7 DAY TO VOLUME 'cold',
     toDateTime(event_time) + INTERVAL 20 DAY
@@ -82,6 +87,8 @@ CREATE TABLE IF NOT EXISTS analytics.attributed_baskets
     event_time      DateTime64(3, 'UTC'),
     click_time      DateTime64(3, 'UTC'),
     ingested_at     DateTime64(3, 'UTC') DEFAULT now64(3),
+    -- The basket addition's product's seller (as on its event).
+    seller_id       Nullable(UUID),
     INDEX idx_ingested_at ingested_at TYPE minmax GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree
@@ -93,20 +100,68 @@ TTL toDateTime(event_time) + INTERVAL 7 DAY TO VOLUME 'cold',
 SETTINGS ttl_only_drop_parts = 1, storage_policy = 'tiered';
 
 
--- Each campaign's tenant and status, from campaign.v1 events (analytics-service).
--- Metric events are accepted only for a campaign of the sender's tenant that is
--- active and not archived.
--- The newest version wins, so replayed and out-of-order events are harmless.
+-- Reference data, from the retailer's server (contracts: retail.ts), through
+-- retail.catalog-events.v1 and retail.campaign-events.v1 (analytics-service). The
+-- newest version (updatedAt) wins, so replayed and out-of-order updates are harmless.
+
+-- Each campaign's tenant, seller and status. Metric events are accepted only for a
+-- campaign of the sender's tenant that is active and not archived; a seller-manager
+-- sees only its seller's. issues: what is wrong with it (a product of another
+-- seller, or one the catalog hasn't sent), kept and flagged rather than refused.
 CREATE TABLE IF NOT EXISTS analytics.campaigns
 (
     campaign_id UUID,
     tenant_id   UUID,
     status      LowCardinality(String),
     archived    Bool,
-    version     UInt64
+    version     UInt64,
+    seller_id   Nullable(UUID),
+    issues      Array(String) DEFAULT []
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY campaign_id;
+
+-- Each tenant's sellers (a store without any has its first-party seller).
+CREATE TABLE IF NOT EXISTS analytics.sellers
+(
+    seller_id UUID,
+    tenant_id UUID,
+    name      String,
+    version   UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (tenant_id, seller_id);
+
+-- Each product's seller and details; a removed product is kept (removed), so its
+-- events still have their seller.
+CREATE TABLE IF NOT EXISTS analytics.products
+(
+    product_id UUID,
+    tenant_id  UUID,
+    seller_id  UUID,
+    name       String,
+    category   Nullable(String),
+    price      Nullable(Float64),
+    is_active  Bool,
+    removed    Bool DEFAULT false,
+    version    UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (tenant_id, product_id);
+
+-- Shoppers erased at the retailer's request (user_deleted, from analytics-service):
+-- their rows are deleted here at once, and from the Iceberg archive by the purge
+-- job (airflow/jobs/purge_tenants.py), which sets archive_purged_at.
+CREATE TABLE IF NOT EXISTS analytics.deleted_users
+(
+    tenant_id         UUID,
+    user_id           UUID,
+    deleted_at        DateTime64(3, 'UTC'),
+    archive_purged_at Nullable(DateTime64(3, 'UTC')),
+    updated_at        DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, user_id);
 
 -- Deleted tenants (TenantDeleted, from analytics-service): their rows are
 -- deleted from every table here, and 03_kafka.sql's queue views drop any that a
@@ -124,6 +179,20 @@ CREATE TABLE IF NOT EXISTS analytics.deleted_tenants
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY tenant_id;
 
+-- Events rejected as invalid traffic (analytics-service: declared bots by user
+-- agent), per UTC day received, tenant and reason, so they can be reported next to
+-- the metrics they were kept out of. SummingMergeTree: queries sum(events).
+CREATE TABLE IF NOT EXISTS analytics.invalid_traffic_daily
+(
+    day       Date,
+    tenant_id UUID,
+    reason    LowCardinality(String),
+    events    UInt64
+)
+ENGINE = SummingMergeTree
+PARTITION BY toYYYYMM(day)
+ORDER BY (tenant_id, day, reason);
+
 -- Campaign totals per UTC day (of event_time: when the user acted), tenant and
 -- campaign: one row each, with every count in total and per client type (web,
 -- mobile), by the /ad counting rules. /ad reads its event counts only from here.
@@ -131,10 +200,11 @@ ORDER BY tenant_id;
 --
 --   live:  two materialized views (02_materialized_views.sql) add each insert into events and attributed_baskets
 --          to its day's row as it is stored, so today's numbers are current;
---   check: every night, daily_campaign_aggregation_check_mv recounts the closed
---          days that got rows since the last run from raw events and adds the
---          difference, so past days are exact (a redelivered event, or the same
---          product credited twice to one click, counts once).
+--   check: every hour, daily_campaign_aggregation_check_mv recounts the days
+--          (today included) that got rows since the last run from raw events and
+--          adds the difference, so every day is exact within the hour (a
+--          redelivered event, or the same product credited twice to one click,
+--          counts once).
 --
 -- SummingMergeTree: each insert and correction is stored as a row of its own,
 -- and background merges add the rows with the same key into one; queries sum(),
@@ -241,7 +311,9 @@ CREATE TABLE IF NOT EXISTS analytics.sessions
     clicked         Array(String),
     -- The products it added to the cart.
     added           Array(UUID),
-    ingested_at     DateTime64(3, 'UTC') DEFAULT now64(3)
+    ingested_at     DateTime64(3, 'UTC') DEFAULT now64(3),
+    -- The sellers of the products it touched.
+    sellers         Array(UUID) DEFAULT []
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY toDate(session_start)

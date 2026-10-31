@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
-import { event, writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
+import { event, writeAudit, type NewEvent, type PublishEvents, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
 import type { Db } from '../db/client.ts'
-import { deleteTenantCampaigns, insertAssociation, insertCampaignIfAbsent } from '../repositories/campaign.repository.ts'
-import { stateEvent } from '../services/campaign.service.ts'
+import { deleteTenantCampaigns, findCampaign, insertAssociation, insertCampaignIfAbsent } from '../repositories/campaign.repository.ts'
+import { campaignUpdate, stateEvent } from '../services/campaign.service.ts'
 
 const TITLES = ['Launch Deals', 'Weekend Picks']
 
@@ -15,16 +15,18 @@ const TITLES = ['Launch Deals', 'Weekend Picks']
  * product-service creates them from the same plan, and their details arrive
  * over product.v1 shortly after.
  */
-export function createTenantSeeder({ db, publish }: { db: Db; publish: PublishEvents }) {
+export function createTenantSeeder({ db, publish, retailer }: { db: Db; publish: PublishEvents; retailer?: RetailerIntegration }) {
   return async (envelope: EventEnvelope): Promise<void> => {
     if (envelope.eventType !== 'TenantOnboarded') return
     const { tenantId, name, onboardedBy, seed } = envelope.payload as EventPayloads['TenantOnboarded']
-    const events = await db.transaction(async (tx) => {
+    const { events, seeded } = await db.transaction(async (tx) => {
       const created: NewEvent[] = []
+      const seeded: string[] = []
       for (const [index, planned] of seed.campaigns.entries()) {
         const campaign = await insertCampaignIfAbsent(tx, {
           id: planned.campaignId,
           tenantId,
+          sellerId: planned.sellerId,
           title: `${name} ${TITLES[index % TITLES.length]}`,
           // The storefront carousel shows only product_collection campaigns.
           type: 'product_collection',
@@ -42,10 +44,18 @@ export function createTenantSeeder({ db, publish }: { db: Db; publish: PublishEv
           created.push(event('CampaignProductAssociated', campaign.id, campaign.version, { campaignId: campaign.id, productId, position: position + 1 }))
         }
         await writeAudit(tx, { actorId: onboardedBy, action: 'campaign.created', subjectType: 'campaign', subjectId: campaign.id, details: { productIds: planned.productIds, seededFrom: envelope.eventId } })
+        seeded.push(campaign.id)
       }
-      return created
+      return { events: created, seeded }
     })
     await publish(events)
+    // As the retailer's backend: the seeded campaigns, with their products, to Basketline.
+    const updates: ReferenceUpdate[] = []
+    for (const id of seeded) {
+      const update = campaignUpdate((await findCampaign(db, tenantId, id))!)
+      if (update) updates.push(update)
+    }
+    await retailer?.send(tenantId, 'campaigns', updates)
   }
 }
 

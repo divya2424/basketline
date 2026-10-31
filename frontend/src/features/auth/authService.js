@@ -7,11 +7,14 @@ import { apiRequest } from '../../api/httpClient.js'
 /** Role names used by the backend. */
 export const ROLES = Object.freeze({
   CAMPAIGN_MANAGER: 'campaign-manager',
+  // One seller's user: sees only that seller's campaigns (the API enforces it).
+  SELLER_MANAGER: 'seller-manager',
   CUSTOMER: 'standard-user',
 })
 
 export const ROLE_LABELS = {
   [ROLES.CAMPAIGN_MANAGER]: 'Campaign manager',
+  [ROLES.SELLER_MANAGER]: 'Seller manager',
   [ROLES.CUSTOMER]: 'Customer',
 }
 
@@ -28,7 +31,7 @@ const LOGIN_MESSAGES = {
   429: 'Too many sign-in attempts. Try again in a few minutes.',
 }
 
-/** Returns { userId, username, displayName, role, accessToken, expiresAt }. */
+/** Returns { userId, username, displayName, role, sellerId, accessToken, expiresAt }; sellerId is a seller manager's seller, else null. */
 export async function authenticate(username, password) {
   try {
     const result = await apiRequest('/auth/login', {
@@ -40,6 +43,7 @@ export async function authenticate(username, password) {
       username: result.user.username,
       displayName: result.user.username,
       role: result.user.role,
+      sellerId: result.user.sellerId ?? null,
       accessToken: result.accessToken,
       expiresAt: result.session.expiresAt,
     }

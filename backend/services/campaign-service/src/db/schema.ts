@@ -18,6 +18,8 @@ export const campaigns = pgTable(
     id: uuid('id').primaryKey(),
     // The owning tenant (from the manager's token). Every query is scoped by it.
     tenantId: uuid('tenant_id').notNull(),
+    // The seller who runs it; its products must be this seller's. Null: from before sellers.
+    sellerId: uuid('seller_id'),
     title: varchar('title', { length: 255 }).notNull(),
     type: varchar('type', { length: 100 }).notNull(),
     description: text('description'),
@@ -74,6 +76,8 @@ export const products = pgTable('products', {
   productId: uuid('product_id').primaryKey(),
   // A campaign can only use its own tenant's products.
   tenantId: uuid('tenant_id').notNull(),
+  // And only its own seller's. Null in events from before sellers.
+  sellerId: uuid('seller_id'),
   name: varchar('name', { length: 255 }),
   price: numeric('price', { precision: 12, scale: 2, mode: 'number' }),
   image: text('image'),

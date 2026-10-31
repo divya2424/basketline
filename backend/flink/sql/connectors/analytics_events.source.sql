@@ -1,5 +1,5 @@
--- Every analytics topic, including ones created later, and analytics.heartbeat.v1,
--- which carries only payload.timestamp: it moves the watermark when no events
+-- The interaction and identity topics, and retail.heartbeat.v1, which carries only
+-- payload.timestamp: it moves the watermark when no events
 -- arrive, and views/02_events.sql drops it. The value is the
 -- EventEnvelope from analytics-service (packages/contracts/src/analytics.ts),
 -- read as text so a malformed record becomes NULLs instead of failing the job.
@@ -16,7 +16,10 @@ CREATE TABLE kafka_events (
   WATERMARK FOR rowtime AS rowtime - INTERVAL '1' HOUR
 ) WITH (
   'connector' = 'kafka',
-  'topic-pattern' = '^__TOPIC_PREFIX__analytics\..+\.v1$',
+  -- analytics.<eventName>.v1: the per-event topics before retail.interactions.v1;
+  -- a replay still reads them until they expire (14 days after the switch), then
+  -- this branch goes (backend/README.md, upgrades).
+  'topic-pattern' = '^__TOPIC_PREFIX__(retail\.interactions\.v1|retail\.identity-events\.v1|retail\.heartbeat\.v1|analytics\..+\.v1)$',
   'properties.bootstrap.servers' = '__KAFKA_BOOTSTRAP_SERVERS__',
   'properties.group.id' = '__KAFKA_GROUP_ID__',
   -- Topics created after the job started are picked up within this interval.

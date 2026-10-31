@@ -21,7 +21,7 @@ export async function findUserById(db: DbOrTx, id: string): Promise<User | null>
 }
 
 /** Throws a unique violation on users_username_unique if the name is taken. */
-export async function insertUser(db: DbOrTx, user: Pick<User, 'id' | 'username' | 'passwordHash' | 'role' | 'tenantId'>): Promise<User> {
+export async function insertUser(db: DbOrTx, user: Pick<User, 'id' | 'username' | 'passwordHash' | 'role' | 'tenantId'> & { sellerId?: string | null }): Promise<User> {
   const [inserted] = await db.insert(users).values(user).returning()
   return inserted!
 }

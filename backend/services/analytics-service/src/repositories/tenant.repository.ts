@@ -1,6 +1,6 @@
 import type { ClickHouse } from '../clickhouse.ts'
 
-/** Every table with a tenant's rows: raw, daily, sessions, and the campaign projection. */
+/** Every table with a tenant's rows: raw, daily, sessions, reference data and counts. */
 const TENANT_TABLES = [
   'events',
   'attributed_baskets',
@@ -9,6 +9,10 @@ const TENANT_TABLES = [
   'daily_campaign_customers_aggregation',
   'daily_campaign_sessions_aggregation',
   'campaigns',
+  'sellers',
+  'products',
+  'invalid_traffic_daily',
+  'deleted_users',
 ]
 
 /**

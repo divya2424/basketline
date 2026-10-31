@@ -1,8 +1,10 @@
-import { isNonEmptyString, isPlainObject, isPrice, unknownKeys } from '@basketline/platform'
+import { isUuid, isNonEmptyString, isPlainObject, isPrice, unknownKeys } from '@basketline/platform'
 
 const FIELDS = ['name', 'description', 'price', 'image', 'category'] as const
 
 export interface CreateProductInput {
+  /** One of the tenant's sellers (GET /sellers); it never changes. */
+  sellerId: string
   name: string
   description: string
   price: number
@@ -10,7 +12,7 @@ export interface CreateProductInput {
   category?: string | null
 }
 
-export type UpdateProductInput = Partial<CreateProductInput> & { isActive?: true }
+export type UpdateProductInput = Partial<Omit<CreateProductInput, 'sellerId'>> & { isActive?: true }
 
 function isImage(value: unknown): boolean {
   return typeof value === 'string' && value.length <= 2048 && (value.startsWith('/') || /^https?:\/\//.test(value))
@@ -27,7 +29,8 @@ function checkOptionalFields(body: Record<string, unknown>, errors: string[]) {
 
 export function validateCreateProduct(body: unknown): string[] {
   if (!isPlainObject(body)) return ['body must be a JSON object']
-  const errors = unknownKeys(body, FIELDS).map((key) => `unknown field "${key}"`)
+  const errors = unknownKeys(body, [...FIELDS, 'sellerId']).map((key) => `unknown field "${key}"`)
+  if (!isUuid(body.sellerId)) errors.push('sellerId is required: one of the tenant\'s sellers (GET /sellers)')
   if (!isNonEmptyString(body.name, 255)) errors.push('name is required (max 255 characters)')
   if (!isNonEmptyString(body.description, 10_000)) errors.push('description is required (max 10000 characters)')
   if (!isPrice(body.price)) errors.push('price must be a number greater than 0 with at most 2 decimals')

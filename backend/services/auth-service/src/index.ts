@@ -30,6 +30,7 @@ const app = buildAuthApp({
   privateKey: await loadPrivateKey(secretEnv('JWT_PRIVATE_KEY')),
   publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')),
   loginRateLimit: intEnv('LOGIN_RATE_LIMIT', 10),
+  internalSecret: process.env.INTERNAL_INTEGRATION_SECRET || undefined,
 })
 const port = intEnv('PORT', 4001)
 const server = app.listen(port, () => {

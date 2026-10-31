@@ -1,13 +1,13 @@
 import { and, count, desc, eq, sql, type SQL } from 'drizzle-orm'
 import type { DbOrTx } from '../db/client.ts'
-import { products } from '../db/schema.ts'
+import { products, sellers } from '../db/schema.ts'
 
 /** A product row: camelCase fields, numeric price, Date timestamps. */
 export type Product = typeof products.$inferSelect
 
 export async function insertProduct(
   db: DbOrTx,
-  product: Pick<Product, 'id' | 'tenantId' | 'name' | 'description' | 'price' | 'image' | 'category' | 'createdBy' | 'updatedBy'>,
+  product: Pick<Product, 'id' | 'tenantId' | 'sellerId' | 'name' | 'description' | 'price' | 'image' | 'category' | 'createdBy' | 'updatedBy'>,
 ): Promise<Product> {
   const [inserted] = await db.insert(products).values(product).returning()
   return inserted!
@@ -63,7 +63,7 @@ export function listAllProducts(db: DbOrTx): Promise<Product[]> {
 /** Inserts the product unless its ID exists; returns it, or null when it already existed. */
 export async function insertProductIfAbsent(
   db: DbOrTx,
-  product: Pick<Product, 'id' | 'tenantId' | 'name' | 'description' | 'price' | 'image' | 'category' | 'createdBy' | 'updatedBy'>,
+  product: Pick<Product, 'id' | 'tenantId' | 'sellerId' | 'name' | 'description' | 'price' | 'image' | 'category' | 'createdBy' | 'updatedBy'>,
 ): Promise<Product | null> {
   const [inserted] = await db.insert(products).values(product).onConflictDoNothing({ target: products.id }).returning()
   return inserted ?? null
@@ -72,5 +72,23 @@ export async function insertProductIfAbsent(
 /** Every product of a deleted tenant. */
 export async function deleteTenantProducts(db: DbOrTx, tenantId: string): Promise<number> {
   const deleted = await db.delete(products).where(eq(products.tenantId, tenantId)).returning({ id: products.id })
+  await db.delete(sellers).where(eq(sellers.tenantId, tenantId))
   return deleted.length
+}
+
+export type Seller = typeof sellers.$inferSelect
+
+export function listSellers(db: DbOrTx, tenantId: string): Promise<Seller[]> {
+  return db.select().from(sellers).where(eq(sellers.tenantId, tenantId)).orderBy(sellers.name)
+}
+
+export async function findSeller(db: DbOrTx, tenantId: string, id: string): Promise<Seller | undefined> {
+  const [seller] = await db.select().from(sellers).where(and(eq(sellers.tenantId, tenantId), eq(sellers.id, id)))
+  return seller
+}
+
+/** Seeding: inserted by its planned ID, so applying the plan again changes nothing. */
+export async function insertSellerIfAbsent(db: DbOrTx, seller: Pick<Seller, 'id' | 'tenantId' | 'name'>): Promise<Seller | null> {
+  const [inserted] = await db.insert(sellers).values(seller).onConflictDoNothing().returning()
+  return inserted ?? null
 }

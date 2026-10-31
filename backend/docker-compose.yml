@@ -65,7 +65,11 @@ services:
       # serving topics: the files run in name order, on a new volume only.
       - ./infra/clickhouse:/docker-entrypoint-initdb.d:ro
       - ./infra/clickhouse/config/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+      - ./infra/clickhouse/config/backup_log.xml:/etc/clickhouse-server/config.d/backup_log.xml:ro
+      - ./infra/clickhouse/config/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
       - chdata:/var/lib/clickhouse
+    # Tables with parts on the cold volume fail to load if its storage isn't up yet.
+    depends_on: { archive-storage: { condition: service_healthy } }
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user basketline --password basketline_dev --query 'SELECT 1' >/dev/null"]
       interval: 3s
@@ -80,6 +84,8 @@ services:
       <<: *service-env
       PORT: 4001
       DATABASE_URL: postgres://identity_svc:identity_svc_dev@postgres:5432/identity_db
+      # Integration tokens for the mimic retailer services (/internal/integration-token).
+      INTERNAL_INTEGRATION_SECRET: basketline_internal_dev
       JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
@@ -92,6 +98,11 @@ services:
       <<: *service-env
       PORT: 4002
       DATABASE_URL: postgres://product_svc:product_svc_dev@postgres:5432/product_db
+      # As every tenant's backend, they send products and campaigns to Basketline's
+      # reference API through the gateway, with integration tokens from auth-service.
+      BASKETLINE_API_URL: http://gateway:8080
+      AUTH_INTERNAL_URL: http://auth-service:4001
+      INTERNAL_INTEGRATION_SECRET: basketline_internal_dev
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
@@ -103,6 +114,11 @@ services:
       <<: *service-env
       PORT: 4003
       DATABASE_URL: postgres://campaign_svc:campaign_svc_dev@postgres:5432/campaign_db
+      # As every tenant's backend, they send products and campaigns to Basketline's
+      # reference API through the gateway, with integration tokens from auth-service.
+      BASKETLINE_API_URL: http://gateway:8080
+      AUTH_INTERNAL_URL: http://auth-service:4001
+      INTERNAL_INTEGRATION_SECRET: basketline_internal_dev
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
@@ -223,7 +239,41 @@ services:
       campaign-service: { condition: service_healthy }
       analytics-service: { condition: service_healthy }
 
+  # Monitoring (infra/monitoring/), only with: docker compose --profile monitoring up -d
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=15d]
+    ports: ["9090:9090"]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    profiles: [monitoring]
+    command: [--kafka.server=kafka:19092]
+    depends_on: { kafka: { condition: service_healthy } }
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [monitoring]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: basketline_dev
+      # Viewing needs no sign-in locally.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline.json
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+
 volumes:
+  prometheus-data:
   pgdata:
   chdata:
   flink-checkpoints:

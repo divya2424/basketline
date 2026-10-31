@@ -23,7 +23,7 @@
 -- addition's client type is the one it is counted under.
 INSERT INTO serving_attributed_baskets
 SELECT /*+ STATE_TTL('b' = '6d', 'c' = '13d') */
-  b.event_id, c.event_id, b.tenant_id, c.campaign_id, b.product_id, b.user_id, b.user_type, b.client_type, b.event_time, c.event_time
+  b.event_id, c.event_id, b.tenant_id, c.campaign_id, b.product_id, b.user_id, b.user_type, b.client_type, b.event_time, c.event_time, b.seller_id
 FROM baskets AS b
 JOIN clicks AS c
   ON b.tenant_id = c.tenant_id

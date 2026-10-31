@@ -50,13 +50,13 @@ export async function createTestKeys(): Promise<TestKeys> {
 export async function tokenFor(
   keys: TestKeys,
   role: Role,
-  overrides: { sub?: string; sid?: string; tid?: string; client?: ClientType; issuedAt?: Date; ttlSeconds?: number } = {},
+  overrides: { sub?: string; sid?: string; tid?: string; client?: ClientType; sel?: string; issuedAt?: Date; ttlSeconds?: number } = {},
 ) {
   const sub = overrides.sub ?? randomUUID()
   const sid = overrides.sid ?? randomUUID()
   const tid = overrides.tid ?? randomUUID()
   const client = overrides.client ?? 'web'
-  const { token } = await signAccessToken(keys.privateKey, { sub, sid, role, tid, client }, overrides.issuedAt, overrides.ttlSeconds)
+  const { token } = await signAccessToken(keys.privateKey, { sub, sid, role, tid, client, ...(overrides.sel ? { sel: overrides.sel } : {}) }, overrides.issuedAt, overrides.ttlSeconds)
   return { token, sub, sid, tid, header: `Bearer ${token}` }
 }
 

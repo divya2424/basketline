@@ -13,11 +13,24 @@ taskmanager:
   host: localhost
   bind-host: localhost
   numberOfTaskSlots: 2
+  # The heap holds the Iceberg archive's open Parquet files: one per day and
+  # tenant bucket a subtask writes before the next checkpoint, so a replay of
+  # Kafka's 14 days opens many. 160 MB (the default share) ran out.
   memory:
     process:
-      size: 1280m
+      size: 2048m
+    task:
+      heap:
+        size: 512m
 parallelism:
   default: 2
+# Metrics for Prometheus (infra/monitoring/prometheus.yml): the job manager on
+# :9249, the task manager on :9250 (one container runs both).
+metrics:
+  reporter:
+    prom:
+      factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+      port: 9249-9250
 rest:
   address: localhost
   bind-address: 0.0.0.0

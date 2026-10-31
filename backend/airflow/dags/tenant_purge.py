@@ -1,4 +1,4 @@
-"""Daily: deletes deleted tenants' rows from the Iceberg archive (jobs/purge_tenants.py).
+"""Daily: deletes deleted tenants' and shoppers' rows from the Iceberg archive (jobs/purge_tenants.py).
 
 Deleting a tenant on the platform removes its data from every service and from
 ClickHouse at once; its archived files are rewritten here, and again on every

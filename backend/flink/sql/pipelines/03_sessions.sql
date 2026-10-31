@@ -25,6 +25,8 @@ SELECT
   -- campaign when it added a product it clicked there.
   ARRAY_AGG(DISTINCT CASE WHEN event_name IN ('impression', 'click') THEN campaign_id END IGNORE NULLS) AS campaigns,
   ARRAY_AGG(DISTINCT CASE WHEN event_name = 'click' THEN campaign_id || ':' || product_id END IGNORE NULLS) AS clicked,
-  ARRAY_AGG(DISTINCT CASE WHEN event_name = 'add_to_cart' THEN product_id END IGNORE NULLS) AS added
+  ARRAY_AGG(DISTINCT CASE WHEN event_name = 'add_to_cart' THEN product_id END IGNORE NULLS) AS added,
+  -- The sellers of the products it touched.
+  ARRAY_AGG(DISTINCT seller_id IGNORE NULLS) AS sellers
 FROM TABLE(SESSION(TABLE session_events PARTITION BY (tenant_id, user_id), DESCRIPTOR(rowtime), INTERVAL '6' HOUR))
 GROUP BY window_start, window_end, tenant_id, user_id;

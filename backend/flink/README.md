@@ -1,6 +1,6 @@
 # Basketline: Flink job (Kafka → Flink SQL → Kafka → ClickHouse)
 
-A Flink SQL job ([`sql/`](sql/)) that reads every analytics topic analytics-service publishes to (`analytics.<eventName>.v1`) and writes three topics, which ClickHouse loads ([`../infra/clickhouse/03_kafka.sql`](../infra/clickhouse/03_kafka.sql)):
+A Flink SQL job ([`sql/`](sql/)) that reads the shared topics analytics-service publishes shoppers' events to (`retail.interactions.v1` and `retail.identity-events.v1`, every tenant's) and writes three topics, which ClickHouse loads ([`../infra/clickhouse/03_kafka.sql`](../infra/clickhouse/03_kafka.sql)):
 
 | Topic | One message per | ClickHouse table | Used by |
 |---|---|---|---|
@@ -8,8 +8,10 @@ A Flink SQL job ([`sql/`](sql/)) that reads every analytics topic analytics-serv
 | `serving.attributed_baskets.v1` | (basket addition, candidate click) | `analytics.attributed_baskets` | `daily_campaign_aggregation` (click_to_basket) and the click-to-basket customers, read by `/ad` |
 | `serving.sessions.v1` | user session | `analytics.sessions` | `daily_campaign_sessions_aggregation`, read by `/ad/:id/sessions` |
 
+Every row carries the tenant and, from analytics-service, the event's `event_type` (`interaction` or `identity`) and its product's `seller_id` (NULL when it has none). Credited basket additions keep the basket addition's seller, and a session lists the `sellers` of the products it touched. `user_deleted` is never stored: analytics-service applies it.
+
 ```
-analytics.<eventName>.v1 ──► parse + validate ──┬──────────────────────────────────────────────► serving.events.v1 ──────────► analytics.events
+retail.interactions.v1   ──► parse + validate ──┬──────────────────────────────────────────────► serving.events.v1 ──────────► analytics.events
                                                  │
                                                  ├─► clicks ⋈ add_to_cart, keyed by             ► serving.attributed_baskets.v1 ► analytics.attributed_baskets
                                                  │   (tenant, user, product), 7-day window        (ClickHouse credits the latest click)
@@ -34,7 +36,7 @@ The job is split by role into files under `sql/`. [`run.sh`](run.sh) assembles t
 sql/
   settings.sql                              checkpointing, state backend, time zone
   connectors/                               one file per external table (CREATE TABLE … WITH connector)
-    analytics_events.source.sql             Kafka analytics.<eventName>.v1 and analytics.heartbeat.v1 (read)
+    analytics_events.source.sql             Kafka retail.interactions.v1, retail.identity-events.v1, retail.heartbeat.v1 (read)
     archive.catalog.sql                     the Iceberg archive (write)
     serving_events.sink.sql                 Kafka serving.events.v1 (write)
     serving_attributed_baskets.sink.sql     Kafka serving.attributed_baskets.v1 (write; read back for the archive)
@@ -74,7 +76,7 @@ Clients send no attribution: an `add_to_cart` is matched with every `click` that
 2. was for the same product (a click without a product is never credited);
 3. came at most **7 days** before the basket addition (`event_time`, the user's own time), and not after it.
 
-Flink writes each match (one row per basket addition and candidate click). **The latest click wins** (last click): ClickHouse credits the one with the largest `(click_time, click_event_id)` per basket addition. Flink can't pick it itself and still write an append-only stream: a click that arrives late would have to retract a match already written, which needs an upsert sink. ClickHouse then counts each click once per product (`uniqExact(click_event_id, product_id)`), under the basket addition's client type (`client_type`). When a basket addition's candidates are stored in different batches (the user clicked the product in two campaigns), today's count credits both until the nightly check corrects the closed day (`backend/README.md`, "Daily totals").
+Flink writes each match (one row per basket addition and candidate click). **The latest click wins** (last click): ClickHouse credits the one with the largest `(click_time, click_event_id)` per basket addition. Flink can't pick it itself and still write an append-only stream: a click that arrives late would have to retract a match already written, which needs an upsert sink. ClickHouse then counts each click once per product (`uniqExact(click_event_id, product_id)`), under the basket addition's client type (`client_type`). When a basket addition's candidates are stored in different batches (the user clicked the product in two campaigns), today's count credits both until the hourly check corrects the day (`backend/README.md`, "Daily totals").
 
 **The same rules in the history backfill.** `airflow/jobs/backfill/spark_backfill.py` recomputes older days from the archive with the same rules, so a rule change here must change it too. `airflow/tests/fixtures/attribution_cases.json` runs the same cases through both (`pnpm test:flink`, `pnpm test:backfill`).
 
@@ -91,8 +93,8 @@ So a pair that can match is always both in state. The state is in RocksDB, check
 
 [`03_sessions.sql`](sql/pipelines/03_sessions.sql): a user's events (per tenant) with no gap of **6 hours** or more between them form one session, an event-time `SESSION` window partitioned by `(tenant_id, user_id)`. Each session is one row in `analytics.sessions`: start, last event, counts per event type, web/mobile, the campaigns it saw or clicked, its clicks' `campaign:product` pairs and the products it added to the cart. ClickHouse counts, per campaign seen, the sessions, the converted ones (it added a product it clicked in that campaign) and their average duration (`/ad/:id/sessions`).
 
-- **Event time and the watermark.** A session window needs to know when no more events of a session can come. The source's watermark trails the newest event time by **1 hour** (`analytics_events.source.sql`), and a topic partition with no new events stops holding it back after a minute (`table.exec.source.idle-timeout`). Once every partition is idle, nothing would move it, so analytics-service publishes the current time to `analytics.heartbeat.v1` every 30 s: the source reads it like any analytics topic, the watermark follows it, and the `events` view drops it (it has no event or tenant ID). Without it, sessions would stay open after a replay or a quiet night until the next event.
-- **Late events are left out of sessions** (only): an event behind the watermark, so more than an hour older than the newest event time (a phone that was offline), is dropped from sessions, but still stored and counted everywhere else. analytics-service accepts events up to 5 days late, so events between 1 hour and 5 days late are in the event counts and click-to-basket but never in sessions, and nothing corrects that later: the nightly check covers only `daily_campaign_aggregation`. Flink's `numLateRecordsDropped` metric shows how many, and this shows their share per day (arrival time is close to `received_at`):
+- **Event time and the watermark.** A session window needs to know when no more events of a session can come. The source's watermark trails the newest event time by **1 hour** (`analytics_events.source.sql`), and a topic partition with no new events stops holding it back after a minute (`table.exec.source.idle-timeout`). Once every partition is idle, nothing would move it, so analytics-service publishes the current time to `retail.heartbeat.v1` every 30 s: the source reads it like any analytics topic, the watermark follows it, and the `events` view drops it (it has no event or tenant ID). Without it, sessions would stay open after a replay or a quiet night until the next event.
+- **Late events are left out of sessions** (only): an event behind the watermark, so more than an hour older than the newest event time (a phone that was offline), is dropped from sessions, but still stored and counted everywhere else. analytics-service accepts events up to 5 days late, so events between 1 hour and 5 days late are in the event counts and click-to-basket but never in sessions, and nothing corrects that later: the hourly check covers only `daily_campaign_aggregation`. Flink's `numLateRecordsDropped` metric shows how many, and this shows their share per day (arrival time is close to `received_at`):
 
   ```sql
   SELECT toDate(event_time) AS day, count() AS events,
@@ -135,7 +137,7 @@ So a pair that can match is always both in state. The state is in RocksDB, check
 - **After a container restart**, [`run.sh`](run.sh) resumes from the newest complete checkpoint in `CHECKPOINT_DIR`, in `CLAIM` mode, so the new job owns it and deletes it once a newer one exists.
 - **At least once:** what was written after the last checkpoint is written again after a restart. ClickHouse absorbs this:
   - both raw tables are `ReplacingMergeTree`, keyed down to the event IDs, so copies are merged away;
-  - the daily totals count a copy that arrives in a later batch until the nightly check recounts that day from raw events, so past days are exact and today's total can be a little high (`backend/README.md`, "Daily totals").
+  - the daily totals count a copy that arrives in a later batch until the hourly check recounts that day from raw events, so every day, today included, is exact within the hour (`backend/README.md`, "Daily totals").
 - **Malformed records** (invalid JSON, or a missing or non-UUID `eventId`, `tenantId` or `timestamp`) are dropped. An optional ID that isn't a UUID becomes `NULL`. analytics-service already validates events, so this only guards the sink.
 
 ## Run it
@@ -173,4 +175,4 @@ The job then reads Kafka from `KAFKA_STARTUP_MODE` (`earliest-offset`), which is
 | `KAFKA_STARTUP_MODE` | `earliest-offset` | Used only when there is no checkpoint: `earliest-offset`, `latest-offset` or `group-offsets` |
 | `CHECKPOINT_DIR` | `/checkpoints` | Keep it on a persistent volume; never share it between jobs |
 
-Memory, task slots and parallelism are set in [`config.yaml`](config.yaml): a 768 MB job manager, and a 1280 MB task manager with 2 slots and a parallelism of 2.
+Memory, task slots and parallelism are set in [`config.yaml`](config.yaml): a 768 MB job manager, and a 2 GB task manager (512 MB of it task heap) with 2 slots and a parallelism of 2. The heap holds the archive's open Parquet files, one per day and tenant bucket a subtask writes between checkpoints, so a replay of 14 days needs more than the default share (160 MB ran out). At scale, give the archive sink `'write.distribution-mode' = 'hash'` so each subtask writes only its partitions. Prometheus scrapes the job manager on `:9249` and the task manager on `:9250` (the [README](../README.md#monitoring)).

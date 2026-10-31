@@ -1,0 +1,14 @@
+<!--
+  Keeps a record of every BACKUP and RESTORE in system.backup_log, which
+  survives restarts (system.backups doesn't). The monitoring alerts on the age
+  of the newest backup from it (infra/monitoring). Mounted into
+  /etc/clickhouse-server/config.d/ (docker-compose.yml).
+-->
+<clickhouse>
+    <backup_log>
+        <database>system</database>
+        <table>backup_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <ttl>event_date + INTERVAL 90 DAY</ttl>
+    </backup_log>
+</clickhouse>

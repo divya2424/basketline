@@ -6,7 +6,7 @@
  * Open to anyone (see the README's warning): for demos, not production tenants.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { CAMPAIGN_MANAGER, STANDARD_USER, type TenantDeletedPayload, type TenantOnboardedPayload, type TenantOriginsChangedPayload } from '@basketline/contracts'
+import { CAMPAIGN_MANAGER, SELLER_MANAGER, STANDARD_USER, type Role, type TenantDeletedPayload, type TenantOnboardedPayload, type TenantOriginsChangedPayload } from '@basketline/contracts'
 import { badRequest, event, notFound, type NewEvent, type PublishEvents } from '@basketline/platform'
 import { withTenant, type Db } from '../db/client.ts'
 import { newApiKey } from './shopper.service.ts'
@@ -19,6 +19,7 @@ export const DEMO_PASSWORD = 'test'
 const DUMMY_USERS = 10
 const SEED_PRODUCTS = { min: 10, max: 15 }
 const SEED_CAMPAIGN_SIZES = [2, 3]
+const SEED_SELLERS = ['Northwind Traders', 'Contoso Goods']
 
 // The seed plan is drawn from the tenant ID (itself random): it differs from tenant
 // to tenant, but is the same every time for one tenant, so sending a tenant's
@@ -44,9 +45,17 @@ export function seedPlan(tenantId: string): TenantOnboardedPayload['seed'] {
     const j = numberBelow(tenantId, `shuffle:${i}`, i + 1)
     ;[shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!]
   }
+  // Two sellers: campaign i is seller i % 2's, with its products; the rest alternate.
+  const sellers = SEED_SELLERS.map((name, i) => ({ sellerId: uuidFrom(tenantId, `seller:${i}`), name, productIds: [] as string[] }))
   let next = 0
-  const campaigns = SEED_CAMPAIGN_SIZES.map((size, i) => ({ campaignId: uuidFrom(tenantId, `campaign:${i}`), productIds: shuffled.slice(next, (next += size)) }))
-  return { productIds, campaigns }
+  const campaigns = SEED_CAMPAIGN_SIZES.map((size, i) => {
+    const seller = sellers[i % sellers.length]!
+    const campaignProducts = shuffled.slice(next, (next += size))
+    seller.productIds.push(...campaignProducts)
+    return { campaignId: uuidFrom(tenantId, `campaign:${i}`), sellerId: seller.sellerId, productIds: campaignProducts }
+  })
+  shuffled.slice(next).forEach((productId, i) => sellers[i % sellers.length]!.productIds.push(productId))
+  return { productIds, sellers, campaigns }
 }
 
 /** The event that has product-service and campaign-service seed the tenant. */
@@ -66,16 +75,21 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
       const tenantId = randomUUID()
       const { account, users, events, apiKey } = await withTenant(db, tenantId, async (tx) => {
         const account = await insertAccount(tx, { tenantId, name: input.name.trim(), tier: input.tier })
-        const wanted = [
+        const firstSeller = seedPlan(tenantId).sellers[0]!.sellerId
+        const wanted: { username: string; role: Role; sellerId?: string }[] = [
           { username: ONBOARDING_USERNAME, role: CAMPAIGN_MANAGER },
           ...(input.dummyUsers
-            ? Array.from({ length: DUMMY_USERS }, (_, i) => ({ username: `user${String(i + 1).padStart(2, '0')}`, role: STANDARD_USER }))
+            ? [
+                ...Array.from({ length: DUMMY_USERS }, (_, i) => ({ username: `user${String(i + 1).padStart(2, '0')}`, role: STANDARD_USER })),
+                // The first seeded seller's manager: sees only that seller's campaigns.
+                { username: 'seller01', role: SELLER_MANAGER, sellerId: firstSeller },
+              ]
             : []),
         ]
         const users = []
         const events: NewEvent[] = []
-        for (const { username, role } of wanted) {
-          const created = await createUser(tx, { username, password: DEMO_PASSWORD, role, tenantId }, null)
+        for (const { username, role, sellerId } of wanted) {
+          const created = await createUser(tx, { username, password: DEMO_PASSWORD, role, tenantId, sellerId }, null)
           users.push({ id: created.user.id, username: created.user.username, role: created.user.role })
           events.push(...created.events)
         }

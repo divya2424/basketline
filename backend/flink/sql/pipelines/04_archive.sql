@@ -11,7 +11,7 @@ INSERT INTO archive.`__ARCHIVE_NAMESPACE__`.events
 SELECT event_id, event_name, campaign_id, product_id, user_id, tenant_id, page_name, feature_name,
        CAST(NULL AS STRING) AS attribution_id, properties,
        CAST(event_time AS TIMESTAMP_LTZ(6)), CAST(received_at AS TIMESTAMP_LTZ(6)), CAST(CURRENT_TIMESTAMP AS TIMESTAMP_LTZ(6)) AS ingested_at,
-       CAST(NULL AS STRING) AS anonymous_id, client_type, user_type
+       CAST(NULL AS STRING) AS anonymous_id, client_type, user_type, event_type, seller_id
 FROM events;
 
 -- Credited basket additions are read back from their serving topic, since the
@@ -20,6 +20,6 @@ FROM events;
 INSERT INTO archive.`__ARCHIVE_NAMESPACE__`.attributed_baskets
 SELECT basket_event_id, click_event_id, tenant_id, campaign_id, product_id, user_id,
        CAST(event_time AS TIMESTAMP_LTZ(6)), CAST(click_time AS TIMESTAMP_LTZ(6)), CAST(CURRENT_TIMESTAMP AS TIMESTAMP_LTZ(6)) AS ingested_at,
-       client_type, user_type
+       client_type, user_type, seller_id
 FROM serving_attributed_baskets
   /*+ OPTIONS('properties.group.id' = '__KAFKA_GROUP_ID__-archive', 'scan.startup.mode' = 'earliest-offset') */;

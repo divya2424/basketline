@@ -26,7 +26,7 @@ dags/                  scheduling only: which job, which day, retries
   archive_export.py      nightly 01:00 UTC: exports day D-7 of sessions
   archive_maintenance.py daily, AWS only: Athena OPTIMIZE + VACUUM
   history_backfill.py    on demand: recompute closed months of the daily tables from the archive
-  tenant_purge.py        daily 02:00 UTC: delete deleted tenants' rows from the archive (jobs/purge_tenants.py)
+  tenant_purge.py        daily 02:00 UTC: delete deleted tenants' and erased shoppers' rows from the archive (jobs/purge_tenants.py)
 jobs/                  the work, as plain scripts that also run without Airflow
   export_archive.py      copies one day of a table from ClickHouse; also creates the archive's tables
   backfill/              spark_backfill.py (Spark) and load_backfill.py (ClickHouse staging and swap)
@@ -40,7 +40,7 @@ tests/                 the jobs against the running stack
 
 **Safe to re-run.** `export_archive.py --table T --day D` deletes day D from the Iceberg table and appends ClickHouse's rows for D **in one commit**. A retry or a backfill replaces the day instead of duplicating it, and a run that fails half-way commits nothing. It reads with `FINAL`, so copies ClickHouse hasn't merged away yet are archived once. It refuses a day ClickHouse no longer keeps, since that would replace the archived day with nothing.
 
-**Columns.** The tables follow ClickHouse's columns. A new one (`client_type`, `user_type`) is added at the end of an existing Iceberg table. A dropped one (`anonymous_id`, before every visitor had a `user_id`) stays, NULL from then on, since dropping it would break reading older files.
+**Columns.** The tables follow ClickHouse's columns. A new one (`client_type`, `user_type`; `event_type`, `seller_id` and sessions' `sellers`) is added at the end of an existing Iceberg table, as optional. The Flink job writes to these tables too, so run `iceberg_table()` for a new column before deploying a job that writes it (the backend README's upgrade steps). A dropped one (`anonymous_id`, before every visitor had a `user_id`) stays, NULL from then on, since dropping it would break reading older files.
 
 **Table layout.** The tables are partitioned by `day(event_time)` and `bucket(16, tenant_id)`: a query for a date range reads only those days, and a tenant's query reads one bucket of each. IDs are stored as strings (Athena has no UUID type), times as `timestamptz` in UTC, and the files are Parquet with zstd.
 
@@ -74,7 +74,7 @@ print(load_catalog('archive').load_table('archive.events').scan().to_arrow().gro
 
 ## Backfilling history
 
-ClickHouse's daily tables keep every day, but the nightly check can only correct the 20 days whose raw events ClickHouse still holds. To correct older days, for example after a bug fix or a change to the attribution or session rules, the `history_backfill` DAG recomputes them from the archive's raw events, with the current rules. It can cover one tenant, several or all, and any number of months.
+ClickHouse's daily tables keep every day, but the hourly check can only correct the 20 days whose raw events ClickHouse still holds. To correct older days, for example after a bug fix or a change to the attribution or session rules, the `history_backfill` DAG recomputes them from the archive's raw events, with the current rules. It can cover one tenant, several or all, and any number of months.
 
 ```
 validate → spark_backfill (local or EMR Serverless) → prepare → check → swap (only with apply=true)

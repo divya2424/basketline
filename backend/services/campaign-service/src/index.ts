@@ -9,6 +9,7 @@ import {
   intEnv,
   loadPublicKey,
   requireEnv,
+  retailerIntegrationFromEnv,
   secretEnv,
 } from '@basketline/platform'
 import { buildCampaignApp } from './app.ts'
@@ -29,7 +30,9 @@ health.addCheck('kafka', () => bus.healthCheck())
 //   events apply by product version, so a redelivered one changes nothing.
 // - auth.tenant.v1 seeds each onboarded tenant's campaigns, by their planned IDs, and
 //   deletes a deleted tenant's campaigns and product copy.
-const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'campaign-service', logger) })
+// Acting as each tenant's backend: campaigns also go to Basketline's campaign API.
+const retailer = retailerIntegrationFromEnv(logger)
+const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'campaign-service', logger), retailer })
 await bus.subscribe({
   groupId: 'campaign-service',
   topics: [TOPICS.products, TOPICS.tenants],
@@ -40,7 +43,7 @@ await bus.subscribe({
   },
 })
 
-const app = buildCampaignApp({ db, bus, logger, health, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+const app = buildCampaignApp({ db, bus, logger, health, retailer, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4003)
 const server = app.listen(port, () => {
   health.markStarted()

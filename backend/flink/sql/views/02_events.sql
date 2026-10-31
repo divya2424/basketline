@@ -21,9 +21,13 @@ SELECT
   properties,
   event_time,
   COALESCE(received_at, event_time) AS received_at,
+  CASE WHEN event_type IN ('interaction', 'identity') THEN event_type ELSE 'interaction' END AS event_type,
+  CASE WHEN REGEXP(seller_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') THEN seller_id END AS seller_id,
   rowtime
 FROM parsed
 WHERE REGEXP(event_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
   AND REGEXP(tenant_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
   AND CHAR_LENGTH(event_name) > 0
+  -- Erasure is applied by analytics-service, never stored as an event.
+  AND event_name <> 'user_deleted'
   AND event_time IS NOT NULL;

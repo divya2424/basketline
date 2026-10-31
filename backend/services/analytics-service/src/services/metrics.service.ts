@@ -1,5 +1,6 @@
 import { badRequest } from '@basketline/platform'
 import type { ClickHouse } from '../clickhouse.ts'
+import { findCampaignSeller, findSellerCampaigns } from '../repositories/campaign.repository.ts'
 import { countDaily, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
 
 /** API metric names (kept from the frontend contract). */
@@ -37,7 +38,7 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
   const cache = new Map<string, { count: Promise<MetricCount>; until: number }>()
 
   function cachedCount(scope: MetricScope, metric: MetricName) {
-    const key = `${scope.tenantId}:${scope.campaignId}:${metric}:${scope.from.toISOString()}:${scope.to.toISOString()}`
+    const key = `${scope.tenantId}:${scope.campaignIds.join(',')}:${metric}:${scope.from.toISOString()}:${scope.to.toISOString()}`
     const now = Date.now()
     let entry = cache.get(key)
     if (!entry || entry.until <= now) {
@@ -57,14 +58,20 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
      * (people who saw or clicked it); or sessions (that saw it, converted, and
      * their average duration; about 7 hours behind). Customer and session counts
      * are estimates within about 1% beyond a few thousand. Today's numbers are
-     * live; past event counts are exact once the nightly check has run. An
+     * live, and every day's event counts are exact within the hour (the hourly check). An
      * unknown campaign simply has 0.
      */
-    async count(tenantId: string, campaignId: string, metric: MetricName, from?: string, to?: string) {
+    async count(tenantId: string, campaignIds: string[], metric: MetricName, from?: string, to?: string) {
       const period = resolvePeriod(from, to)
-      const scope = { tenantId, campaignId, ...period }
+      const scope = { tenantId, campaignIds: [...campaignIds].sort(), ...period }
       return { ...(await (cacheMs > 0 ? cachedCount(scope, metric) : countDaily(clickhouse, scope, metric))), period }
     },
+
+    /** A campaign's seller (undefined: not the tenant's campaign). */
+    campaignSeller: (tenantId: string, campaignId: string) => findCampaignSeller(clickhouse, tenantId, campaignId),
+
+    /** The tenant's campaigns of one seller. */
+    sellerCampaigns: (tenantId: string, sellerId: string) => findSellerCampaigns(clickhouse, tenantId, sellerId),
   }
 }
 

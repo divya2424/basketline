@@ -1,5 +1,5 @@
 import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
-import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, METRIC_EVENT_NAMES, USER_TYPES, type AnalyticsEventName, type UserType } from '@basketline/contracts'
+import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, isRetailerId, METRIC_EVENT_NAMES, USER_TYPES, type AnalyticsEventName, type UserType } from '@basketline/contracts'
 
 export const MAX_EVENTS_PER_REQUEST = 100
 
@@ -33,8 +33,9 @@ function validateEvent(event: unknown, at: string): string[] {
   const { campaignId, productId } = (event.properties ?? {}) as Record<string, unknown>
   // The campaign metrics need a campaign; other activity may or may not have one.
   const campaignRequired = isOneOf(event.eventName, METRIC_EVENT_NAMES)
-  if ((campaignRequired || campaignId != null) && !isUuid(campaignId)) errors.push(`${at}.properties.campaignId must be a UUID`)
-  if (productId != null && !isUuid(productId)) errors.push(`${at}.properties.productId must be a UUID`)
+  // A UUID, or the retailer's own ID (mapped by ingestion: retail.ts externalId).
+  if ((campaignRequired || campaignId != null) && !isRetailerId(campaignId)) errors.push(`${at}.properties.campaignId must be a campaign ID (a UUID or your own ID)`)
+  if (productId != null && !isRetailerId(productId)) errors.push(`${at}.properties.productId must be a product ID (a UUID or your own ID)`)
   return errors
 }
 

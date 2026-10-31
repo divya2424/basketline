@@ -33,8 +33,8 @@ export function proxyRoutes(urls: ServiceUrls, logger: Logger): RequestHandler[]
 
   return [
     proxy(['/api/v1/auth', '/api/v1/accounts'], urls.auth),
-    proxy(['/api/v1/products'], urls.product),
+    proxy(['/api/v1/products', '/api/v1/sellers'], urls.product),
     proxy(['/api/v1/campaigns'], urls.campaign),
-    proxy(['/api/v1/ad', '/api/v1/analytics'], urls.analytics),
+    proxy(['/api/v1/ad', '/api/v1/analytics', '/api/v1/retail'], urls.analytics),
   ]
 }

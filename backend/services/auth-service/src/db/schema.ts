@@ -55,6 +55,8 @@ export const users = pgTable(
     lastLoginAt: timestamptz('last_login_at'),
     // Bumped by role changes and disabling; orders the user's events.
     version: bigint('version', { mode: 'number' }).notNull().default(1),
+    // A seller-manager's seller (in its tokens as "sel"); null for other roles.
+    sellerId: uuid('seller_id'),
   },
   // Usernames are unique within a tenant, regardless of case.
   (table) => [uniqueIndex('users_username_unique').on(table.tenantId, sql`lower(${table.username})`), tenantIsolation()],

@@ -1,0 +1,65 @@
+<!--
+  Metrics for Prometheus (infra/monitoring/prometheus.yml):
+  - :9363/metrics: ClickHouse's own metrics, events and asynchronous metrics.
+  - :8123/pipeline-metrics: the pipeline's health, read from its tables in the
+    Prometheus text format: the newest stored event's age, the hourly check, the
+    newest backup's age, invalid traffic today, and events in the last hour per
+    seller. Asks for a ClickHouse user (Prometheus sends basic auth).
+-->
+<clickhouse>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+
+    <http_handlers>
+        <rule>
+            <url>/pipeline-metrics</url>
+            <methods>GET</methods>
+            <handler>
+                <type>predefined_query_handler</type>
+                <query>
+                    SELECT name, value, help, type, labels FROM (
+                        SELECT 'basketline_newest_event_age_seconds' AS name,
+                               toFloat64(dateDiff('second', max(ingested_at), now64(3))) AS value,
+                               'Seconds since ClickHouse last stored an event' AS help, 'gauge' AS type,
+                               CAST(map(), 'Map(String, String)') AS labels
+                        FROM analytics.events
+                        UNION ALL
+                        SELECT 'basketline_hourly_check_failed', toFloat64(ifNull(exception, '') != ''),
+                               '1 when the last run of an hourly check failed', 'gauge', map('view', view)
+                        FROM system.view_refreshes WHERE database = 'analytics'
+                        UNION ALL
+                        SELECT 'basketline_hourly_check_age_seconds', toFloat64(dateDiff('second', ifNull(last_success_time, toDateTime(0)), now())),
+                               'Seconds since an hourly check last succeeded', 'gauge', map('view', view)
+                        FROM system.view_refreshes WHERE database = 'analytics'
+                        UNION ALL
+                        SELECT 'basketline_backup_age_seconds', toFloat64(dateDiff('second', max(event_time), now())),
+                               'Seconds since the newest completed backup (a very large value: none yet)', 'gauge',
+                               CAST(map(), 'Map(String, String)')
+                        FROM system.backup_log WHERE status = 'BACKUP_CREATED'
+                        UNION ALL
+                        SELECT 'basketline_invalid_traffic_today', toFloat64(sum(events)),
+                               'Events refused today as invalid traffic, per tenant and reason', 'gauge',
+                               map('tenant', toString(tenant_id), 'reason', toString(reason))
+                        FROM analytics.invalid_traffic_daily WHERE day = today() GROUP BY tenant_id, reason
+                        UNION ALL
+                        SELECT 'basketline_seller_events_last_hour', toFloat64(count()),
+                               'Events stored in the last hour, per seller', 'gauge',
+                               map('tenant', toString(e.tenant_id), 'seller', toString(assumeNotNull(e.seller_id)), 'seller_name', ifNull(any(s.name), ''))
+                        FROM analytics.events AS e
+                        LEFT JOIN (SELECT seller_id, tenant_id, argMax(name, version) AS name FROM analytics.sellers GROUP BY seller_id, tenant_id) AS s
+                          ON s.seller_id = e.seller_id AND s.tenant_id = e.tenant_id
+                        WHERE e.ingested_at > now() - INTERVAL 1 HOUR AND e.seller_id IS NOT NULL
+                        GROUP BY e.tenant_id, e.seller_id
+                    ) ORDER BY name
+                    FORMAT Prometheus
+                </query>
+            </handler>
+        </rule>
+        <defaults/>
+    </http_handlers>
+</clickhouse>

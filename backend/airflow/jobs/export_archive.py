@@ -58,6 +58,8 @@ TABLES = {
         ("anonymous_id", _ID, False, "CAST(NULL AS Nullable(String))"),
         ("client_type", StringType(), False, "toString(client_type)"),
         ("user_type", StringType(), False, "toString(user_type)"),
+        ("event_type", StringType(), False, "toString(event_type)"),
+        ("seller_id", _ID, False, "toString(seller_id)"),
     ],
     "attributed_baskets": [
         ("basket_event_id", _ID, True, "toString(basket_event_id)"),
@@ -71,6 +73,7 @@ TABLES = {
         ("ingested_at", _TIME, True, "ingested_at"),
         ("client_type", StringType(), False, "toString(client_type)"),
         ("user_type", StringType(), False, "toString(user_type)"),
+        ("seller_id", _ID, False, "toString(seller_id)"),
     ],
     "sessions": [
         ("session_id", _ID, True, "toString(session_id)"),
@@ -90,6 +93,7 @@ TABLES = {
         ("clicked", ListType(102, StringType(), element_required=True), True, "clicked"),
         ("added", ListType(103, _ID, element_required=True), True, "arrayMap(p -> toString(p), added)"),
         ("ingested_at", _TIME, True, "ingested_at"),
+        ("sellers", ListType(104, _ID, element_required=True), False, "arrayMap(s -> toString(s), sellers)"),
     ],
 }
 # The time column each table's day is of: a basket addition's or event's time, a session's start.

@@ -6,7 +6,7 @@ The web app of [Basketline](../README.md), a React + Vite app on the Basketline 
 - **Storefront:** a catalog and campaign carousel from the API, product pages and a cart.
 - **Sign-in:** against the auth service, with roles.
 - **Analytics events:** sent to the analytics service as shoppers browse.
-- **Campaign dashboard:** for campaign managers, with the ad funnel, the audience and sessions.
+- **Campaign dashboard:** for campaign managers (every seller's campaigns) and seller managers (their own seller's), with the ad funnel, the audience and sessions.
 
 ![The campaign dashboard: the ad funnel (impressions → clicks → click-to-basket, with the conversion rate between each step) and the audience (unique customers and sessions)](docs/dashboard.png)
 
@@ -84,7 +84,7 @@ The tenant's pages (`/store`, `/store/products/:id`, `/cart`, `/analytics`) requ
 
 **Header:** inside a tenant it shows:
 - the tenant's name;
-- Home, and Analytics for campaign managers;
+- Home, and Analytics for campaign and seller managers;
 - the user, **Logout** (back to the onboarding page) and the cart.
 
 ### Sign-in and roles
@@ -94,7 +94,7 @@ The tenant's pages (`/store`, `/store/products/:id`, `/cart`, `/analytics`) requ
 | **Session** | Kept in `sessionStorage` (`basketline:session:v3`: profile, role, token and expiry, tenant; never the password), so it lasts until the tab closes. Switching stores means signing in again. |
 | **Expiry** | The token lasts 30 minutes, then the app signs out. |
 | **Logout** | Ends the session on the server too. |
-| **Roles** | Only `campaign-manager` users see **Analytics**. Anyone else opening `/analytics` sees "Access restricted", and the dashboard code is never downloaded. The API enforces the role on every request regardless. |
+| **Roles** | Only `campaign-manager` and `seller-manager` users see **Analytics**; a seller manager sees only their seller's campaigns (onboarding with dummy users creates `seller01`, password `test`) and not the API keys. Anyone else opening `/analytics` sees "Access restricted", and the dashboard code is never downloaded. The API enforces the role on every request regardless. |
 
 > **Security note:** any script on the page can read `sessionStorage`, so the app must stay free of XSS. An `httpOnly` cookie would avoid this, but needs backend support.
 

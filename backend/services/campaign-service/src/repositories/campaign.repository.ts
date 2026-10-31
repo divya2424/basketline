@@ -62,7 +62,7 @@ export async function listCampaigns(db: DbOrTx, filter: CampaignFilter): Promise
 
 export async function insertCampaign(
   db: DbOrTx,
-  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
+  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'sellerId' | 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
 ): Promise<CampaignRow> {
   const [inserted] = await db.insert(campaigns).values(campaign).returning()
   return inserted!
@@ -131,7 +131,7 @@ export async function listCampaignProducts(db: DbOrTx, campaignId: string, limit
 /** Inserts the campaign unless its ID exists; returns it, or null when it already existed. */
 export async function insertCampaignIfAbsent(
   db: DbOrTx,
-  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
+  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'sellerId' | 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
 ): Promise<CampaignRow | null> {
   const [inserted] = await db.insert(campaigns).values(campaign).onConflictDoNothing({ target: campaigns.id }).returning()
   return inserted ?? null
@@ -142,4 +142,26 @@ export async function deleteTenantCampaigns(db: DbOrTx, tenantId: string): Promi
   await db.delete(campaignProducts).where(eq(campaignProducts.tenantId, tenantId))
   await db.delete(campaigns).where(eq(campaigns.tenantId, tenantId))
   await db.delete(products).where(eq(products.tenantId, tenantId))
+}
+
+export async function listAllCampaigns(db: DbOrTx): Promise<Campaign[]> {
+  return (await db.query.campaigns.findMany({ with: withProductIds, orderBy: [asc(campaigns.tenantId), asc(campaigns.id)] })).map(toCampaign)
+}
+
+/**
+ * Gives each campaign from before sellers the seller of its products, when the
+ * products copy knows all of them and they share one; updated_at moves so the
+ * new state wins downstream. Returns how many campaigns got one.
+ */
+export async function fillCampaignSellers(db: DbOrTx): Promise<number> {
+  const result = await db.execute(sql`
+    UPDATE campaigns c SET seller_id = s.seller_id, campaign_updated_at = now()
+    FROM (
+      SELECT cp.campaign_id, (array_agg(p.seller_id))[1] AS seller_id
+      FROM campaign_products cp LEFT JOIN products p ON p.product_id = cp.product_id AND p.tenant_id = cp.tenant_id
+      GROUP BY cp.campaign_id
+      HAVING count(p.seller_id) = count(*) AND count(DISTINCT p.seller_id) = 1
+    ) s
+    WHERE c.id = s.campaign_id AND c.seller_id IS NULL`)
+  return result.rowCount ?? 0
 }

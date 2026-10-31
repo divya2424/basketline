@@ -9,7 +9,8 @@ CREATE TABLE serving_attributed_baskets (
   user_type       STRING,
   client_type     STRING,
   event_time      TIMESTAMP(3),
-  click_time      TIMESTAMP(3)
+  click_time      TIMESTAMP(3),
+  seller_id       STRING
 ) WITH (
   'connector' = 'kafka',
   'topic' = '__TOPIC_PREFIX__serving.attributed_baskets.v1',

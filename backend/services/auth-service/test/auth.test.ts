@@ -2,14 +2,16 @@ import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { decodeJwt } from 'jose'
 import { randomUUID } from 'node:crypto'
-import { closeDb, createLogger, createMemoryEventBus, verifyEventToken, verifyVisitorToken, type MemoryEventBus } from '@basketline/platform'
+import { closeDb, createLogger, createMemoryEventBus, verifyEventToken, verifyIntegrationToken, verifyVisitorToken, type MemoryEventBus } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildAuthApp } from '../src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant, type Db } from '../src/db/client.ts'
 import { insertAccount } from '../src/repositories/account.repository.ts'
 import { seedPlan } from '../src/services/account.service.ts'
 import { createShopperService } from '../src/services/shopper.service.ts'
-import { changeRole, disableUser } from '../src/services/user-admin.service.ts'
+import { changeRole, createUser, disableUser } from '../src/services/user-admin.service.ts'
+
+const INTERNAL_SECRET = 'internal-test-secret'
 
 const logger = createLogger('auth-test')
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
@@ -31,7 +33,7 @@ beforeAll(async () => {
   await insertAccount(db, { tenantId: OTHER_TENANT, name: 'Other storefront', tier: 'pro' })
   keys = await createTestKeys()
   bus = createMemoryEventBus(logger)
-  app = buildAuthApp({ db, bus, logger, privateKey: keys.privateKey, publicKey: keys.publicKey, loginRateLimit: 5 })
+  app = buildAuthApp({ db, bus, logger, privateKey: keys.privateKey, publicKey: keys.publicKey, loginRateLimit: 5, internalSecret: INTERNAL_SECRET })
 })
 
 afterAll(async () => {
@@ -547,21 +549,49 @@ describe('tenant onboarding (/accounts)', () => {
     expect((await signIn(kept.body.account.tenantId, 'onboarding')).status).toBe(200)
   })
 
-  it('adds user01–user10 as standard users when asked, all signing in with "test"', async () => {
+  it('adds user01–user10 as standard users and seller01 as the first seller\'s manager when asked, all signing in with "test"', async () => {
     const res = await onboard({ name: 'With demo users', tier: 'free', dummyUsers: true })
     expect(res.status).toBe(201)
     const tenant = res.body.account.tenantId as string
     expect(res.body.users.map((u: { username: string }) => u.username)).toEqual([
       'onboarding',
       ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`),
+      'seller01',
     ])
-    expect(res.body.users.slice(1).every((u: { role: string }) => u.role === 'standard-user')).toBe(true)
+    expect(res.body.users.slice(1, 11).every((u: { role: string }) => u.role === 'standard-user')).toBe(true)
     const login = await signIn(tenant, 'user10')
     expect(login.body.user).toMatchObject({ username: 'user10', role: 'standard-user', tenantId: tenant })
+    // The seller-manager's token carries its seller: the first seeded one.
+    const message = bus.published.find((m) => m.envelope.eventType === 'TenantOnboarded' && m.key === tenant)!
+    const firstSeller = (message.envelope.payload as { seed: { sellers: { sellerId: string }[] } }).seed.sellers[0]!.sellerId
+    const seller = await signIn(tenant, 'seller01')
+    expect(seller.body.user).toMatchObject({ role: 'seller-manager', sellerId: firstSeller })
+    expect(decodeJwt(seller.body.accessToken)).toMatchObject({ role: 'seller-manager', sel: firstSeller })
     // The users belong to the new tenant only.
     expect((await signIn(TENANT, 'user10')).status).toBe(401)
     const { rows } = await queryAsTenant('SELECT count(*)::int AS n FROM users', [], tenant)
-    expect(rows[0].n).toBe(11)
+    expect(rows[0].n).toBe(12)
+  })
+
+  it('creates a seller-manager only with its seller, and no other role with one', async () => {
+    await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'no-seller', password: 'x', role: 'seller-manager', tenantId: TENANT }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
+    await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'odd', password: 'x', role: 'standard-user', tenantId: TENANT, sellerId: randomUUID() }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
+  })
+
+  it("exchanges the tenant's API key for an integration token, and mints one for the mimic services only with the secret", async () => {
+    const res = await onboard({ name: 'Integrated', tier: 'free', dummyUsers: false })
+    const tenant = res.body.account.tenantId as string
+    const exchange = (key: string) => request(app).post('/api/v1/auth/integration-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${key}`)
+    const ok = await exchange(res.body.apiKey.key)
+    expect(ok.status).toBe(201)
+    expect(await verifyIntegrationToken(ok.body.integrationToken, keys.publicKey)).toMatchObject({ tid: tenant })
+    // Not an access token or an events token: only the reference API accepts it.
+    expect(decodeJwt(ok.body.integrationToken).aud).toBe('basketline-integration')
+    expect((await exchange('bl_sk_wrong')).status).toBe(401)
+
+    const internal = (secret: string) => request(app).post('/internal/integration-token').set('x-internal-secret', secret).send({ tenantId: tenant })
+    expect((await internal('wrong')).status).toBe(401)
+    expect(await verifyIntegrationToken((await internal(INTERNAL_SECRET)).body.integrationToken, keys.publicKey)).toMatchObject({ tid: tenant })
   })
 
   it('publishes TenantOnboarded with a random seed plan: 10–15 products, campaigns of 2 and 3 of them', async () => {
@@ -573,7 +603,10 @@ describe('tenant onboarding (/accounts)', () => {
     const onboardingUser = (await signIn(tenant, 'onboarding')).body.user.id
     expect(payload).toMatchObject({ tenantId: tenant, name: 'Seeded', tier: 'free', onboardedBy: onboardingUser })
 
-    const { productIds, campaigns } = payload.seed
+    const { productIds, campaigns, sellers } = (payload as unknown as { seed: { productIds: string[]; campaigns: { sellerId: string; productIds: string[] }[]; sellers: { sellerId: string; productIds: string[] }[] } }).seed
+    // Every product is one seller's, and each campaign's products are its seller's.
+    expect(sellers.flatMap((s) => s.productIds).sort()).toEqual([...productIds].sort())
+    for (const campaign of campaigns) expect(sellers.find((s) => s.sellerId === campaign.sellerId)!.productIds).toEqual(expect.arrayContaining(campaign.productIds))
     expect(productIds.length).toBeGreaterThanOrEqual(10)
     expect(productIds.length).toBeLessThanOrEqual(15)
     expect(new Set(productIds).size).toBe(productIds.length)

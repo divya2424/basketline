@@ -1,7 +1,7 @@
 -- ClickHouse schema, part 2 of 3: the materialized views that fill the daily
 -- tables (01_tables.sql, where each table's comment explains its counting rules)
--- from the raw tables as rows are stored, and the nightly check that corrects
--- closed days.
+-- from the raw tables as rows are stored, and the hourly check that makes them
+-- exact.
 
 -- Live: impressions and clicks. uniqExact within each insert, so copies sent in
 -- the same batch count once; copies in different batches are left to the check.
@@ -27,7 +27,7 @@ GROUP BY day, tenant_id, campaign_id;
 -- Live: basket additions credited to their latest click, once per click and
 -- product. The latest click among each insert's candidates: a basket whose
 -- candidates arrive in different inserts (the user clicked the product in two
--- campaigns) counts for both until the nightly check.
+-- campaigns) counts for both until the hourly check.
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_aggregation_baskets_mv
 TO analytics.daily_campaign_aggregation
 AS SELECT
@@ -54,15 +54,18 @@ FROM
 )
 GROUP BY day, tenant_id, campaign_id;
 
--- Check (every night at 00:30 UTC): for each closed day (before today), tenant
--- and campaign that got rows in the last 26 hours, the exact counts from raw
--- events minus what the table holds, appended as one correcting row. A day that
--- is already right gets nothing. The 2 hours of overlap with the previous run
--- cover rows stored while it was reading. Each day is recounted about once, the
--- night after it ends, and again only if late events arrive for it. Raw events
--- are kept longer than the 5 days events may arrive late, so a changed day still
--- has all of its raw events. If a night's run fails, those days keep their live
--- counts, which are off only by the rare duplicates. Basket additions are
+-- Check (every hour, 5 minutes past): for each day (today included), tenant and
+-- campaign that got rows in the last 3 hours, the exact counts from raw events
+-- minus what the table holds, appended as one correcting row. A day that is
+-- already right gets nothing. So today's numbers, which the live views can
+-- overcount (a copy of an event in another insert, after a Flink restart or a
+-- replay), are exact within the hour. The 2 hours of overlap with the previous
+-- run cover rows stored while it was reading; a row stored between its reads of
+-- raw events and of the table can make a day briefly off, and the next run,
+-- which sees that row as recent, corrects it. Raw events are kept longer than the
+-- 5 days events may arrive late, so a changed day still has all of its raw
+-- events. If runs fail for more than the overlap, the days they missed keep their
+-- live counts until they change again. Basket additions are
 -- recounted with their latest click; a basket that got a new candidate marks the
 -- days and campaigns of all its candidates as changed, so a campaign that lost
 -- the credit is corrected down (to 0 if it has nothing else that day).
@@ -71,14 +74,14 @@ GROUP BY day, tenant_id, campaign_id;
 -- ClickHouse coordinates that (a refresh on every replica would append each
 -- correction once per replica).
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_aggregation_check_mv
-REFRESH EVERY 1 DAY OFFSET 30 MINUTE APPEND
+REFRESH EVERY 1 HOUR OFFSET 5 MINUTE APPEND
 TO analytics.daily_campaign_aggregation
 AS WITH changed AS
 (
     SELECT toDate(event_time) AS day, tenant_id, assumeNotNull(campaign_id) AS campaign_id
     FROM analytics.events
     WHERE event_name IN ('impression', 'click') AND campaign_id IS NOT NULL
-      AND ingested_at >= now64(3, 'UTC') - INTERVAL 26 HOUR AND event_time < toStartOfDay(now64(3, 'UTC'))
+      AND ingested_at >= now64(3, 'UTC') - INTERVAL 3 HOUR
 
     UNION DISTINCT
 
@@ -88,7 +91,7 @@ AS WITH changed AS
     (
         SELECT tenant_id, basket_event_id
         FROM analytics.attributed_baskets
-        WHERE ingested_at >= now64(3, 'UTC') - INTERVAL 26 HOUR AND event_time < toStartOfDay(now64(3, 'UTC'))
+        WHERE ingested_at >= now64(3, 'UTC') - INTERVAL 3 HOUR
     )
 ),
 exact AS

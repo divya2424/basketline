@@ -10,12 +10,26 @@ import { timestamptz } from '@basketline/platform/tables'
 
 export { auditLog } from '@basketline/platform/tables'
 
+/** The tenant's sellers (marketplace sellers, or the retailer itself): each product is one seller's. */
+export const sellers = pgTable(
+  'sellers',
+  {
+    id: uuid('id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    name: varchar('name', { length: 200 }).notNull(),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [index('sellers_tenant_idx').on(table.tenantId)],
+)
+
 export const products = pgTable(
   'products',
   {
     id: uuid('id').primaryKey(),
     // The owning tenant (from the manager's token). Every query is scoped by it.
     tenantId: uuid('tenant_id').notNull(),
+    // The seller who publishes it; it never changes.
+    sellerId: uuid('seller_id').notNull(),
     name: varchar('name', { length: 255 }).notNull(),
     description: text('description').notNull(),
     price: numeric('price', { precision: 12, scale: 2, mode: 'number' }).notNull(),

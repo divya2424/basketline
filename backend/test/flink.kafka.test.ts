@@ -1,5 +1,5 @@
 /**
- * The Flink job end to end: events published to the real analytics.<eventName>.v1
+ * The Flink job end to end: events published to the real retail.interactions.v1
  * topics must reach ClickHouse, basket additions must be matched with the user's
  * earlier clicks by the attribution rules (backend/flink/sql/pipelines/02_attributed_baskets.sql)
  * with the latest click credited. The cases are shared with the history backfill
@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ANALYTICS_EVENT_TYPE, analyticsTopic, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@basketline/contracts'
+import { ANALYTICS_EVENT_TYPE, INTERACTIONS_TOPIC, eventTypeOf, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@basketline/contracts'
 import { createKafkaEventBus, createLogger, type BusMessage, type EventBus } from '@basketline/platform'
 import { createClickHouse } from '../services/analytics-service/src/clickhouse.ts'
 
@@ -30,6 +30,8 @@ const BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',')
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
 const TENANT = randomUUID()
 const OTHER_TENANT = randomUUID()
+/** The seller analytics-service stamps on events for a product (here: every product). */
+const SELLER = randomUUID()
 const HOUR = 60 * 60 * 1000
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 
@@ -60,6 +62,7 @@ function message(event: TestEvent): BusMessage {
   const payload: AnalyticsEventPayload = {
     eventId: event.eventId ?? randomUUID(),
     eventName: event.eventName,
+    eventType: eventTypeOf(event.eventName),
     campaignId: event.campaignId ?? null,
     productId: event.productId ?? null,
     userId: event.userId ?? randomUUID(),
@@ -71,9 +74,10 @@ function message(event: TestEvent): BusMessage {
     properties: {},
     timestamp: event.timestamp,
     receivedAt: new Date().toISOString(),
+    sellerId: event.productId ? SELLER : null,
   }
   return {
-    topic: analyticsTopic(event.eventName),
+    topic: INTERACTIONS_TOPIC,
     key: payload.eventId,
     envelope: {
       eventId: payload.eventId,
@@ -164,5 +168,11 @@ describe('the Flink job', () => {
       ([row]) => Number(row?.events) >= published,
     )
     expect(Number(stored[0]?.events)).toBe(published)
+
+    // The seller and event type reach the stored events and credited baskets.
+    expect(await rows(`SELECT DISTINCT event_type, toString(seller_id) AS seller FROM events WHERE tenant_id IN {tenants:Array(UUID)} AND product_id IS NOT NULL`)).toEqual([
+      { event_type: 'interaction', seller: SELLER },
+    ])
+    expect(await rows(`SELECT DISTINCT toString(seller_id) AS seller FROM attributed_baskets WHERE tenant_id IN {tenants:Array(UUID)}`)).toEqual([{ seller: SELLER }])
   }, 120_000)
 })

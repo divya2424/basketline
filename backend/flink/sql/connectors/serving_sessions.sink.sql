@@ -13,7 +13,8 @@ CREATE TABLE serving_sessions (
   mobile          BOOLEAN,
   campaigns       ARRAY<STRING>,
   clicked         ARRAY<STRING>,
-  added           ARRAY<STRING>
+  added           ARRAY<STRING>,
+  sellers         ARRAY<STRING>
 ) WITH (
   'connector' = 'kafka',
   'topic' = '__TOPIC_PREFIX__serving.sessions.v1',

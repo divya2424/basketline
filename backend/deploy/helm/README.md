@@ -100,4 +100,4 @@ The pod runs a job manager and a task manager together, like a small Flink sessi
 
 - **Rate limits are per pod.** The gateway counts requests in memory, so with 3 replicas a client can make up to 3× `RATE_LIMIT_PER_MINUTE`. It trusts one `X-Forwarded-For` hop for the client IP, so put exactly one proxy, the Ingress controller, in front of it.
 - **Migrations run at startup in every pod.** On a fresh install with several replicas, the pods can race on the first migration. A pod that loses the race exits and restarts, and then finds the migration applied. Upgrades roll out one new pod at a time, so they don't race.
-- **Topics are created by the services.** analytics-service creates the `analytics.*` topics that Flink reads and the `serving.*` topics it writes, so deploy analytics-service before the first flink-streaming deploy.
+- **Topics are created by the services.** analytics-service creates the `retail.*` topics that Flink reads and the `serving.*` topics it writes, so deploy analytics-service before the first flink-streaming deploy.

@@ -15,6 +15,8 @@ export function authRoutes(
   router.post('/visitor', validate(validateVisitor), controller.visitor)
   // A vendor's backend, with its API key: a token for its signed-in customer.
   router.post('/shopper-token', validate(validateShopperToken), controller.shopperToken)
+  // A retailer's backend: its API key for a token to send reference data (catalog, campaigns, identity).
+  router.post('/integration-token', controller.integrationToken)
   router.post('/logout', authenticate, controller.logout)
   router.get('/me', authenticate, controller.me)
   router.get('/sessions', authenticate, controller.sessions)

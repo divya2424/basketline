@@ -11,6 +11,8 @@ import {
   writeAudit,
   type NewEvent,
   type PublishEvents,
+  type ReferenceUpdate,
+  type RetailerIntegration,
 } from '@basketline/platform'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
@@ -56,7 +58,7 @@ function assertNoDuplicates(productIds: string[]) {
  * Unknown products get a retryable error because the copy may not have
  * caught up yet.
  */
-async function assertProductsAssociable(tx: DbOrTx, tenantId: string, productIds: string[]) {
+async function assertProductsAssociable(tx: DbOrTx, tenantId: string, productIds: string[], sellerId: string | null) {
   if (productIds.length === 0) return
   const known = await findKnownProducts(tx, tenantId, productIds)
   const missing = productIds.filter((id) => !known.has(id))
@@ -68,8 +70,11 @@ async function assertProductsAssociable(tx: DbOrTx, tenantId: string, productIds
       { productIds: missing },
     )
   }
-  const inactive = productIds.filter((id) => known.get(id) === false)
+  const inactive = productIds.filter((id) => known.get(id)?.isActive === false)
   if (inactive.length > 0) throw unprocessable('PRODUCT_INACTIVE', 'Inactive products cannot be added to a campaign', { productIds: inactive })
+  // A campaign advertises its own seller's products only (copies from before sellers have none).
+  const otherSellers = productIds.filter((id) => sellerId && known.get(id)?.sellerId && known.get(id)?.sellerId !== sellerId)
+  if (otherSellers.length > 0) throw unprocessable('PRODUCT_OF_ANOTHER_SELLER', "A campaign can only include its own seller's products", { productIds: otherSellers })
 }
 
 async function lockWritable(tx: DbOrTx, tenantId: string, id: string) {
@@ -89,6 +94,7 @@ export function stateEvent(campaign: Omit<Campaign, 'productIds'>, eventType: 'C
   return event(eventType, campaign.id, campaign.version, {
     campaignId: campaign.id,
     tenantId: campaign.tenantId,
+    sellerId: campaign.sellerId,
     title: campaign.title,
     type: campaign.type,
     status: campaign.status,
@@ -121,11 +127,35 @@ async function addAssociations(tx: DbOrTx, tenantId: string, actorId: string, ca
 const audit = (tx: DbOrTx, actorId: string, action: string, campaignId: string, details?: object) =>
   writeAudit(tx, { actorId, action, subjectType: 'campaign', subjectId: campaignId, details })
 
+/** The campaign as Basketline's campaign API takes it (campaign_upserted): full state with its products, ordered by updatedAt. */
+export function campaignUpdate(campaign: Campaign): ReferenceUpdate | null {
+  // A campaign from before sellers can't be sent until it has one.
+  if (!campaign.sellerId) return null
+  return {
+    eventName: 'campaign_upserted',
+    updatedAt: campaign.updatedAt.toISOString(),
+    data: {
+      campaignId: campaign.id,
+      sellerId: campaign.sellerId,
+      title: campaign.title,
+      status: campaign.status,
+      startTime: campaign.startTime?.toISOString() ?? null,
+      endTime: campaign.endTime?.toISOString() ?? null,
+      archived: campaign.archivedAt !== null,
+      productIds: campaign.productIds,
+    },
+  }
+}
+
 /**
- * Business rules for campaigns. Events are published after each transaction commits.
- * Every method works within one tenant: another tenant's campaign is not found.
+ * Business rules for campaigns. Events are published after each transaction commits,
+ * and the campaign's full state goes to Basketline (retailer.ts), as a retailer's backend does.
  */
-export function createCampaignService({ db, publish }: { db: Db; publish: PublishEvents }) {
+export function createCampaignService({ db, publish, retailer }: { db: Db; publish: PublishEvents; retailer?: RetailerIntegration }) {
+  const sendToBasketline = async (campaign: Campaign) => {
+    const update = campaignUpdate(campaign)
+    if (update) await retailer?.send(campaign.tenantId, 'campaigns', [update])
+  }
   return {
     /** The campaign and all its product associations are saved in one transaction. */
     async create(tenantId: string, actorId: string, input: CreateCampaignInput): Promise<Campaign> {
@@ -133,10 +163,11 @@ export function createCampaignService({ db, publish }: { db: Db; publish: Publis
       assertSchedule(toDate(input.startTime), toDate(input.endTime))
       assertNoDuplicates(productIds)
       const { campaign, events } = await db.transaction(async (tx) => {
-        await assertProductsAssociable(tx, tenantId, productIds)
+        await assertProductsAssociable(tx, tenantId, productIds, input.sellerId)
         const created = await insertCampaign(tx, {
           id: randomUUID(),
           tenantId,
+          sellerId: input.sellerId.toLowerCase(),
           title: input.title.trim(),
           type: input.type.trim(),
           description: input.description ?? null,
@@ -151,6 +182,7 @@ export function createCampaignService({ db, publish }: { db: Db; publish: Publis
         return { campaign: await requireCampaign(tx, tenantId, created.id), events: [stateEvent(created, 'CampaignCreated'), ...associated] }
       })
       await publish(events)
+      await sendToBasketline(campaign)
       return campaign
     },
 
@@ -183,6 +215,7 @@ export function createCampaignService({ db, publish }: { db: Db; publish: Publis
         return { campaign: await requireCampaign(tx, tenantId, id), events: [stateEvent(updated, 'CampaignUpdated')] }
       })
       await publish(events)
+      await sendToBasketline(campaign)
       return campaign
     },
 
@@ -197,20 +230,22 @@ export function createCampaignService({ db, publish }: { db: Db; publish: Publis
         return { campaign: await requireCampaign(tx, tenantId, id), events: [stateEvent(archived, 'CampaignUpdated')] }
       })
       await publish(events)
+      await sendToBasketline(campaign)
       return campaign
     },
 
     async addProducts(tenantId: string, actorId: string, id: string, productIds: string[]): Promise<Campaign> {
       assertNoDuplicates(productIds)
       const { campaign, events } = await db.transaction(async (tx) => {
-        await lockWritable(tx, tenantId, id)
-        await assertProductsAssociable(tx, tenantId, productIds)
+        const current = await lockWritable(tx, tenantId, id)
+        await assertProductsAssociable(tx, tenantId, productIds, current.sellerId)
         const { version } = await updateCampaign(tx, id, actorId)
         const associated = await addAssociations(tx, tenantId, actorId, id, productIds, version)
         await audit(tx, actorId, 'campaign.products_added', id, { productIds })
         return { campaign: await requireCampaign(tx, tenantId, id), events: associated }
       })
       await publish(events)
+      await sendToBasketline(campaign)
       return campaign
     },
 
@@ -228,6 +263,7 @@ export function createCampaignService({ db, publish }: { db: Db; publish: Publis
         return [event('CampaignProductRemoved', id, version, { campaignId: id, productId })]
       })
       await publish(events)
+      await sendToBasketline(await requireCampaign(db, tenantId, id))
     },
   }
 }

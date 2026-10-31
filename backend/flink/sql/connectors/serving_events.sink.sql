@@ -12,7 +12,9 @@ CREATE TABLE serving_events (
   feature_name   STRING,
   properties     STRING,
   event_time     TIMESTAMP(3),
-  received_at    TIMESTAMP(3)
+  received_at    TIMESTAMP(3),
+  event_type     STRING,
+  seller_id      STRING
 ) WITH (
   'connector' = 'kafka',
   'topic' = '__TOPIC_PREFIX__serving.events.v1',

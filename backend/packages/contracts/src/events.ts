@@ -25,6 +25,8 @@ export interface ProductState {
   productId: string
   /** The tenant (UUID) that owns the product; it never changes. */
   tenantId: string
+  /** The seller (UUID) who publishes it; it never changes. */
+  sellerId: string
   name: string
   price: number
   image: string | null
@@ -41,6 +43,8 @@ export interface CampaignState {
   campaignId: string
   /** The tenant (UUID) that owns the campaign; it never changes. */
   tenantId: string
+  /** The seller (UUID) who runs it; its products are this seller's. Null: a campaign from before sellers. */
+  sellerId: string | null
   title: string
   type: string
   status: CampaignStatus
@@ -63,7 +67,10 @@ export interface TenantOnboardedPayload {
   onboardedBy: string
   seed: {
     productIds: string[]
-    campaigns: { campaignId: string; productIds: string[] }[]
+    /** The tenant's sellers and the products each publishes (every product has one). */
+    sellers: { sellerId: string; name: string; productIds: string[] }[]
+    /** Each campaign is one seller's, with that seller's products. */
+    campaigns: { campaignId: string; sellerId: string; productIds: string[] }[]
   }
 }
 

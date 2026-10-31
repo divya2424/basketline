@@ -6,18 +6,20 @@
  *   pnpm test:e2e
  */
 import { randomUUID } from 'node:crypto'
+import { createServer, type RequestListener } from 'node:http'
 import type { AddressInfo, Server } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { Admin } from '@platformatic/kafka'
 import request from 'supertest'
 import { decodeJwt } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ANALYTICS_EVENT_NAMES, analyticsTopic, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@basketline/contracts'
+import { CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC, INTERACTIONS_TOPIC, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@basketline/contracts'
 import {
   closeDb,
   createEventPublisher,
   createKafkaEventBus,
   createLogger,
+  createRetailerIntegration,
   ensureTopics,
   idempotentHandler,
   type Database,
@@ -26,7 +28,7 @@ import {
 import { createTestDatabase, createTestKeys } from '@basketline/platform/testing'
 import { buildAnalyticsApp } from '../services/analytics-service/src/app.ts'
 import { createClickHouse } from '../services/analytics-service/src/clickhouse.ts'
-import { handleCampaignEvent } from '../services/analytics-service/src/events/campaign.consumer.ts'
+import { handleReferenceEvent } from '../services/analytics-service/src/events/reference.consumer.ts'
 import { buildAuthApp } from '../services/auth-service/src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant } from '../services/auth-service/src/db/client.ts'
 import { insertAccount } from '../services/auth-service/src/repositories/account.repository.ts'
@@ -40,11 +42,14 @@ import { createGatewayDb, migrateGatewayDb } from '../services/gateway/src/db/cl
 import { handleAccessEvent } from '../services/gateway/src/events/access.consumer.ts'
 import { buildProductApp } from '../services/product-service/src/app.ts'
 import { createProductDb, migrateProductDb } from '../services/product-service/src/db/client.ts'
+import { insertSellerIfAbsent } from '../services/product-service/src/repositories/product.repository.ts'
 
 const BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',')
 const PREFIX = `e2e-${randomUUID().slice(0, 8)}.`
 const logger = createLogger('e2e')
 const TENANT = randomUUID()
+const SELLER = randomUUID()
+const INTERNAL_SECRET = 'e2e-internal-secret'
 
 const databases: Awaited<ReturnType<typeof createTestDatabase>>[] = []
 const dbs: Database<any>[] = []
@@ -53,7 +58,7 @@ const servers: Server[] = []
 let gateway: ReturnType<typeof buildGateway>['app']
 let authDb: ReturnType<typeof createAuthDb>
 let authBus: EventBus
-/** What arrived on the analytics.<eventName>.v1 topics (read by the Flink job in production). */
+/** What arrived on retail.interactions.v1 (read by the Flink job in production). */
 const analyticsMessages: { topic: string; envelope: EventEnvelope<AnalyticsEventPayload> }[] = []
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
 
@@ -73,9 +78,9 @@ async function kafka(clientId: string): Promise<EventBus> {
   return bus
 }
 
-async function listen(app: import('express').Express): Promise<string> {
+async function listen(app: RequestListener): Promise<string> {
   const server = await new Promise<Server>((resolve) => {
-    const s = app.listen(0, () => resolve(s))
+    const s = createServer(app).listen(0, () => resolve(s))
   })
   servers.push(server)
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -93,30 +98,33 @@ async function eventually<T>(attempt: () => Promise<T>, done: (result: T) => boo
 }
 
 beforeAll(async () => {
-  const analyticsTopics = ANALYTICS_EVENT_NAMES.map(analyticsTopic)
-  await ensureTopics({ brokers: BROKERS, clientId: 'e2e', topicPrefix: PREFIX }, [...Object.values(TOPICS), ...analyticsTopics])
+  await ensureTopics({ brokers: BROKERS, clientId: 'e2e', topicPrefix: PREFIX }, [...Object.values(TOPICS), INTERACTIONS_TOPIC, IDENTITY_TOPIC, CATALOG_TOPIC, CAMPAIGN_TOPIC])
   const keys = await createTestKeys()
 
   authDb = await database(createAuthDb, migrateAuthDb)
   await insertAccount(authDb, { tenantId: TENANT, name: 'E2E storefront', tier: 'free' })
   authBus = await kafka('auth-service')
-  const authUrl = await listen(buildAuthApp({ db: authDb, bus: authBus, logger, privateKey: keys.privateKey, publicKey: keys.publicKey }))
+  const authUrl = await listen(buildAuthApp({ db: authDb, bus: authBus, logger, privateKey: keys.privateKey, publicKey: keys.publicKey, internalSecret: INTERNAL_SECRET }))
+  // The mimic retailer's services send their records to the retail API through the gateway, built last.
+  const gatewayUrl = await listen((req, res) => gateway(req, res))
+  const retailer = createRetailerIntegration({ apiUrl: gatewayUrl, authUrl, secret: INTERNAL_SECRET, logger })
 
   const productDb = await database(createProductDb, migrateProductDb)
-  const productUrl = await listen(buildProductApp({ db: productDb, bus: await kafka('product-service'), logger, publicKey: keys.publicKey }))
+  await insertSellerIfAbsent(productDb, { id: SELLER, tenantId: TENANT, name: 'E2E seller' })
+  const productUrl = await listen(buildProductApp({ db: productDb, bus: await kafka('product-service'), logger, publicKey: keys.publicKey, retailer }))
 
   const campaignDb = await database(createCampaignDb, migrateCampaignDb)
   const campaignBus = await kafka('campaign-service')
   await campaignBus.subscribe({ groupId: 'campaign-service', topics: [TOPICS.products], handler: (envelope) => handleProductEvent(campaignDb, envelope) })
-  const campaignUrl = await listen(buildCampaignApp({ db: campaignDb, bus: campaignBus, logger, publicKey: keys.publicKey }))
+  const campaignUrl = await listen(buildCampaignApp({ db: campaignDb, bus: campaignBus, logger, publicKey: keys.publicKey, retailer }))
 
   const analyticsBus = await kafka('analytics-service')
-  await analyticsBus.subscribe({ groupId: 'analytics-service', topics: [TOPICS.campaigns], handler: (envelope) => handleCampaignEvent(clickhouse, envelope) })
+  await analyticsBus.subscribe({ groupId: 'analytics-service', topics: [CATALOG_TOPIC, CAMPAIGN_TOPIC], handler: (envelope) => handleReferenceEvent(clickhouse, envelope) })
   const analyticsUrl = await listen(buildAnalyticsApp({ bus: analyticsBus, clickhouse, logger, publicKey: keys.publicKey }))
   const reader = await kafka('e2e-analytics-reader')
   await reader.subscribe({
     groupId: 'e2e-analytics-reader',
-    topics: analyticsTopics,
+    topics: [INTERACTIONS_TOPIC],
     handler: async (envelope, { topic }) => {
       analyticsMessages.push({ topic, envelope: envelope as EventEnvelope<AnalyticsEventPayload> })
     },
@@ -164,7 +172,7 @@ describe('the full flow over Kafka', () => {
     const product = await request(gateway)
       .post('/api/v1/products')
       .set('Authorization', auth)
-      .send({ name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, category: 'Audio' })
+      .send({ sellerId: SELLER, name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, category: 'Audio' })
     expect(product.status).toBe(201)
 
     // The campaign service learns about the product only through Kafka.
@@ -173,7 +181,7 @@ describe('the full flow over Kafka', () => {
         request(gateway)
           .post('/api/v1/campaigns')
           .set('Authorization', auth)
-          .send({ title: 'Festive Sale', type: 'seasonal', status: 'active', productIds: [product.body.id] }),
+          .send({ sellerId: SELLER, title: 'Festive Sale', type: 'seasonal', status: 'active', productIds: [product.body.id] }),
       (res) => res.status !== 409,
     )
     expect(campaign.status).toBe(201)
@@ -189,7 +197,7 @@ describe('the full flow over Kafka', () => {
       // Credited to the click by the Flink job (test/flink.kafka.test.ts); the client sends no link.
       { eventId: randomUUID(), eventName: 'add_to_cart', timestamp: new Date(now - 1000).toISOString(), properties: { productId: product.body.id } },
     ]
-    // Metric events count once analytics-service has seen the campaign (CampaignCreated over Kafka).
+    // Metric events count once analytics-service has seen the campaign (the retail API, then its topic).
     const { result: ingest, elapsedMs: campaignLag } = await eventually(
       () => request(gateway)
           .post('/api/v1/analytics/events')
@@ -205,9 +213,10 @@ describe('the full flow over Kafka', () => {
     // Retries above re-publish add_to_cart with the same eventId (stored once in ClickHouse).
     const distinct = () => new Map(analyticsMessages.map((m) => [m.envelope.eventId, m.topic]))
     await eventually(async () => distinct().size, (count) => count >= 3)
-    expect([...distinct().values()].sort()).toEqual(['analytics.add_to_cart.v1', 'analytics.click.v1', 'analytics.impression.v1'])
+    expect(new Set(distinct().values())).toEqual(new Set([INTERACTIONS_TOPIC]))
     const click = analyticsMessages.find((m) => m.envelope.eventId === clickId)!
-    expect(click.envelope.payload).toMatchObject({ campaignId, productId: product.body.id, userId: login.body.user.id, userType: 'registered', tenantId: TENANT })
+    // The product's seller, from the catalog the retail API received.
+    expect(click.envelope.payload).toMatchObject({ campaignId, productId: product.body.id, sellerId: SELLER, eventType: 'interaction', userId: login.body.user.id, userType: 'registered', tenantId: TENANT })
 
     // Logout → SessionRevoked over Kafka → the gateway refuses the token.
     expect((await request(gateway).post('/api/v1/auth/logout').set('Authorization', auth)).status).toBe(200)

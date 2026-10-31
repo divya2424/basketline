@@ -6,8 +6,10 @@ import {
   createEventPublisher,
   createHealth,
   errorHandler,
+  isUuid,
   notFoundHandler,
   pingDb,
+  unauthorized,
   type EventBus,
   type Health,
   type Logger,
@@ -30,6 +32,8 @@ export interface AuthAppDeps {
   publicKey: CryptoKey
   /** Max login attempts per IP+username per 15 minutes. */
   loginRateLimit?: number
+  /** Shared with the mimic retailer services (INTERNAL_INTEGRATION_SECRET); unset: /internal/integration-token is off. */
+  internalSecret?: string
   /** Probe state from index.ts; tests get one that's already started. */
   health?: Health
 }
@@ -42,6 +46,7 @@ export function buildAuthApp({
   privateKey,
   publicKey,
   loginRateLimit = 10,
+  internalSecret,
   health = createHealth({ started: true }),
 }: AuthAppDeps) {
   health.addCheck('database', () => pingDb(db))
@@ -50,7 +55,8 @@ export function buildAuthApp({
   const publish = createEventPublisher(bus, PRODUCER, logger)
   const service = createAuthService({ db, privateKey, publicKey, publish })
   const accounts = createAccountService({ db, publish })
-  const controller = createAuthController(service, createShopperService({ db, privateKey }), accounts)
+  const shoppers = createShopperService({ db, privateKey, bus, logger })
+  const controller = createAuthController(service, shoppers, accounts)
 
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -68,6 +74,15 @@ export function buildAuthApp({
   // This service owns the session table, so its routes also reject ended sessions directly.
   app.use('/api/v1/auth', authRoutes(controller, { authenticate: authenticate(publicKey, service.checkSession), loginLimiter }))
   app.use('/api/v1/accounts', accountRoutes(createAccountController(accounts)))
+  // The mimic retailer services' integration tokens (shopper.service.ts): outside /api,
+  // so the gateway never routes it, and only with the cluster's shared secret.
+  if (internalSecret) {
+    app.post('/internal/integration-token', async (req, res) => {
+      if (req.headers['x-internal-secret'] !== internalSecret || !isUuid(req.body?.tenantId)) throw unauthorized('UNAUTHORIZED', 'Internal callers only')
+      const { token } = await shoppers.internalIntegrationToken(req.body.tenantId)
+      res.status(201).json({ integrationToken: token })
+    })
+  }
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

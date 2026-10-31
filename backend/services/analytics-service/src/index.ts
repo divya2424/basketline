@@ -1,29 +1,37 @@
 import { randomUUID } from 'node:crypto'
-import { ANALYTICS_EVENT_NAMES, analyticsTopic, SERVING_TOPICS, TOPICS, WATERMARK_HEARTBEAT_TOPIC } from '@basketline/contracts'
+import { CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC, INTERACTIONS_TOPIC, SERVING_TOPICS, TOPICS, WATERMARK_HEARTBEAT_TOPIC } from '@basketline/contracts'
 import { createBusFromEnv, createHealth, createLogger, handleShutdown, intEnv, loadPublicKey, requireEnv, secretEnv } from '@basketline/platform'
 import { buildAnalyticsApp } from './app.ts'
 import { createClickHouse } from './clickhouse.ts'
-import { handleCampaignEvent } from './events/campaign.consumer.ts'
+import { handleIdentityEvent } from './events/identity.consumer.ts'
+import { handleReferenceEvent } from './events/reference.consumer.ts'
 import { handleTenantEvent } from './events/tenant.consumer.ts'
 
 const logger = createLogger('analytics-service')
 const health = createHealth()
 
-// The analytics topics keep 14 days: the Flink job keeps clicks 13 days (7-day
+// The interactions topic keeps 14 days: the Flink job keeps clicks 13 days (7-day
 // attribution window + 5 days events may arrive late + a day of slack), so a replay from the
 // topics can rebuild all of it. Applies when a topic is created; see
 // backend/README.md for changing existing ones.
 const ANALYTICS_RETENTION_MS = String(14 * 24 * 60 * 60 * 1000)
 // The serving topics only bridge Flink and ClickHouse, so they keep 48 hours, enough
-// to ride out a ClickHouse outage; replays come from the analytics topics.
+// to ride out a ClickHouse outage; replays come from the interactions topic.
 const SERVING_RETENTION_MS = String(48 * 60 * 60 * 1000)
 // A heartbeat is only useful while it is the newest time Flink has seen.
 const HEARTBEAT_RETENTION_MS = String(60 * 60 * 1000)
 
-// Creates the analytics.<eventName>.v1 topics this service publishes to, the
-// heartbeat topic, and the serving topics the Flink job writes for ClickHouse.
+// Reference data (sellers, products, campaigns): the latest state per ID is kept for
+// good (compacted), so a rebuilt copy always has every entity.
+const REFERENCE_CONFIGS = { 'cleanup.policy': 'compact' }
+
+// Creates the topics this service publishes to (interactions, identity, reference
+// data, the heartbeat) and the serving topics the Flink job writes for ClickHouse.
 const bus = await createBusFromEnv('analytics-service', logger, [
-  ...ANALYTICS_EVENT_NAMES.map((eventName) => ({ name: analyticsTopic(eventName), configs: { 'retention.ms': ANALYTICS_RETENTION_MS } })),
+  { name: INTERACTIONS_TOPIC, configs: { 'retention.ms': ANALYTICS_RETENTION_MS } },
+  { name: IDENTITY_TOPIC, configs: { 'retention.ms': ANALYTICS_RETENTION_MS } },
+  { name: CATALOG_TOPIC, configs: REFERENCE_CONFIGS },
+  { name: CAMPAIGN_TOPIC, configs: REFERENCE_CONFIGS },
   { name: WATERMARK_HEARTBEAT_TOPIC, configs: { 'retention.ms': HEARTBEAT_RETENTION_MS } },
   ...Object.values(SERVING_TOPICS).map((name) => ({ name, configs: { 'retention.ms': SERVING_RETENTION_MS } })),
 ])
@@ -37,14 +45,16 @@ const heartbeat = setInterval(() => {
   bus.publish([{ topic: WATERMARK_HEARTBEAT_TOPIC, key: 'heartbeat', envelope }]).catch((error) => logger.warn({ err: error }, 'watermark heartbeat failed'))
 }, 30_000)
 const clickhouse = createClickHouse(requireEnv('CLICKHOUSE_URL'))
-// Campaign status for checking metric events, and deleted tenants (whose analytics are
-// deleted). Applying an event twice is harmless.
+// The retailer's reference data (this service's copies of sellers, products and
+// campaigns), erasures (user_deleted), and deleted tenants. Applying an event twice
+// is harmless.
 await bus.subscribe({
   groupId: 'analytics-service',
-  topics: [TOPICS.campaigns, TOPICS.tenants],
-  handler: async (envelope) => {
-    await handleCampaignEvent(clickhouse, envelope)
-    await handleTenantEvent(clickhouse, envelope)
+  topics: [CATALOG_TOPIC, CAMPAIGN_TOPIC, IDENTITY_TOPIC, TOPICS.tenants],
+  handler: async (envelope, { topic }) => {
+    if (topic.endsWith(IDENTITY_TOPIC)) return handleIdentityEvent(clickhouse, envelope)
+    if (topic.endsWith(TOPICS.tenants)) return handleTenantEvent(clickhouse, envelope)
+    return handleReferenceEvent(clickhouse, envelope)
   },
 })
 

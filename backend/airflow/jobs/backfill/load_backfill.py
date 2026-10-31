@@ -17,7 +17,7 @@ ALTER TABLE T REPLACE PARTITION M FROM T_rebuild swaps a month's parts
 atomically: a query sees the whole old month or the whole new one, never a
 missing or partial month. Only closed months are touched (their last day is
 more than 7 days ago: events arrive at most 5 days late, plus two days' margin
-for the archive's last commits), so no live view or nightly check writes to them.
+for the archive's last commits), so no live view or hourly check writes to them.
 
 The recomputed rows are read from the run's Iceberg tables with icebergS3, and
 the sketches are built here, with the same functions and types as the live

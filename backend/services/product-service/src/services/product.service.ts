@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { event, notFound, writeAudit, type NewEvent, type PublishEvents } from '@basketline/platform'
+import { badRequest, event, notFound, writeAudit, type NewEvent, type PublishEvents, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   findProductById,
+  findSeller,
   insertProduct,
+  listSellers,
   listProducts,
   updateProduct,
   type Product,
@@ -15,6 +17,7 @@ export function stateEvent(product: Product, eventType: 'ProductCreated' | 'Prod
   return event(eventType, product.id, product.version, {
     productId: product.id,
     tenantId: product.tenantId,
+    sellerId: product.sellerId,
     name: product.name,
     price: product.price,
     image: product.image,
@@ -27,11 +30,23 @@ export function stateEvent(product: Product, eventType: 'ProductCreated' | 'Prod
   })
 }
 
+/** The product as Basketline's catalog API takes it (product_upserted): full state, ordered by updatedAt. */
+export function productUpdate(product: Product): ReferenceUpdate {
+  return {
+    eventName: 'product_upserted',
+    updatedAt: product.updatedAt.toISOString(),
+    data: { productId: product.id, sellerId: product.sellerId, name: product.name, category: product.category, price: product.price, isActive: product.isActive },
+  }
+}
+
 /**
- * Business rules for products. Events are published after each transaction commits.
+ * Business rules for products. Events are published after each transaction commits,
+ * and the product's state is sent to Basketline (retailer.ts), as a retailer's backend does.
  * Every method works within one tenant: another tenant's product is not found.
  */
-export function createProductService({ db, publish }: { db: Db; publish: PublishEvents }) {
+export function createProductService({ db, publish, retailer }: { db: Db; publish: PublishEvents; retailer?: RetailerIntegration }) {
+  const sendToBasketline = (product: Product) => retailer?.send(product.tenantId, 'catalog', [productUpdate(product)])
+
   async function requireForUpdate(tx: DbOrTx, tenantId: string, id: string) {
     const product = await findProductById(tx, tenantId, id, { forUpdate: true })
     if (!product) throw notFound('PRODUCT_NOT_FOUND', 'Product not found')
@@ -41,9 +56,11 @@ export function createProductService({ db, publish }: { db: Db; publish: Publish
   return {
     async create(tenantId: string, actorId: string, input: CreateProductInput): Promise<Product> {
       const product = await db.transaction(async (tx) => {
+        if (!(await findSeller(tx, tenantId, input.sellerId))) throw badRequest('SELLER_NOT_FOUND', 'sellerId must be one of the tenant\'s sellers (GET /sellers)')
         const product = await insertProduct(tx, {
           id: randomUUID(),
           tenantId,
+          sellerId: input.sellerId.toLowerCase(),
           name: input.name,
           description: input.description,
           price: input.price,
@@ -56,8 +73,12 @@ export function createProductService({ db, publish }: { db: Db; publish: Publish
         return product
       })
       await publish([stateEvent(product, 'ProductCreated')])
+      await sendToBasketline(product)
       return product
     },
+
+    /** The tenant's sellers, to pick one for a product or campaign. */
+    sellers: (tenantId: string) => listSellers(db, tenantId),
 
     list(filter: ProductFilter) {
       return listProducts(db, filter)
@@ -87,6 +108,7 @@ export function createProductService({ db, publish }: { db: Db; publish: Publish
         return product
       })
       await publish([stateEvent(product, 'ProductUpdated')])
+      await sendToBasketline(product)
       return product
     },
 
@@ -108,6 +130,7 @@ export function createProductService({ db, publish }: { db: Db; publish: Publish
             deactivatedBy: actorId,
           }),
         ])
+        await sendToBasketline(product)
       }
       return product
     },

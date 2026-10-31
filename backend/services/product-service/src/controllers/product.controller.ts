@@ -28,6 +28,11 @@ export function createProductController(service: ProductService) {
       res.status(201).location(`/api/v1/products/${product.id}`).json(toProductResponse(product))
     },
 
+    async sellers(req: Request, res: Response) {
+      const sellers = await service.sellers(readTenant(req))
+      res.json({ sellers: sellers.map(({ id, name }) => ({ sellerId: id, name })) })
+    },
+
     async list(req: Request, res: Response) {
       const { limit, offset } = readPagination(req.query)
       const { items, total } = await service.list({

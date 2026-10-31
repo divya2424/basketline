@@ -7,6 +7,6 @@ WHERE event_name = 'click' AND campaign_id IS NOT NULL AND product_id IS NOT NUL
 -- Basket additions: any add_to_cart of a product by a known user. Clients send
 -- no link to a click; the attribution pipeline finds it.
 CREATE TEMPORARY VIEW baskets AS
-SELECT event_id, tenant_id, product_id, user_id, user_type, client_type, event_time
+SELECT event_id, tenant_id, product_id, user_id, user_type, client_type, event_time, seller_id
 FROM events
 WHERE event_name = 'add_to_cart' AND product_id IS NOT NULL AND user_id IS NOT NULL;

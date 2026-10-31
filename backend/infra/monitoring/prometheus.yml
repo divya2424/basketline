@@ -1,0 +1,25 @@
+# Prometheus for the local stack (docker compose --profile monitoring up -d).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: [alerts.yml]
+
+scrape_configs:
+  # The job manager (9249) and the task manager (9250), flink/config.yaml.
+  - job_name: flink
+    static_configs: [{ targets: ["flink-streaming:9249", "flink-streaming:9250"] }]
+
+  - job_name: clickhouse
+    static_configs: [{ targets: ["clickhouse:9363"] }]
+
+  # The pipeline's health from its tables (infra/clickhouse/config/prometheus.xml).
+  - job_name: pipeline
+    metrics_path: /pipeline-metrics
+    scrape_interval: 60s
+    basic_auth: { username: basketline, password: basketline_dev }
+    static_configs: [{ targets: ["clickhouse:8123"] }]
+
+  # Consumer group lag, per topic.
+  - job_name: kafka
+    static_configs: [{ targets: ["kafka-exporter:9308"] }]

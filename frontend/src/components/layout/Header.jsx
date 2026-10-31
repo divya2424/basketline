@@ -42,7 +42,7 @@ export function Header() {
   }
 
   const tenantName = getRequestContext().tenantName || 'Basketline'
-  const isCampaignManager = user.role === ROLES.CAMPAIGN_MANAGER
+  const seesAnalytics = user.role === ROLES.CAMPAIGN_MANAGER || user.role === ROLES.SELLER_MANAGER
   const cartLabel = `Cart, ${totalQuantity} ${totalQuantity === 1 ? 'item' : 'items'}`
   const signOut = async () => {
     await logout()
@@ -60,7 +60,7 @@ export function Header() {
           <NavLink to="/store" end className={navClass}>
             Home
           </NavLink>
-          {isCampaignManager ? (
+          {seesAnalytics ? (
             <NavLink to="/analytics" className={navClass}>
               Analytics
             </NavLink>

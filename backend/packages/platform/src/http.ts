@@ -11,7 +11,7 @@ import type { Role } from '@basketline/contracts'
 import { isUuid } from './checks.ts'
 import { AppError, badRequest, forbidden, unauthorized } from './errors.ts'
 import { healthRoutes, type Health } from './health.ts'
-import { verifyAccessToken, verifyEventToken, type AccessTokenClaims, type EventSender } from './jwt.ts'
+import { verifyAccessToken, verifyEventToken, verifyIntegrationToken, type AccessTokenClaims, type EventSender, type IntegrationTokenClaims } from './jwt.ts'
 import type { Logger } from './logger.ts'
 
 declare global {
@@ -21,6 +21,8 @@ declare global {
       auth?: AccessTokenClaims
       /** Set by authenticateEvents. */
       sender?: EventSender
+      /** Set by authenticateIntegration: the retailer's backend, for its tenant. */
+      integration?: IntegrationTokenClaims
     }
   }
 }
@@ -120,6 +122,20 @@ export function authenticateEvents(publicKey: CryptoKey): RequestHandler {
       req.sender = await verifyEventToken(token, publicKey)
     } catch {
       throw unauthorized('INVALID_TOKEN', 'Token is invalid or expired')
+    }
+    next()
+  }
+}
+
+/** Requires an integration token (a retailer's backend, from its API key) and sets req.integration. */
+export function authenticateIntegration(publicKey: CryptoKey): RequestHandler {
+  return async (req, _res, next) => {
+    const token = bearerToken(req)
+    if (!token) throw unauthorized('UNAUTHENTICATED', 'An integration token is required (POST /auth/integration-token with your API key)')
+    try {
+      req.integration = await verifyIntegrationToken(token, publicKey)
+    } catch {
+      throw unauthorized('INVALID_TOKEN', 'Token is invalid or expired, or not an integration token')
     }
     next()
   }

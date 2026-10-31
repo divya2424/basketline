@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { ACCESS_TOKEN_TTL_SECONDS, badRequest, notFound, page, readPagination, SHOPPER_TOKEN_TTL_SECONDS, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
+import { ACCESS_TOKEN_TTL_SECONDS, badRequest, INTEGRATION_TOKEN_TTL_SECONDS, notFound, page, readPagination, SHOPPER_TOKEN_TTL_SECONDS, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
 import type { Session } from '../repositories/session.repository.ts'
 import type { User } from '../repositories/user.repository.ts'
 import type { AccountService } from '../services/account.service.ts'
@@ -7,7 +7,7 @@ import type { AuthService } from '../services/auth.service.ts'
 import type { ShopperService } from '../services/shopper.service.ts'
 
 /** Public user shape. Never includes the password hash. */
-const toPublicUser = ({ id, username, role, tenantId }: User) => ({ id, username, role, tenantId })
+const toPublicUser = ({ id, username, role, tenantId, sellerId }: User) => ({ id, username, role, tenantId, ...(sellerId ? { sellerId } : {}) })
 
 /** Dates become ISO strings in res.json. */
 const toPublicSession = ({ id, clientType, sessionStartTime, expiresAt, sessionEndTime }: Session) => ({
@@ -70,6 +70,11 @@ export function createAuthController(service: AuthService, shoppers: ShopperServ
     async shopperToken(req: Request, res: Response) {
       const { token, userId } = await shoppers.shopperToken(requireTenant(req), req.headers.authorization, req.body)
       res.status(201).json({ shopperToken: token, tokenType: 'Bearer', expiresIn: SHOPPER_TOKEN_TTL_SECONDS, userId })
+    },
+
+    async integrationToken(req: Request, res: Response) {
+      const { token } = await shoppers.integrationToken(requireTenant(req), req.headers.authorization)
+      res.status(201).json({ integrationToken: token, tokenType: 'Bearer', expiresIn: INTEGRATION_TOKEN_TTL_SECONDS })
     },
 
     async login(req: Request, res: Response) {

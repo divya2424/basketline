@@ -14,7 +14,7 @@
 --
 -- A regular join, not an event-time window: each side waits in state for the
 -- other, so a basket that arrives before its click, or a click that arrives late,
--- still matches. A click is kept 13 days after it arrives: analytics-service
+-- still matches. A click is kept 13 days after it arrives: ingestion-service
 -- accepts events up to 5 days old, plus the 7-day window, plus a day because the
 -- TTL runs on the wall clock, so time the job is down or behind uses it up. A
 -- basket addition is kept 6 days: it only waits for a click from before it that

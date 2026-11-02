@@ -1,4 +1,4 @@
--- End-to-end freshness of one load-test run: from analytics-service receiving an
+-- End-to-end freshness of one load-test run: from ingestion-service receiving an
 -- event (received_at) to ClickHouse storing it (ingested_at), i.e. Kafka, the
 -- Flink job and ClickHouse's Kafka reads. Every event of the run is counted, not a sample.
 SELECT

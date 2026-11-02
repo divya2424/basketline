@@ -3,7 +3,7 @@
     python purge_tenants.py
 
 A tenant deleted on the platform (TenantDeleted) is recorded in ClickHouse's
-analytics.deleted_tenants by analytics-service, which deletes its ClickHouse
+analytics.deleted_tenants by ingestion-service, which deletes its ClickHouse
 rows at once. Its archived rows are deleted here: each table's delete is one
 Iceberg commit (rewriting only the files that hold the tenant's rows, which are
 in its tenant bucket), then the tenant is marked purged. Safe to run again:
@@ -31,7 +31,7 @@ ARCHIVE_TABLES = ["events", "attributed_baskets", "sessions"]
 BACKFILL_TABLES = ["event_totals", "customer_days", "sessions"]
 # The tables above that hold user IDs.
 USER_TABLES = {"events", "attributed_baskets", "sessions", "customer_days"}
-# The analytics topics' retention (14 days, analytics-service) plus a day: until
+# The analytics topics' retention (14 days, ingestion-service) plus a day: until
 # then a replay can bring a deleted tenant's events back into the archive.
 REPLAYABLE_DAYS = 15
 

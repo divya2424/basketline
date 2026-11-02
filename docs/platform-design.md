@@ -14,10 +14,10 @@ Basketline is the analytics path. The repository also simulates a retailer, so t
 |---|---|---|
 | **Retailer systems** (simulated) | product-service, campaign-service; the storefront | The retailer's catalog, sellers and campaigns. They send them to Basketline's retail API (`/retail/catalog`, `/retail/campaigns`) with an integration token, as any retailer's backend would (the SDK's `/server` entry). |
 | **Platform edge** | gateway, auth-service (identity and access) | Routing, per-IP limits, CORS; API keys, visitor, shopper and integration tokens, dashboard users. |
-| **Ingestion** | analytics-service | Validates every event, refuses bots, stamps the product's seller, holds each tenant to its budget, publishes to Kafka. |
+| **Ingestion** | ingestion-service | Validates every event, refuses bots, stamps the product's seller, holds each tenant to its budget, publishes to Kafka. |
 | **Stream** | Kafka | `retail.interactions.v1` and `retail.identity-events.v1` (14 days), `retail.catalog-events.v1` and `retail.campaign-events.v1` (compacted), the watermark heartbeat. Shared by every tenant. |
 | **Processing** | Flink | Click→basket attribution (7-day join), sessions, the Iceberg archive writer. |
-| **Serving** | ClickHouse, the `/ad` API, the dashboard | Raw days, daily tables, reference copies; the insights API reads the daily tables. |
+| **Serving** | ClickHouse, insights-service (the `/ad` API), the dashboard | Raw days, daily tables, reference copies; insights-service reads the daily tables as a user that sees one tenant per query, with no Kafka connection or write access, so ingestion load can't slow it. |
 | **Archive and batch** | Iceberg on S3, Airflow | The system of record; backups, backfills, purges, the sessions export. |
 | **Observability** | Prometheus, Grafana, alerts | Every layer above. |
 
@@ -28,7 +28,7 @@ The rule: **a tenant's load spreads across the platform, and each tenant is capp
 | Layer | What spreads the load | What caps a tenant |
 |---|---|---|
 | **Edge** (gateway) | Stateless pods behind the load balancer; the autoscaler adds pods on CPU | Per-IP limits (requests, event posts, visitor tokens) |
-| **Ingestion** (analytics-service) | Stateless pods, scaled on CPU; each process handles about 250 requests/s (2,250 events/s), measured | **Per sender:** 300 events/minute. **Per tenant, by tier:** `TENANT_EVENTS_PER_MINUTE_FREE/PRO/ENTERPRISE` (default 60k / 600k / 6M per pod, i.e. 1k / 10k / 100k events/s). Over budget, the whole batch gets `429 TENANT_RATE_LIMITED` with `Retry-After`; the SDK retries once (waiting up to 10 s), then reports it to `onError`. The tier comes from `TenantOnboarded` (`analytics.tenants`). |
+| **Ingestion** (ingestion-service) | Stateless pods, scaled on CPU; each process handles about 250 requests/s (2,250 events/s), measured | **Per sender:** 300 events/minute. **Per tenant, by tier:** `TENANT_EVENTS_PER_MINUTE_FREE/PRO/ENTERPRISE` (default 60k / 600k / 6M per pod, i.e. 1k / 10k / 100k events/s). Over budget, the whole batch gets `429 TENANT_RATE_LIMITED` with `Retry-After`; the SDK retries once (waiting up to 10 s), then reports it to `onError`. The tier comes from `TenantOnboarded` (`analytics.tenants`). |
 | **Kafka** | Messages are keyed by event ID, so one tenant's events spread over **every** partition: no hot partition, whatever the tenant mix. Partitions are sized for the platform's peak (48 for 100k events/s) | The ingestion budget above is the gate; Kafka absorbs bursts (14 days kept) |
 | **Flink** | Keyed by (tenant, user, product) for attribution and (tenant, user) for sessions: a big tenant's state spreads over every task. The Flink Kubernetes Operator's autoscaler adds parallelism when consumer lag grows | Nothing per tenant is needed: its input is already capped |
 | **ClickHouse writes** | Batched inserts from the serving topics; at scale, shards by `cityHash64(tenant_id)` | — |

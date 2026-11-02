@@ -6,7 +6,7 @@
  * (airflow/tests/fixtures/attribution_cases.json), so both implementations of the
  * rule give the same answers. Needs the stack running:
  *
- *   docker compose up -d --build kafka clickhouse analytics-service flink-streaming
+ *   docker compose up -d --build kafka clickhouse ingestion-service flink-streaming
  *   pnpm test:flink
  *
  * Every run uses its own tenant, so it only reads back its own rows.
@@ -24,13 +24,13 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ANALYTICS_EVENT_TYPE, INTERACTIONS_TOPIC, eventTypeOf, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@basketline/contracts'
 import { createKafkaEventBus, createLogger, type BusMessage, type EventBus } from '@basketline/platform'
-import { createClickHouse } from '../services/analytics-service/src/clickhouse.ts'
+import { createClickHouse } from '@basketline/platform/clickhouse'
 
 const BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',')
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
 const TENANT = randomUUID()
 const OTHER_TENANT = randomUUID()
-/** The seller analytics-service stamps on events for a product (here: every product). */
+/** The seller ingestion-service stamps on events for a product (here: every product). */
 const SELLER = randomUUID()
 const HOUR = 60 * 60 * 1000
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
@@ -57,7 +57,7 @@ interface TestEvent {
   timestamp: string
 }
 
-/** Published as analytics-service does (ingestion.service.ts). */
+/** Published as ingestion-service does (ingestion.service.ts). */
 function message(event: TestEvent): BusMessage {
   const payload: AnalyticsEventPayload = {
     eventId: event.eventId ?? randomUUID(),

@@ -1,4 +1,4 @@
--- The envelope's payload, as typed columns. analytics-service writes IDs in
+-- The envelope's payload, as typed columns. ingestion-service writes IDs in
 -- lowercase (ingestion.service.ts) and timestamps with toISOString()
 -- ("2026-10-28T12:00:00.000Z", always UTC), so both are used as they come.
 CREATE TEMPORARY VIEW parsed AS
@@ -9,7 +9,7 @@ SELECT
   JSON_VALUE(`value`, '$.payload.eventName')            AS event_name,
   JSON_VALUE(`value`, '$.payload.campaignId')           AS campaign_id,
   JSON_VALUE(`value`, '$.payload.productId')            AS product_id,
-  -- The product's seller, stamped by analytics-service from the catalog.
+  -- The product's seller, stamped by ingestion-service from the catalog.
   JSON_VALUE(`value`, '$.payload.sellerId')             AS seller_id,
   JSON_VALUE(`value`, '$.payload.userId')               AS user_id,
   JSON_VALUE(`value`, '$.payload.userType')             AS user_type,

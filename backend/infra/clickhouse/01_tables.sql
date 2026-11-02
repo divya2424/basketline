@@ -1,7 +1,7 @@
 -- ClickHouse schema, part 1 of 3: the database and its tables. The Flink job
 -- (backend/flink) writes events, attributed_baskets and sessions through Kafka
 -- (03_kafka.sql loads its topics); the materialized views (02_materialized_views.sql)
--- fill the daily tables, which analytics-service reads for the /ad metrics.
+-- fill the daily tables, which insights-service reads for the /ad metrics.
 -- The files run in name order, on a new volume only (docker-entrypoint-initdb.d).
 CREATE DATABASE IF NOT EXISTS analytics;
 
@@ -46,7 +46,7 @@ PARTITION BY toDate(event_time)
 -- (+ campaign_id and a time range), so it reads only that slice of the table.
 ORDER BY (tenant_id, event_name, campaign_id, event_time, event_id)
 -- Raw events are kept 20 days after they happened. /ad reads
--- daily_campaign_aggregation, which keeps every day. analytics-service accepts
+-- daily_campaign_aggregation, which keeps every day. ingestion-service accepts
 -- events at most 5 days old, so a recounted day still has all of its raw
 -- events. A Flink checkpoint reset replays Kafka's 14 days of arrivals, which
 -- hold events up to 19 days old: every day it writes to is still here, so the
@@ -101,7 +101,7 @@ SETTINGS ttl_only_drop_parts = 1, storage_policy = 'tiered';
 
 
 -- Reference data, from the retailer's server (contracts: retail.ts), through
--- retail.catalog-events.v1 and retail.campaign-events.v1 (analytics-service). The
+-- retail.catalog-events.v1 and retail.campaign-events.v1 (ingestion-service). The
 -- newest version (updatedAt) wins, so replayed and out-of-order updates are harmless.
 
 -- Each campaign's tenant, seller and status. Metric events are accepted only for a
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS analytics.products
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (tenant_id, product_id);
 
--- Shoppers erased at the retailer's request (user_deleted, from analytics-service):
+-- Shoppers erased at the retailer's request (user_deleted, from ingestion-service):
 -- their rows are deleted here at once, and from the Iceberg archive by the purge
 -- job (airflow/jobs/purge_tenants.py), which sets archive_purged_at.
 CREATE TABLE IF NOT EXISTS analytics.deleted_users
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS analytics.deleted_users
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, user_id);
 
--- Each tenant's account tier (TenantOnboarded, from analytics-service), which sizes
+-- Each tenant's account tier (TenantOnboarded, from ingestion-service), which sizes
 -- its ingestion budget (ingestion.service.ts). A tenant without a row counts as free.
 CREATE TABLE IF NOT EXISTS analytics.tenants
 (
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS analytics.tenants
 ENGINE = ReplacingMergeTree(version)
 ORDER BY tenant_id;
 
--- Deleted tenants (TenantDeleted, from analytics-service): their rows are
+-- Deleted tenants (TenantDeleted, from ingestion-service): their rows are
 -- deleted from every table here, and 03_kafka.sql's queue views drop any that a
 -- replay from Kafka would bring back (Kafka keeps raw events up to 14 days).
 -- archive_purged_at: when the archive job (airflow/dags/tenant_purge.py) deleted
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS analytics.deleted_tenants
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY tenant_id;
 
--- Events rejected as invalid traffic (analytics-service: declared bots by user
+-- Events rejected as invalid traffic (ingestion-service: declared bots by user
 -- agent), per UTC day received, tenant and reason, so they can be reported next to
 -- the metrics they were kept out of. SummingMergeTree: queries sum(events).
 CREATE TABLE IF NOT EXISTS analytics.invalid_traffic_daily

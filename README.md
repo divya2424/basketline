@@ -18,19 +18,19 @@ Every retailer (tenant) is kept apart: users, sellers, products, campaigns, even
 ![The Basketline campaign dashboard](frontend/docs/dashboard.png)
 
 ```
- retailer site (SDK) ──► gateway :8080 ──► analytics-service ──► Kafka: retail.interactions.v1, retail.identity-events.v1
+ retailer site (SDK) ──► gateway :8080 ──► ingestion-service ──► Kafka: retail.interactions.v1, retail.identity-events.v1
  retailer backend    ──► (auth, limits)      (validate, stamp       (shared by all tenants, 14 days)
   (catalog, campaigns,     │                  seller, bot filter)            │
    via /retail API)        │                        │ retail.catalog-events.v1, retail.campaign-events.v1 (compacted)
                            │                        ▼                         ▼
- dashboard (React) ──► GET /ad/… ◄── ClickHouse ◄── serving topics ◄── Flink SQL (click→basket attribution, sessions)
+ dashboard ──► insights-service (/ad) ◄── ClickHouse ◄── serving topics ◄── Flink SQL (click→basket attribution, sessions)
                                      (daily tables,                          │
                                       raw days, copies)                      └──► Iceberg on S3 (archive, forever)
                                                                                     Airflow: backups, backfills, purges
  Prometheus + Grafana: services (RED), Kafka lag, Flink, ClickHouse, pipeline health
 ```
 
-auth-, product- and campaign-service stand in for a retailer's own systems, so the integration can be shown end to end. The product is the analytics path: analytics-service, Kafka, Flink, ClickHouse, Iceberg and Airflow.
+auth-, product- and campaign-service stand in for a retailer's own systems, so the integration can be shown end to end. The product is the analytics path: ingestion-service (data in), Kafka, Flink, ClickHouse, insights-service (the `/ad` API), Iceberg and Airflow.
 
 **Design documents:**
 - [Platform architecture](docs/platform-architecture.svg): where the platform starts (ingestion) and what the simulated retailer owns.

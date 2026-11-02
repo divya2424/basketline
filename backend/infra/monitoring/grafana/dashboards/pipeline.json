@@ -697,7 +697,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"analytics-service\", route=\"/api/v1/analytics/events\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"ingestion-service\", route=\"/api/v1/analytics/events\"}[5m])))",
           "legendFormat": "POST /analytics/events (target 500 ms)"
         },
         {
@@ -706,7 +706,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"analytics-service\", route=~\"/api/v1/ad/.*\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"insights-service\", route=~\"/api/v1/ad/.*\"}[5m])))",
           "legendFormat": "GET /ad (target 1 s)"
         }
       ],

@@ -1,6 +1,6 @@
 -- Tenant isolation in the database: the insights API (/ad) reads as
 -- basketline_reader, which sees only the rows of the tenant each query names in
--- its SQL_tenant_id setting (analytics-service sets it from the caller's token).
+-- its SQL_tenant_id setting (insights-service sets it from the caller's token).
 -- A query that forgets its tenant filter still can't return another tenant's
 -- rows, and one that names no tenant gets none. readonly = 2: it can set query
 -- settings (the tenant, time and memory limits) but never write.

@@ -64,11 +64,11 @@ groups:
         annotations: { summary: "{{ $labels.service }}: {{ $value | humanizePercentage }} of requests fail (5xx)" }
 
       - alert: SlowIngestion
-        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="analytics-service", route="/api/v1/analytics/events"}[5m]))) > 0.5
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="ingestion-service", route="/api/v1/analytics/events"}[5m]))) > 0.5
         for: 10m
         annotations: { summary: "Event ingestion p99 is {{ $value | humanizeDuration }} (target 500 ms)" }
 
       - alert: SlowAdReads
-        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="analytics-service", route=~"/api/v1/ad/.*"}[5m]))) > 1
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="insights-service", route=~"/api/v1/ad/.*"}[5m]))) > 1
         for: 10m
         annotations: { summary: "/ad p99 is {{ $value | humanizeDuration }} (target 1 s)" }

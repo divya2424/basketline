@@ -113,7 +113,7 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
     /**
      * Deletes the tenant and everything it owns. identity_db's rows go in one
      * transaction; TenantDeleted then tells product-, campaign- and
-     * analytics-service and the gateway to delete theirs (and the archive job its
+     * ingestion-service and the gateway to delete theirs (and the archive job its
      * files). The name must be typed again (confirmName), so a slip can't delete
      * the wrong tenant.
      */

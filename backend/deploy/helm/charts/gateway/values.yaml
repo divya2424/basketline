@@ -28,7 +28,8 @@ config:
   AUTH_SERVICE_URL: http://auth-service:4001
   PRODUCT_SERVICE_URL: http://product-service:4002
   CAMPAIGN_SERVICE_URL: http://campaign-service:4003
-  ANALYTICS_SERVICE_URL: http://analytics-service:4004
+  INGESTION_SERVICE_URL: http://ingestion-service:4004
+  INSIGHTS_SERVICE_URL: http://insights-service:4005
   CORS_ORIGINS: http://localhost:5173
   # Per client IP, counted by each pod separately: N replicas allow up to N times these.
   RATE_LIMIT_PER_MINUTE: "300"

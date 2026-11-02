@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from spark_backfill import namespace, parse_tenants, run_name  # noqa: E402
 
 TABLES = ["daily_campaign_aggregation", "daily_campaign_customers_aggregation", "daily_campaign_sessions_aggregation"]
-# Days events may still arrive for (analytics-service's 5 days), plus two days' margin for the archive's last commits.
+# Days events may still arrive for (ingestion-service's 5 days), plus two days' margin for the archive's last commits.
 LATE_DAYS = 7
 # The backfill's own limits, so it can't starve the queries dashboards make.
 SETTINGS = {

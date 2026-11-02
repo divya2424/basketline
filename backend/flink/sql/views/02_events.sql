@@ -1,5 +1,5 @@
 -- Rows that can be stored: required IDs are UUIDs, an optional ID that isn't
--- becomes NULL. analytics-service already validates events; this guards the sink.
+-- becomes NULL. ingestion-service already validates events; this guards the sink.
 CREATE TEMPORARY VIEW events AS
 SELECT
   event_id,
@@ -28,6 +28,6 @@ FROM parsed
 WHERE REGEXP(event_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
   AND REGEXP(tenant_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
   AND CHAR_LENGTH(event_name) > 0
-  -- Erasure is applied by analytics-service, never stored as an event.
+  -- Erasure is applied by ingestion-service, never stored as an event.
   AND event_name <> 'user_deleted'
   AND event_time IS NOT NULL;

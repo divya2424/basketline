@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
   <title id="title">Basketline platform architecture</title>
-  <desc id="desc">Logical architecture. The retailer's systems (simulated in this repository: storefront, product and campaign services) are outside the platform. The Basketline platform starts at its edge and ingestion: gateway, identity and access, analytics-service ingestion and retail API, Kafka, Flink, ClickHouse and the insights API, the Iceberg archive with Airflow, and observability.</desc>
+  <desc id="desc">Logical architecture. The retailer's systems (simulated in this repository: storefront, product and campaign services) are outside the platform. The Basketline platform starts at its edge and ingestion: gateway, identity and access, ingestion-service ingestion and retail API, Kafka, Flink, ClickHouse and the insights API, the Iceberg archive with Airflow, and observability.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
     <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
@@ -80,7 +80,7 @@
   <text x="700" y="182" class="tag">INGESTION</text>
   <rect x="700" y="192" width="262" height="190" class="box svc"/>
   <text x="720" y="224" class="head">Event ingestion</text>
-  <text x="720" y="248" class="small">analytics-service · POST /analytics/events</text>
+  <text x="720" y="248" class="small">ingestion-service · POST /analytics/events</text>
   <text x="720" y="274" class="body">Validate, bot filter</text>
   <text x="720" y="296" class="body">Campaign active? Seller of product</text>
   <text x="720" y="318" class="body">Budget per sender and per tenant</text>
@@ -89,7 +89,7 @@
 
   <rect x="700" y="412" width="262" height="120" class="box svc"/>
   <text x="720" y="444" class="head">Retail API</text>
-  <text x="720" y="468" class="small">analytics-service · POST /retail/*</text>
+  <text x="720" y="468" class="small">ingestion-service · POST /retail/*</text>
   <text x="720" y="492" class="body">Sellers, products, campaigns,</text>
   <text x="720" y="514" class="body">server identity (erasure)</text>
 
@@ -129,10 +129,10 @@
   <text x="1390" y="532" class="small">Shards by tenant hash at scale</text>
 
   <rect x="1370" y="584" width="370" height="118" class="box svc"/>
-  <text x="1390" y="616" class="head">Insights API and dashboard</text>
+  <text x="1390" y="616" class="head">insights-service (/ad)</text>
   <text x="1390" y="642" class="body">GET /ad/{campaign}/{metric}</text>
   <text x="1390" y="664" class="body">GET /ad/sellers/{seller}/{metric}</text>
-  <text x="1390" y="686" class="small">15 s cache · each query bounded (10 s, 4 threads)</text>
+  <text x="1390" y="686" class="small">reader user: one tenant per query · no Kafka</text>
 
   <!-- Archive and batch -->
   <text x="1000" y="574" class="tag">ARCHIVE AND BATCH</text>
@@ -179,7 +179,7 @@
   <path d="M328 484 C366 484 372 320 402 300" class="ref"/>
   <path d="M660 290 C680 330 680 440 692 466" class="ref"/>
   <path d="M962 470 H992" class="ref"/>
-  <!-- reference topics → ClickHouse copies (analytics-service consumes them) -->
+  <!-- reference topics → ClickHouse copies (ingestion-service consumes them) -->
   <path d="M1330 368 H1362" class="ref"/>
   <!-- gateway ↔ identity -->
   <path d="M535 310 V332" class="arrow"/>

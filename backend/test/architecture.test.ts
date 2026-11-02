@@ -8,7 +8,7 @@ describe('architecture rules', () => {
 
   it('flags HTTP calls from services other than the gateway', () => {
     expect(scanSource('campaign-service', 'x.ts', "await fetch('http://product-service/api')")).toHaveLength(1)
-    expect(scanSource('analytics-service', 'x.ts', "import axios from 'axios'")).toHaveLength(1)
+    expect(scanSource('ingestion-service', 'x.ts', "import axios from 'axios'")).toHaveLength(1)
     expect(scanSource('gateway', 'x.ts', "import { createProxyMiddleware } from 'http-proxy-middleware'")).toEqual([])
   })
 

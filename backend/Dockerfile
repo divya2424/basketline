@@ -12,7 +12,8 @@ COPY services/gateway/package.json services/gateway/
 COPY services/auth-service/package.json services/auth-service/
 COPY services/product-service/package.json services/product-service/
 COPY services/campaign-service/package.json services/campaign-service/
-COPY services/analytics-service/package.json services/analytics-service/
+COPY services/ingestion-service/package.json services/ingestion-service/
+COPY services/insights-service/package.json services/insights-service/
 # @divya2424/basketline-kafka comes from GitHub Packages, which needs a token even
 # to read: a build secret (docker-compose.yml), so it never lands in the image.
 # pnpm takes registry credentials only from the user's config, so that names it.

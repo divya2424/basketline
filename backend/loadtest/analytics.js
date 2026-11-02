@@ -17,7 +17,7 @@ const RUN_ID = __ENV.RUN_ID || `run-${Date.now()}`
 const TENANT = '0ad7e570-0000-4000-8000-000000000001'
 const USERNAME = __ENV.LOADTEST_USERNAME || 'loadtest'
 const PASSWORD = __ENV.LOADTEST_PASSWORD || 'load test password'
-// analytics-service allows 300 events per sender per minute: a visitor sends this
+// ingestion-service allows 300 events per sender per minute: a visitor sends this
 // many batches of 10, then becomes a new visitor.
 const BATCHES_PER_VISITOR = 25
 const METRICS = ['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers', 'sessions']

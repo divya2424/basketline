@@ -27,7 +27,7 @@ export function accessFor(method: string, path: string): Access | null {
   if (/^\/api\/v1\/accounts\/[^/]+$/.test(path)) return method === 'DELETE' ? 'public' : null
   if (path === '/api/v1/analytics/events') return method === 'POST' ? 'events' : null
   // Campaign metrics: campaign managers (every seller) and seller-managers (their own seller, which
-  // analytics-service checks), only their own tenant's (the service reads it from the token).
+  // insights-service checks), only their own tenant's (the service reads it from the token).
   if (path.startsWith('/api/v1/ad/')) return read ? 'metrics-reader' : null
   // Reference data and server-side identity from a retailer's backend, with an integration token.
   if (path.startsWith('/api/v1/retail/')) return method === 'POST' ? 'integration' : null
@@ -62,10 +62,10 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService, co
       try {
         if (scheme !== 'Bearer' || !token) throw new Error('bad scheme')
         if (rule === 'integration') {
-          // A retailer's backend: no user, only its tenant; analytics-service verifies it again.
+          // A retailer's backend: no user, only its tenant; ingestion-service verifies it again.
           eventsTenant = (await verifyIntegrationToken(token, publicKey)).tid
         } else if (rule === 'events') {
-          // A visitor's or shopper's token has no claims to check here; analytics-service verifies it again.
+          // A visitor's or shopper's token has no claims to check here; ingestion-service verifies it again.
           const sender = await verifyEventToken(token, publicKey)
           claims = sender.claims
           eventsTenant = sender.tenantId

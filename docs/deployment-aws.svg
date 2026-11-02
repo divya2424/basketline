@@ -75,24 +75,30 @@
   <rect x="572" y="196" width="720" height="168" class="box svc"/>
   <text x="590" y="222" class="head">Edge node pool</text>
   <text x="760" y="222" class="small">stateless · HPA on CPU · pods spread over AZs · PodDisruptionBudgets</text>
-  <rect x="590" y="236" width="220" height="112" class="pod"/>
-  <text x="604" y="258" class="podtxt" font-weight="700">gateway</text>
-  <text x="604" y="278" class="podtxt">3 → ~60 pods (1 vCPU)</text>
-  <text x="604" y="296" class="podtxt">token check, per-IP limits</text>
-  <text x="604" y="316" class="az">AZ a · b · c</text>
-  <text x="604" y="334" class="podtxt">/metrics blocked at the ALB</text>
-  <rect x="826" y="236" width="220" height="112" class="pod"/>
-  <text x="840" y="258" class="podtxt" font-weight="700">analytics-service</text>
-  <text x="840" y="278" class="podtxt">3 → ~60 pods (1 vCPU)</text>
-  <text x="840" y="296" class="podtxt">ingestion, retail API, /ad</text>
-  <text x="840" y="316" class="az">AZ a · b · c</text>
-  <text x="840" y="334" class="podtxt">per-tenant budget by tier</text>
-  <rect x="1062" y="236" width="214" height="112" class="pod"/>
-  <text x="1076" y="258" class="podtxt" font-weight="700">auth-service</text>
-  <text x="1076" y="278" class="podtxt">3 → 10 pods</text>
-  <text x="1076" y="296" class="podtxt">keys, tokens, users</text>
-  <text x="1076" y="316" class="az">AZ a · b · c</text>
-  <text x="1076" y="334" class="podtxt">(retailer mimics: 2 each)</text>
+  <rect x="590" y="236" width="166" height="112" class="pod"/>
+  <text x="602" y="258" class="podtxt" font-weight="700">gateway</text>
+  <text x="602" y="278" class="podtxt">3 → ~60 pods</text>
+  <text x="602" y="296" class="podtxt">tokens, per-IP limits</text>
+  <text x="602" y="316" class="az">AZ a · b · c</text>
+  <text x="602" y="334" class="podtxt">/metrics blocked</text>
+  <rect x="766" y="236" width="166" height="112" class="pod"/>
+  <text x="778" y="258" class="podtxt" font-weight="700">ingestion-service</text>
+  <text x="778" y="278" class="podtxt">3 → ~60 pods</text>
+  <text x="778" y="296" class="podtxt">SDK events, /retail/*</text>
+  <text x="778" y="316" class="az">AZ a · b · c</text>
+  <text x="778" y="334" class="podtxt">tenant budget by tier</text>
+  <rect x="942" y="236" width="166" height="112" class="pod"/>
+  <text x="954" y="258" class="podtxt" font-weight="700">insights-service</text>
+  <text x="954" y="278" class="podtxt">3 → 20 pods</text>
+  <text x="954" y="296" class="podtxt">/ad, reader user only</text>
+  <text x="954" y="316" class="az">AZ a · b · c</text>
+  <text x="954" y="334" class="podtxt">no Kafka, no writes</text>
+  <rect x="1118" y="236" width="158" height="112" class="pod"/>
+  <text x="1130" y="258" class="podtxt" font-weight="700">auth-service</text>
+  <text x="1130" y="278" class="podtxt">3 → 10 pods</text>
+  <text x="1130" y="296" class="podtxt">keys, tokens, users</text>
+  <text x="1130" y="316" class="az">AZ a · b · c</text>
+  <text x="1130" y="334" class="podtxt">(+ retailer mimics)</text>
 
   <!-- Stream pool -->
   <rect x="572" y="380" width="720" height="150" class="box proc"/>
@@ -196,7 +202,7 @@
   <!-- ===== Sizing ===== -->
   <rect x="40" y="1022" width="1730" height="150" class="box infra"/>
   <text x="60" y="1050" class="head">Sizing for 100k events/s (≈11k requests/s at 9 events each; measured ~250 requests/s per 1-vCPU Node pod)</text>
-  <text x="60" y="1076" class="body">Edge: ~60 gateway + ~60 analytics-service pods with 30% headroom (~11 each if clients batch 50 events) · MSK: 3+ brokers, 48 partitions on interactions (~100 MB/s)</text>
+  <text x="60" y="1076" class="body">Edge: ~60 gateway + ~60 ingestion-service pods with 30% headroom (insights scales on dashboard reads) (~11 each if clients batch 50 events) · MSK: 3+ brokers, 48 partitions on interactions (~100 MB/s)</text>
   <text x="60" y="1098" class="body">Flink: parallelism 48 on the operator, RocksDB on NVMe · ClickHouse: 2 shards × 2 replicas; /ad reads stay small (daily rows), each bounded to 10 s and 4 threads</text>
   <text x="60" y="1120" class="body">A heavy tenant: capped by its tier's budget at ingestion (429 + Retry-After); its events spread over all partitions and Flink tasks; the largest tenants can get their own shard.</text>
   <text x="60" y="1146" class="small">Laptop-based figures are a conservative first estimate: re-measure on the target instances before committing to node counts.</text>

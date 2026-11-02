@@ -36,7 +36,7 @@ tests/                 the jobs against the running stack
 
 ## The nightly export (sessions)
 
-**Which day.** Each run exports the sessions of the day seven days before its date. analytics-service accepts events up to 5 days late, so the day is complete from midnight five days after it; the extra day lets the last of those events reach ClickHouse even when Flink or ClickHouse is behind. ClickHouse keeps 20 days, so a failed export can be retried for almost two weeks. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
+**Which day.** Each run exports the sessions of the day seven days before its date. ingestion-service accepts events up to 5 days late, so the day is complete from midnight five days after it; the extra day lets the last of those events reach ClickHouse even when Flink or ClickHouse is behind. ClickHouse keeps 20 days, so a failed export can be retried for almost two weeks. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
 
 **Safe to re-run.** `export_archive.py --table T --day D` deletes day D from the Iceberg table and appends ClickHouse's rows for D **in one commit**. A retry or a backfill replaces the day instead of duplicating it, and a run that fails half-way commits nothing. It reads with `FINAL`, so copies ClickHouse hasn't merged away yet are archived once. It refuses a day ClickHouse no longer keeps, since that would replace the archived day with nothing.
 
@@ -145,6 +145,6 @@ It costs nothing between runs and scales up for a large backfill. Only the local
 
 | Variable | Purpose |
 |---|---|
-| `CLICKHOUSE_URL` | ClickHouse to read the raw tables from (as for analytics-service) |
+| `CLICKHOUSE_URL` | ClickHouse to read the raw tables from (as for ingestion-service) |
 | `PYICEBERG_CATALOG__ARCHIVE__*` | The Iceberg catalog: `TYPE` (`sql` or `glue`), `URI`, `WAREHOUSE`, `S3__ENDPOINT`, `S3__REGION`, `S3__ACCESS_KEY_ID`, `S3__SECRET_ACCESS_KEY` ([PyIceberg configuration](https://py.iceberg.apache.org/configuration/)) |
 | `ARCHIVE_NAMESPACE` | The Iceberg namespace (Glue database). Default `archive`; the test uses `archive_test` |

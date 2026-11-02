@@ -128,8 +128,10 @@ services:
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
-  analytics-service:
-    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: analytics-service }, secrets: [npm_token] }
+  # The write path: SDK events and the retail API, published to Kafka; the
+  # reference copies in ClickHouse.
+  ingestion-service:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: ingestion-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
     # Started again after a crash, as Kubernetes would.
@@ -137,16 +139,29 @@ services:
     environment:
       <<: *service-env
       PORT: 4004
-      # No Postgres: events go to Kafka, metrics are read from ClickHouse.
+      # No Postgres: events go to Kafka; the reference copies are kept in ClickHouse.
       CLICKHOUSE_URL: http://basketline:basketline_dev@clickhouse:8123/analytics
-      # /ad reads: the reader user, which sees only the token's tenant (infra/clickhouse/04_access.sql).
-      CLICKHOUSE_READER_URL: http://basketline_reader:basketline_reader_dev@clickhouse:8123/analytics
       # Each tenant's ingestion budget per minute, by tier (ingestion.service.ts).
       TENANT_EVENTS_PER_MINUTE_FREE: ${TENANT_EVENTS_PER_MINUTE_FREE:-60000}
       TENANT_EVENTS_PER_MINUTE_PRO: ${TENANT_EVENTS_PER_MINUTE_PRO:-600000}
       TENANT_EVENTS_PER_MINUTE_ENTERPRISE: ${TENANT_EVENTS_PER_MINUTE_ENTERPRISE:-6000000}
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { clickhouse: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  # The read path: the insights API (/ad). ClickHouse only, as the reader user,
+  # which sees only the token's tenant (infra/clickhouse/04_access.sql); no Kafka.
+  insights-service:
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: insights-service }, secrets: [npm_token] }
+    stop_grace_period: 35s
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
+      LOG_LEVEL: info
+      PORT: 4005
+      CLICKHOUSE_READER_URL: http://basketline_reader:basketline_reader_dev@clickhouse:8123/analytics
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { clickhouse: { condition: service_healthy } }
 
   # Reads the retail.interactions.v1 and retail.identity-events.v1 topics, credits basket additions to clicks,
   # and writes both to the serving topics ClickHouse loads (infra/clickhouse/03_kafka.sql).
@@ -174,8 +189,8 @@ services:
       clickhouse: { condition: service_healthy }
       postgres: { condition: service_healthy }
       archive-storage: { condition: service_healthy }
-      # It creates the analytics and serving topics.
-      analytics-service: { condition: service_healthy }
+      # It creates the retail and serving topics.
+      ingestion-service: { condition: service_healthy }
 
   # S3 for the Iceberg archive locally (S3 itself on AWS). SeaweedFS, because
   # MinIO no longer publishes images. Its admin UI browses the bucket.
@@ -241,7 +256,8 @@ services:
       AUTH_SERVICE_URL: http://auth-service:4001
       PRODUCT_SERVICE_URL: http://product-service:4002
       CAMPAIGN_SERVICE_URL: http://campaign-service:4003
-      ANALYTICS_SERVICE_URL: http://analytics-service:4004
+      INGESTION_SERVICE_URL: http://ingestion-service:4004
+      INSIGHTS_SERVICE_URL: http://insights-service:4005
       CORS_ORIGINS: http://localhost:5173
       # Per client IP. Raised only for load tests (loadtest/README.md).
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
@@ -253,7 +269,8 @@ services:
       auth-service: { condition: service_healthy }
       product-service: { condition: service_healthy }
       campaign-service: { condition: service_healthy }
-      analytics-service: { condition: service_healthy }
+      ingestion-service: { condition: service_healthy }
+      insights-service: { condition: service_healthy }
 
   # Monitoring (infra/monitoring/), only with: docker compose --profile monitoring up -d
   prometheus:

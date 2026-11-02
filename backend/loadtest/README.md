@@ -4,7 +4,7 @@ Measures three p99s for the analytics path:
 
 | What | How it's measured |
 |---|---|
-| **Ingestion latency** | k6 timing of `POST /api/v1/analytics/events` through the gateway: gateway → analytics-service → Kafka ack |
+| **Ingestion latency** | k6 timing of `POST /api/v1/analytics/events` through the gateway: gateway → ingestion-service → Kafka ack |
 | **Dashboard read latency** | k6 timing of `GET /api/v1/ad/{campaign}/{metric}?from=…` (random metric, random 7/30/90/365-day range) |
 | **End-to-end freshness** | In ClickHouse, `ingested_at − received_at` for **every** event of a run (`freshness.sql`): Kafka, the Flink job and ClickHouse's Kafka reads |
 
@@ -66,7 +66,7 @@ Docker Desktop with **12 vCPUs and 8 GB**, and **everything on that one machine*
 | 1,000 (10k) | 127 | 1.2 s | 27 s | **49 s** | 47% ² | 13 s / 40 s |
 
 ¹ Flink had just been reset and was still replaying Kafka's 14 days while this run was sent.
-² Mostly timeouts. The overload then took the gateway and analytics-service down (below).
+² Mostly timeouts. The overload then took the gateway and ingestion-service down (below).
 
 **Dashboard reads** (no ingestion; `GET /ad/{campaign}/{metric}`, random metric and 7–365-day range):
 
@@ -77,21 +77,21 @@ Docker Desktop with **12 vCPUs and 8 GB**, and **everything on that one machine*
 
 ³ Right after the services restarted, with cold caches and Flink catching up; the 40 reads/s run is the steady state.
 
-**Where the CPU goes at 250 req/s** (`docker stats`, of 12 cores): Flink about 3 cores, Kafka 1–2.4, the gateway 1.2–1.5, analytics-service 1–1.3, ClickHouse up to 2, k6 0.65.
+**Where the CPU goes at 250 req/s** (`docker stats`, of 12 cores): Flink about 3 cores, Kafka 1–2.4, the gateway 1.2–1.5, ingestion-service 1–1.3, ClickHouse up to 2, k6 0.65.
 
-**What the numbers show:**
-- **The first bottleneck is the two Node processes.** The gateway and analytics-service are one process each, and each ran at its one core: about **250 requests/s (2,250 events/s) per process** on this machine. Past that, latency goes to seconds and then requests time out. They scale by adding pods.
+**What the numbers show** (measured before analytics-service was split into ingestion-service and insights-service; the ingestion figures below are now ingestion-service's):
+- **The first bottleneck is the two Node processes.** The gateway and ingestion-service are one process each, and each ran at its one core: about **250 requests/s (2,250 events/s) per process** on this machine. Past that, latency goes to seconds and then requests time out. They scale by adding pods.
 - **Flink made the dashboards fresher.** Up to the ingestion limit, events are stored a median 7.5 s after they're sent (p99 22 s) at 1,000 events/s, against 24 s with the earlier Spark loader's 30 s micro-batches (2026-10-28). Most of the rest is ClickHouse's 15 s Kafka flush, kept for cheaper inserts (`infra/clickhouse/03_kafka.sql`).
 - **Reads are cheap:** `/ad` reads pre-aggregated daily rows, so 40 reads/s had a 60 ms p99, and the 15 s cache absorbs repeats.
 - **Nothing accepted was lost.** Every event the API accepted was stored once; under overload, clients get latency and then timeouts.
-- **Found by this test: overload crashed two services.** At 1,000 req/s, Kafka's consumer-group sync failed (`syncGroup failed 4 times`, from the broker starved of CPU). The Kafka client library (`@divya2424/basketline-kafka`) raised it as an uncaught exception, and the gateway and analytics-service shut down. Compose has no restart policy, so they stayed down (Kubernetes would restart them). The fix belongs in the library: retry and rejoin the group instead of throwing.
+- **Found by this test: overload crashed two services.** At 1,000 req/s, Kafka's consumer-group sync failed (`syncGroup failed 4 times`, from the broker starved of CPU). The Kafka client library (`@divya2424/basketline-kafka`) raised it as an uncaught exception, and the gateway and ingestion-service shut down. Compose has no restart policy, so they stayed down (Kubernetes would restart them). The fix belongs in the library: retry and rejoin the group instead of throwing.
 
 **Capacity model** (per-core figures from this laptop, so a conservative first estimate; re-measure on the target machines):
 
 | Component | Measured here | For 100k events/s (≈11k requests/s at 9 events each) |
 |---|---|---|
 | Gateway | ~250 req/s per process (1 core) | ~45 pods at 1 core, + 30% headroom → **~60** |
-| analytics-service | ~250 req/s per process | **~60 pods** (or batch 50 events per request: ~11) |
+| ingestion-service | ~250 req/s per process | **~60 pods** (or batch 50 events per request: ~11) |
 | Kafka | 1–2.4 cores at 2.25k events/s (one broker) | 3+ brokers; `retail.interactions.v1` with **≥ 48 partitions** (≈100 MB/s at ~1 KB per event) |
 | Flink | ~3 cores at 2.25k events/s, including archive writes | parallelism ≈ partitions (48): task managers on the Flink Kubernetes Operator, RocksDB on local NVMe, checkpoints on S3 |
 | ClickHouse | ≤ 2 cores storing 2.25k events/s | 2+ shards × 2 replicas; reads stay small (daily rows) |
@@ -102,7 +102,7 @@ The model's main lever is batching: the SDK sends up to 20 events per request, a
 
 This is about 1,000× what one laptop handles. These are the changes needed, in order of impact. The per-instance figures need re-measuring on dedicated machines; the laptop figures include contention from co-located services.
 
-1. **More gateway and analytics-service instances.** Each is one Node process, one core. Run many replicas behind a load balancer, or one process per core with Node's `cluster` module, sized from a per-core measurement on dedicated hardware.
+1. **More gateway and ingestion-service instances.** Each is one Node process, one core. Run many replicas behind a load balancer, or one process per core with Node's `cluster` module, sized from a per-core measurement on dedicated hardware.
 2. **Bigger batches from the client.** 50 events per request instead of 9 means 20k requests/s instead of 111k for the same 1M events/s, which cuts gateway and service work by about 5×.
 3. **A Kafka cluster.** Today there's one broker with 3 partitions per topic. 1M messages/s (~0.5–1 GB/s) needs several brokers and hundreds of partitions on `retail.interactions.v1`, which carries every interaction, plus producer batching and compression.
 4. **A Flink cluster.** The job runs in one container with parallelism 2. Run it with the Flink Kubernetes Operator: task managers scaled with the busiest topics' partitions, checkpoints on S3, and RocksDB state sized for 13 days of clicks and 6 of basket additions, plus open sessions, on local NVMe (local recovery).

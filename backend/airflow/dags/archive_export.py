@@ -7,7 +7,7 @@ their session_id in ClickHouse (03_kafka.sql), and are one row per session, so a
 nightly copy stays small. export_archive.py still copies any table's day, to
 repair the archive from ClickHouse by hand.
 
-Seven days, because analytics-service accepts events up to 5 days late: the day
+Seven days, because ingestion-service accepts events up to 5 days late: the day
 is complete from midnight five days after it, and the extra day lets events
 accepted just before then reach ClickHouse even when Flink or ClickHouse is
 behind. ClickHouse keeps raw events 20 days, so a failed run can be retried or

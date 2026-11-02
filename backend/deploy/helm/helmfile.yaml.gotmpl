@@ -21,7 +21,7 @@ repositories:
     url: https://airflow.apache.org
 
 releases:
-{{- range list "gateway" "auth-service" "product-service" "campaign-service" "analytics-service" "flink-streaming" }}
+{{- range list "gateway" "auth-service" "product-service" "campaign-service" "ingestion-service" "insights-service" "flink-streaming" }}
   - name: {{ . }}
     namespace: basketline
     chart: ./charts/{{ . }}

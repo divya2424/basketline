@@ -3,7 +3,7 @@
  *   1. No service except the gateway makes HTTP calls (no API-to-API calls).
  *   2. No service imports another service's code.
  *   3. Each service's DATABASE_URL in docker-compose.yml points at its own database.
- *      analytics-service has no Postgres database: it uses CLICKHOUSE_URL instead.
+ *      ingestion-service and insights-service have no Postgres database: they use ClickHouse.
  *
  *   pnpm check:architecture
  */
@@ -12,12 +12,13 @@ import path from 'node:path'
 
 const root = path.join(import.meta.dirname, '..')
 
-/** Each service's Postgres database; null = none (analytics-service writes to Kafka, reads ClickHouse). */
+/** Each service's Postgres database; null = none (ingestion-service writes to Kafka and ClickHouse; insights-service reads ClickHouse). */
 export const SERVICE_DATABASES: Record<string, string | null> = {
   'auth-service': 'identity_db',
   'product-service': 'product_db',
   'campaign-service': 'campaign_db',
-  'analytics-service': null,
+  'ingestion-service': null,
+  'insights-service': null,
   gateway: 'gateway_db',
 }
 
@@ -69,7 +70,8 @@ export function findViolations(): string[] {
     const url = block?.match(/DATABASE_URL:\s*(\S+)/)?.[1]
     if (database === null) {
       if (url) problems.push(`docker-compose.yml: ${service} must not have a DATABASE_URL`)
-      if (!block?.includes('CLICKHOUSE_URL:')) problems.push(`docker-compose.yml: ${service} has no CLICKHOUSE_URL`)
+      // The write path uses ClickHouse's own user; the read path only the tenant-scoped reader.
+      if (!/CLICKHOUSE(_READER)?_URL:/.test(block ?? '')) problems.push(`docker-compose.yml: ${service} has no CLICKHOUSE_URL or CLICKHOUSE_READER_URL`)
     } else if (!url) problems.push(`docker-compose.yml: ${service} has no DATABASE_URL`)
     else if (!url.endsWith(`/${database}`)) problems.push(`docker-compose.yml: ${service} must use ${database}, not ${url}`)
   }

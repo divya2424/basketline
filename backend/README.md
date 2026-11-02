@@ -2,7 +2,7 @@
 
 The backend of [Basketline](../README.md), an ads analytics platform for retailers: five Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHouse for the metrics, and Airflow for the archive and backfills.
 
-**The product is the analytics side** (analytics-service, Flink, ClickHouse, Airflow). auth-, product- and campaign-service stand in for a retailer's own systems: they own the tenant's users, catalog and campaigns, and send them to Basketline the way any retailer's backend would, through the retail API with an integration token (`packages/platform/src/retailer.ts`). Apart from that, services talk to each other only through **Kafka** events.
+**The product is the analytics side** (ingestion-service, insights-service, Flink, ClickHouse, Airflow). auth-, product- and campaign-service stand in for a retailer's own systems: they own the tenant's users, catalog and campaigns, and send them to Basketline the way any retailer's backend would, through the retail API with an integration token (`packages/platform/src/retailer.ts`). Apart from that, services talk to each other only through **Kafka** events.
 
 **Contents:**
 
@@ -16,24 +16,24 @@ The backend of [Basketline](../README.md), an ads analytics platform for retaile
  frontend ──HTTP──►│ CORS · rate limits · JWT check ·       │──HTTP──► one service per request
                    │ session revocation · route permissions │
                    └────────────────────────────────────────┘
- auth-service      product-service     campaign-service        analytics-service (no Postgres)
-   identity_db        product_db          campaign_db             │ publish           ▲ /ad counts (SQL)
+ auth-service      product-service     campaign-service        ingestion-service      insights-service (/ad)
+   identity_db        product_db          campaign_db             │ publish           ▲ reads (SQL, one tenant)
      │  publish          │  publish          ▲ consume  │           ▼                   │
      ▼                   ▼                   │          │         retail.interactions.v1  ClickHouse
  auth.user.v1      product.v1 ─────────────── ┘          │         retail.identity-events.v1 ──► flink-streaming ──┘
  auth.session.v1 ──► gateway                             │
-                         └──── POST /retail/catalog, /retail/campaigns ──► analytics-service ──► retail.catalog-events.v1,
+                         └──── POST /retail/catalog, /retail/campaigns ──► ingestion-service ──► retail.catalog-events.v1,
                                (as the retailer's backend)                                       retail.campaign-events.v1 ──► ClickHouse copies
 ```
 
 **Principles:**
 
-- **A database per service.** Each service has its own Postgres database and its own login, which can't connect to any other service's database. analytics-service stores nothing and only reads ClickHouse.
+- **A database per service.** Each service has its own Postgres database and its own login, which can't connect to any other service's database. ingestion-service and insights-service have none: ingestion publishes to Kafka and keeps its reference copies in ClickHouse; insights only reads ClickHouse, as a user that sees one tenant per query, with no Kafka connection or write access.
 - **Local copies instead of calls.** A service that needs another's data keeps a *projection* built from that service's events. For example, campaign-service keeps a `products` table and checks product IDs against it.
 - **The analytics pipeline:**
-  1. analytics-service validates each event and publishes it to its topic.
+  1. ingestion-service validates each event and publishes it to its topic.
   2. Flink credits basket additions to ad clicks and builds sessions.
-  3. ClickHouse loads the results and counts the `/ad` metrics.
+  3. ClickHouse loads the results; insights-service serves the `/ad` metrics from its daily tables.
   4. The Flink job appends raw events to the Iceberg archive on S3; Airflow archives sessions, compacts the archive and backfills history.
 - **No build step.** Plain Express everywhere, on Node 24, which runs the `.ts` files directly.
 
@@ -47,7 +47,8 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | auth-service | not published | `auth-service:4001` | Accounts, users, sign-in, tokens, vendors' API keys |
 | product-service | not published | `product-service:4002` | Products |
 | campaign-service | not published | `campaign-service:4003` | Campaigns |
-| analytics-service | not published | `analytics-service:4004` | Event ingestion and `/ad` metrics |
+| ingestion-service | not published | `ingestion-service:4004` | The write path: SDK events (`/analytics/events`), the retail API (`/retail/*`), the reference copies in ClickHouse |
+| insights-service | not published | `insights-service:4005` | The read path: the insights API (`/ad/*`), as ClickHouse's tenant-scoped reader |
 | **Flink** web UI | http://localhost:8081 | `flink-streaming:8081` | Job graph, checkpoints, backpressure |
 | **Airflow** UI | http://localhost:8082 | `airflow:8080` | DAGs `archive_export`, `archive_maintenance`, `history_backfill`, `tenant_purge`; no login (local only) |
 | **ClickHouse** HTTP / SQL console | http://localhost:8123 · http://localhost:8123/play | `clickhouse:8123` | User `basketline`, password `basketline_dev`, database `analytics` |
@@ -58,10 +59,10 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | **Grafana** (profile `monitoring`) | http://localhost:3000 | `grafana:3000` | Dashboard "Pipeline" (the home page); viewing needs no login, editing `admin` / `basketline_dev` |
 | **Prometheus** (profile `monitoring`) | http://localhost:9090 · alerts http://localhost:9090/alerts | `prometheus:9090` | Scrapes Flink, ClickHouse, the pipeline's SQL metrics and Kafka lag |
 
-The four services aren't published to the host. Reach their health probes from inside the container:
+The five services aren't published to the host. Reach their health probes from inside the container:
 
 ```bash
-docker compose exec auth-service wget -qO- localhost:4001/health/ready   # 4002 product, 4003 campaign, 4004 analytics
+docker compose exec auth-service wget -qO- localhost:4001/health/ready   # 4002 product, 4003 campaign, 4004 ingestion, 4005 insights
 ```
 
 ## Run it
@@ -223,7 +224,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 ### Events
 
-Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properties?}`. What it's about goes in `properties`: `campaignId` (required on `impression` and `click`), `productId` (what click-to-basket credits), and any other attribute. On arrival, analytics-service lifts `campaignId` and `productId` out of `properties` into their own fields, which attribution and the `/ad` metrics key on.
+Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properties?}`. What it's about goes in `properties`: `campaignId` (required on `impression` and `click`), `productId` (what click-to-basket credits), and any other attribute. On arrival, ingestion-service lifts `campaignId` and `productId` out of `properties` into their own fields, which attribution and the `/ad` metrics key on.
 
 - **Who sent it.** A registered user sends their access token. A visitor gets a visitor token for the UUID the client keeps for them, from `POST /auth/visitor`. The client keeps the same UUID before and after registration. The stored tenant, `userId`, `userType` and `clientType` always come from the token.
 
@@ -241,7 +242,7 @@ Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properti
 
 - **Interactions:** the metric events `impression` and `click`, and **storefront activity** (`home_view`, `campaign_navigation`, `product_impression`, `product_click`, `add_to_cart`, `cart_view`, `cart_quantity_update`, `remove_from_cart`), stored for analysis. `add_to_cart` also feeds click-to-basket.
 
-- **Identity:** from the browser, `login_click`, `signup_click`, `login` and `logout` (stored like interactions, and part of sessions); from the retailer's server only (`/retail/identity`), `user_identified` and `user_deleted`. `user_deleted` is never stored: analytics-service records the shopper in `analytics.deleted_users` and deletes their rows (see [Deleting a tenant](#deleting-a-tenant)).
+- **Identity:** from the browser, `login_click`, `signup_click`, `login` and `logout` (stored like interactions, and part of sessions); from the retailer's server only (`/retail/identity`), `user_identified` and `user_deleted`. `user_deleted` is never stored: ingestion-service records the shopper in `analytics.deleted_users` and deletes their rows (see [Deleting a tenant](#deleting-a-tenant)).
 
 ### Click-to-basket attribution
 
@@ -329,12 +330,12 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 | `product.v1` | ProductCreated, ProductUpdated, ProductDeactivated (the retailer's internal events) | campaign-service (its `products` table) |
 | `campaign.v1` | CampaignCreated, CampaignUpdated, CampaignProductAssociated, CampaignProductRemoved (internal) | nobody yet (analytics learns campaigns from the retail API) |
 | `retail.interactions.v1` | AnalyticsEventRecorded for every interaction, all tenants (key = the client's `eventId`). Kept **14 days** | flink-streaming |
-| `retail.identity-events.v1` | Identity events, from the browser and the retailer's server. Kept **14 days** | flink-streaming (stores the browser's), analytics-service (`user_deleted`) |
-| `retail.catalog-events.v1`, `retail.campaign-events.v1` | The retail API's updates, keyed by entity ID. **Compacted**: the latest state per ID is kept for good | analytics-service (`analytics.sellers`, `products`, `campaigns`) |
-| `retail.heartbeat.v1` | WatermarkHeartbeat: the current time, every 30 s from analytics-service, so sessions close when no events arrive. Kept **1 hour** | flink-streaming (moves the watermark only; nothing is stored) |
+| `retail.identity-events.v1` | Identity events, from the browser and the retailer's server. Kept **14 days** | flink-streaming (stores the browser's), ingestion-service (`user_deleted`) |
+| `retail.catalog-events.v1`, `retail.campaign-events.v1` | The retail API's updates, keyed by entity ID. **Compacted**: the latest state per ID is kept for good | ingestion-service (`analytics.sellers`, `products`, `campaigns`) |
+| `retail.heartbeat.v1` | WatermarkHeartbeat: the current time, every 30 s from ingestion-service, so sessions close when no events arrive. Kept **1 hour** | flink-streaming (moves the watermark only; nothing is stored) |
 | `serving.events.v1`, `serving.attributed_baskets.v1`, `serving.sessions.v1` | Flink's output, one JSON row per ClickHouse row. Kept **48 hours** | ClickHouse (Kafka engine tables, `infra/clickhouse/03_kafka.sql`) |
 
-- **Retention:** analytics-service sets it when it creates a topic. Flink keeps clicks for 13 days, so the interaction topics' 14 days let a replay rebuild all of it. Other topics keep Kafka's default of 7 days.
+- **Retention:** ingestion-service sets it when it creates a topic. Flink keeps clicks for 13 days, so the interaction topics' 14 days let a replay rebuild all of it. Other topics keep Kafka's default of 7 days.
 - **Why shared topics:** every tenant's events of one domain share its topic (keyed and filtered by tenant). A domain gets a topic of its own only when its retention, access, throughput or processing differ: reference data is compacted, identity carries erasures, interactions are the volume. So adding retailers or event names adds no topics.
 - **The old** `analytics.<eventName>.v1` **topics** (one per event name, before the shared ones) are no longer read; delete them (see [Upgrading](#upgrading-an-existing-setup)).
 - **Consumers:**
@@ -368,16 +369,16 @@ Compose and the Helm charts use a 35 s grace period.
 
 | Variable | Used by | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | all but analytics-service | The service's own database |
-| `CLICKHOUSE_URL` | analytics-service, airflow | e.g. `http://basketline:basketline_dev@clickhouse:8123/analytics` |
-| `METRICS_CACHE_MS` | analytics-service | How long an `/ad` count is reused (default 15000; 0 turns it off) |
-| `CLICKHOUSE_READER_URL` | analytics-service | The `/ad` reads' ClickHouse user, `basketline_reader` (tenant row policy, `04_access.sql`); without it they use `CLICKHOUSE_URL` (logged as a warning) |
-| `TENANT_EVENTS_PER_MINUTE_FREE`, `_PRO`, `_ENTERPRISE` | analytics-service | Each tenant's ingestion budget per instance, by tier (defaults 60000, 600000, 6000000). Across N instances a tenant gets N times this |
+| `DATABASE_URL` | all but ingestion- and insights-service | The service's own database |
+| `CLICKHOUSE_URL` | ingestion-service, airflow | e.g. `http://basketline:basketline_dev@clickhouse:8123/analytics` |
+| `METRICS_CACHE_MS` | insights-service | How long an `/ad` count is reused (default 15000; 0 turns it off) |
+| `CLICKHOUSE_READER_URL` | insights-service | Its only ClickHouse user, `basketline_reader` (tenant row policy, `04_access.sql`) |
+| `TENANT_EVENTS_PER_MINUTE_FREE`, `_PRO`, `_ENTERPRISE` | ingestion-service | Each tenant's ingestion budget per instance, by tier (defaults 60000, 600000, 6000000). Across N instances a tenant gets N times this |
 | `KAFKA_BROKERS` | all | e.g. `kafka:19092` |
 | `KAFKA_TOPIC_PREFIX`, `KAFKA_REPLICATION` | all | Environment isolation; the replication factor of created topics (default 1) |
 | `JWT_PUBLIC_KEY_FILE` / `JWT_PRIVATE_KEY_FILE` | all / auth-service | Verify / sign tokens |
 | `LOGIN_RATE_LIMIT` | auth-service | Attempts per IP and username per 15 minutes (default 10) |
-| `AUTH_/PRODUCT_/CAMPAIGN_/ANALYTICS_SERVICE_URL` | gateway | Where to route requests |
+| `AUTH_/PRODUCT_/CAMPAIGN_/INGESTION_/INSIGHTS_SERVICE_URL` | gateway | Where to route requests |
 | `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `EVENTS_RATE_LIMIT_PER_MINUTE`, `VISITOR_RATE_LIMIT_PER_MINUTE` | gateway | Allowed origins; per-IP limits (defaults 300, 120 and 10 per minute). The SDK's endpoints (`/auth/visitor`, `/analytics/events`) accept any origin (they take bearer tokens, never cookies), unless the tenant lists allowed websites |
 | `SHOPPER_TOKEN_RATE_LIMIT_PER_MINUTE` | gateway | Shopper tokens per minute per API key (default 600); this route isn't limited per IP, since a vendor's backend calls from few IPs |
 | `PORT`, `LOG_LEVEL`, `SHUTDOWN_DRAIN_MS`, `SHUTDOWN_TIMEOUT_MS` | all |  |
@@ -395,7 +396,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-se
 docker compose start campaign-service
 ```
 
-Consumer groups: `campaign-service`, `gateway`, `analytics-service`. When the events have expired, product-service can republish every product's current state: `docker compose exec product-service node services/product-service/src/cli.ts republish`.
+Consumer groups: `campaign-service`, `gateway`, `ingestion-service`. When the events have expired, product-service can republish every product's current state: `docker compose exec product-service node services/product-service/src/cli.ts republish`.
 
 ### Resetting and replaying ClickHouse
 
@@ -409,18 +410,18 @@ ch -q "CREATE DATABASE analytics_backup;
   CREATE TABLE analytics_backup.campaigns AS analytics.campaigns; INSERT INTO analytics_backup.campaigns SELECT * FROM analytics.campaigns;
   CREATE TABLE analytics_backup.deleted_tenants AS analytics.deleted_tenants; INSERT INTO analytics_backup.deleted_tenants SELECT * FROM analytics.deleted_tenants;
   CREATE TABLE analytics_backup.backfill_runs AS analytics.backfill_runs; INSERT INTO analytics_backup.backfill_runs SELECT * FROM analytics.backfill_runs" < /dev/null
-docker compose stop flink-streaming analytics-service
+docker compose stop flink-streaming ingestion-service
 ch -q "DROP DATABASE analytics SYNC" < /dev/null
 # ClickHouse reads only what Flink writes from now on, not the old rows.
 kg --group clickhouse-events --topic serving.events.v1 --reset-offsets --to-latest --execute
 kg --group clickhouse-attributed-baskets --topic serving.attributed_baskets.v1 --reset-offsets --to-latest --execute
 kg --group clickhouse-sessions --topic serving.sessions.v1 --reset-offsets --to-latest --execute
-ch < infra/clickhouse/01_tables.sql && ch < infra/clickhouse/02_materialized_views.sql
+ch < infra/clickhouse/01_tables.sql && ch < infra/clickhouse/02_materialized_views.sql && ch < infra/clickhouse/04_access.sql
 ch -q "INSERT INTO analytics.campaigns SELECT * FROM analytics_backup.campaigns;
   INSERT INTO analytics.deleted_tenants SELECT * FROM analytics_backup.deleted_tenants;
   CREATE TABLE analytics.backfill_runs AS analytics_backup.backfill_runs; INSERT INTO analytics.backfill_runs SELECT * FROM analytics_backup.backfill_runs" < /dev/null
-# analytics-service creates the serving topics 03_kafka.sql reads.
-docker compose up -d --build --wait analytics-service
+# ingestion-service creates the serving topics 03_kafka.sql reads.
+docker compose up -d --build --wait ingestion-service
 ch < infra/clickhouse/03_kafka.sql
 # No checkpoint: Flink replays every analytics topic from the earliest offset.
 docker compose run --rm --no-deps --entrypoint sh flink-streaming -c 'rm -rf /checkpoints/*'
@@ -444,17 +445,17 @@ After losing the ClickHouse volume, on a new one (the schema files create empty 
 ```bash
 ch() { docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery "$@"; }
 B="S3('http://archive-storage:8333/ad-insights-archive/clickhouse-backups/2026-10-31', 'archive', 'archive_dev')"   # the newest backup; on AWS, S3('<url>') with ClickHouse's IAM role
-docker compose stop flink-streaming analytics-service
+docker compose stop flink-streaming ingestion-service insights-service
 ch -q "RESTORE TABLE analytics.daily_campaign_aggregation, TABLE analytics.daily_campaign_customers_aggregation,
          TABLE analytics.daily_campaign_sessions_aggregation, TABLE analytics.campaigns, TABLE analytics.deleted_tenants,
          TABLE analytics.invalid_traffic_daily, TABLE analytics.sellers, TABLE analytics.products, TABLE analytics.deleted_users
        FROM $B SETTINGS allow_non_empty_tables = true" < /dev/null
-# Reference data, erasures and tenant deletions since the backup: analytics-service applies them again.
+# Reference data, erasures and tenant deletions since the backup: ingestion-service applies them again.
 kg() { docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "$@" < /dev/null; }
-kg --group analytics-service --topic retail.catalog-events.v1 --topic retail.campaign-events.v1 --topic retail.identity-events.v1 --topic auth.tenant.v1 --reset-offsets --to-datetime 2026-10-31T02:30:00.000 --execute
+kg --group ingestion-service --topic retail.catalog-events.v1 --topic retail.campaign-events.v1 --topic retail.identity-events.v1 --topic auth.tenant.v1 --reset-offsets --to-datetime 2026-10-31T02:30:00.000 --execute
 # Raw rows: Flink replays Kafka's 14 days; the hourly check then makes the replayed days exact.
 docker compose run --rm --no-deps --entrypoint sh flink-streaming -c 'rm -rf /checkpoints/*'
-docker compose up -d flink-streaming analytics-service
+docker compose up -d flink-streaming ingestion-service insights-service
 ```
 
 Everything after the backup comes back from Kafka. Days older than the replay keep their backed-up totals, and the history backfill can recompute them from the archive.
@@ -491,7 +492,7 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's re
 | Upgrade | Do |
 | --- | --- |
 | Renamed to Basketline | Docker volumes are now `basketline_*`. Before the first start, copy the old ones across: `for v in pgdata chdata flink-checkpoints archive-data; do docker run --rm -v ecommerce-analytics_$v:/from -v basketline_$v:/to alpine cp -a /from/. /to/; done`. Then, once ClickHouse is up, rebuild it (above; the ClickHouse user is now `basketline`). Everyone signs in again |
-| IDs lowercased once, in analytics-service | Rebuild analytics-service first (`docker compose up -d --build analytics-service`). Flink no longer lowercases IDs, so reset its checkpoint (`flink/README.md`, "Resetting the checkpoint") only once no event in Kafka has an uppercase ID: wait 14 days, or check the analytics topics. A replay would drop such events |
+| IDs lowercased once, in ingestion-service | Rebuild ingestion-service first (`docker compose up -d --build ingestion-service`). Flink no longer lowercases IDs, so reset its checkpoint (`flink/README.md`, "Resetting the checkpoint") only once no event in Kafka has an uppercase ID: wait 14 days, or check the analytics topics. A replay would drop such events |
 | Per-tenant allowed websites | Rebuild auth-service and the gateway (`docker compose up -d --build auth-service gateway`); their migrations add `accounts.allowed_origins` and `tenant_origins` |
 | Tenants can be deleted | Rebuild auth-service and the gateway (`docker compose up -d --build`) for their migrations |
 | Analytics topics kept 14 days | `for t in $(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list | grep '^analytics\..*\.v1$'); do docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name $t --add-config retention.ms=1209600000; done` |
@@ -512,12 +513,12 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's re
 | auth-service (`identity_db`) | users, sign-ins, API keys, shopper mappings, the account | in the request, then it publishes `TenantDeleted` on `auth.tenant.v1` |
 | gateway | records the tenant in `deleted_tenants`: its access, visitor and shopper tokens get 401 `TENANT_DELETED` | on the event |
 | product-service, campaign-service | products, campaigns and their links | on the event |
-| analytics-service (ClickHouse) | raw events, attributed baskets, sessions, the daily tables, the campaign projection; adds the tenant to `analytics.deleted_tenants`, which the Kafka queue views filter on, so events still in flight are dropped | on the event |
+| ingestion-service (ClickHouse) | raw events, attributed baskets, sessions, the daily tables, the campaign projection; adds the tenant to `analytics.deleted_tenants`, which the Kafka queue views filter on, so events still in flight are dropped | on the event |
 | Airflow `tenant_purge` (daily 02:00 UTC) | the tenant's rows in the Iceberg archive and the backfill tables | next run, and again each day for 15 days, since a Kafka replay can archive its events again (marked done in `deleted_tenants`) |
 
 The Kafka topics keep the tenant's past messages until they expire (14 days at most); nothing reads them back into a deleted tenant.
 
-**Erasing one shopper:** the retailer's server sends `user_deleted` (`POST /retail/identity`, or the server SDK's `identity.deleteUser`). analytics-service records the shopper in `analytics.deleted_users` and deletes their raw rows at once; the Kafka queue views drop any a replay brings back; `tenant_purge` deletes their archived rows, on the same 15-day terms. The daily tables hold no user IDs (counts and sketches).
+**Erasing one shopper:** the retailer's server sends `user_deleted` (`POST /retail/identity`, or the server SDK's `identity.deleteUser`). ingestion-service records the shopper in `analytics.deleted_users` and deletes their raw rows at once; the Kafka queue views drop any a replay brings back; `tenant_purge` deletes their archived rows, on the same 15-day terms. The daily tables hold no user IDs (counts and sketches).
 
 ## Known limitations
 
@@ -568,7 +569,7 @@ test/                 architecture, end-to-end and Flink tests
 
 **Databases:**
 
-- **Drizzle:** every service except analytics-service uses Drizzle ORM on its own database. analytics-service uses `@clickhouse/client`.
+- **Drizzle:** every service except ingestion- and insights-service uses Drizzle ORM on its own database. Those two use `@clickhouse/client` (`@basketline/platform/clickhouse`).
 - **Shared tables:** `audit_log` and the gateway's `processed_events` are defined once in `packages/platform/src/tables.ts`.
 - **Tenant isolation in identity_db:** `users` and `user_login` are tenant-scoped by Postgres row-level security. auth-service runs every query in `withTenant()`.
 

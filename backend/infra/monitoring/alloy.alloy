@@ -1,7 +1,7 @@
 // Grafana Alloy: ships every basketline container's logs to Loki.
 // Labels: service (the compose service) and level (pino's number: 30 info,
 // 40 warn, 50 error, 60 fatal); everything else stays searchable in the line,
-// e.g. {service="analytics-service"} | json | tenantId = "…".
+// e.g. {service="ingestion-service"} | json | tenantId = "…".
 
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"

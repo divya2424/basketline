@@ -1,6 +1,6 @@
 -- One database and one login per service. PUBLIC can't connect, so a service's
 -- credentials only open its own database: cross-service SQL is impossible.
--- analytics-service has no Postgres database: its events live in ClickHouse.
+-- ingestion-service and insights-service have no Postgres database: the events live in ClickHouse.
 CREATE ROLE identity_svc LOGIN PASSWORD 'identity_svc_dev';
 CREATE ROLE product_svc LOGIN PASSWORD 'product_svc_dev';
 CREATE ROLE campaign_svc LOGIN PASSWORD 'campaign_svc_dev';

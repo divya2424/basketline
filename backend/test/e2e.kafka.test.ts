@@ -26,9 +26,10 @@ import {
   type EventBus,
 } from '@basketline/platform'
 import { createTestDatabase, createTestKeys } from '@basketline/platform/testing'
-import { buildAnalyticsApp } from '../services/analytics-service/src/app.ts'
-import { createClickHouse } from '../services/analytics-service/src/clickhouse.ts'
-import { handleReferenceEvent } from '../services/analytics-service/src/events/reference.consumer.ts'
+import { createClickHouse } from '@basketline/platform/clickhouse'
+import { buildIngestionApp } from '../services/ingestion-service/src/app.ts'
+import { handleReferenceEvent } from '../services/ingestion-service/src/events/reference.consumer.ts'
+import { buildInsightsApp } from '../services/insights-service/src/app.ts'
 import { buildAuthApp } from '../services/auth-service/src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant } from '../services/auth-service/src/db/client.ts'
 import { insertAccount } from '../services/auth-service/src/repositories/account.repository.ts'
@@ -61,6 +62,8 @@ let authBus: EventBus
 /** What arrived on retail.interactions.v1 (read by the Flink job in production). */
 const analyticsMessages: { topic: string; envelope: EventEnvelope<AnalyticsEventPayload> }[] = []
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
+// The insights API reads as the tenant-scoped reader user (infra/clickhouse/04_access.sql).
+const readerClickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_READER_URL ?? 'http://basketline_reader:basketline_reader_dev@localhost:8123/analytics')
 
 /** A fresh database for one service, migrated with that service's Drizzle migrations. */
 async function database<D extends Database<any>>(create: (url: string) => D, migrate: (db: D) => Promise<void>): Promise<D> {
@@ -118,9 +121,10 @@ beforeAll(async () => {
   await campaignBus.subscribe({ groupId: 'campaign-service', topics: [TOPICS.products], handler: (envelope) => handleProductEvent(campaignDb, envelope) })
   const campaignUrl = await listen(buildCampaignApp({ db: campaignDb, bus: campaignBus, logger, publicKey: keys.publicKey, retailer }))
 
-  const analyticsBus = await kafka('analytics-service')
-  await analyticsBus.subscribe({ groupId: 'analytics-service', topics: [CATALOG_TOPIC, CAMPAIGN_TOPIC], handler: (envelope) => handleReferenceEvent(clickhouse, envelope) })
-  const analyticsUrl = await listen(buildAnalyticsApp({ bus: analyticsBus, clickhouse, logger, publicKey: keys.publicKey }))
+  const ingestionBus = await kafka('ingestion-service')
+  await ingestionBus.subscribe({ groupId: 'ingestion-service', topics: [CATALOG_TOPIC, CAMPAIGN_TOPIC], handler: (envelope) => handleReferenceEvent(clickhouse, envelope) })
+  const ingestionUrl = await listen(buildIngestionApp({ bus: ingestionBus, clickhouse, logger, publicKey: keys.publicKey }))
+  const insightsUrl = await listen(buildInsightsApp({ clickhouse: readerClickhouse, logger, publicKey: keys.publicKey }))
   const reader = await kafka('e2e-analytics-reader')
   await reader.subscribe({
     groupId: 'e2e-analytics-reader',
@@ -137,7 +141,7 @@ beforeAll(async () => {
     db: gatewayDb,
     logger,
     publicKey: keys.publicKey,
-    services: { auth: authUrl, product: productUrl, campaign: campaignUrl, analytics: analyticsUrl },
+    services: { auth: authUrl, product: productUrl, campaign: campaignUrl, ingestion: ingestionUrl, insights: insightsUrl },
     corsOrigins: [],
   }).app
 }, 90_000)
@@ -148,6 +152,7 @@ afterAll(async () => {
   for (const db of dbs) await closeDb(db)
   for (const db of databases) await db.drop()
   await clickhouse.close()
+  await readerClickhouse.close()
   const admin = new Admin({ clientId: 'e2e-cleanup', bootstrapBrokers: BROKERS })
   const topics = (await admin.listTopics()).filter((topic) => topic.startsWith(PREFIX))
   if (topics.length > 0) await admin.deleteTopics({ topics })
@@ -197,7 +202,7 @@ describe('the full flow over Kafka', () => {
       // Credited to the click by the Flink job (test/flink.kafka.test.ts); the client sends no link.
       { eventId: randomUUID(), eventName: 'add_to_cart', timestamp: new Date(now - 1000).toISOString(), properties: { productId: product.body.id } },
     ]
-    // Metric events count once analytics-service has seen the campaign (the retail API, then its topic).
+    // Metric events count once ingestion-service has seen the campaign (the retail API, then its topic).
     const { result: ingest, elapsedMs: campaignLag } = await eventually(
       () => request(gateway)
           .post('/api/v1/analytics/events')

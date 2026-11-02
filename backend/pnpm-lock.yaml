@@ -248,24 +248,15 @@ importers:
       '@basketline/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@clickhouse/client':
+        specifier: 1.24.1
+        version: 1.24.1
       '@divya2424/basketline-kafka':
         specifier: ^0.1.2
         version: 0.1.2
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
-
-  services/analytics-service:
-    dependencies:
-      '@basketline/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@basketline/platform':
-        specifier: workspace:*
-        version: link:../../packages/platform
-      '@clickhouse/client':
-        specifier: 1.24.1
-        version: 1.24.1
 
   services/auth-service:
     dependencies:
@@ -302,6 +293,24 @@ importers:
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
+
+  services/ingestion-service:
+    dependencies:
+      '@basketline/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@basketline/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
+
+  services/insights-service:
+    dependencies:
+      '@basketline/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@basketline/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
 
   services/product-service:
     dependencies:

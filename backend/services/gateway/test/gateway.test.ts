@@ -51,7 +51,8 @@ beforeAll(async () => {
     auth: await fakeService('auth'),
     product: await fakeService('product'),
     campaign: await fakeService('campaign'),
-    analytics: await fakeService('analytics'),
+    ingestion: await fakeService('ingestion'),
+    insights: await fakeService('insights'),
   }
   gateway = buildGateway({ db, logger: createLogger('gateway-test'), publicKey: keys.publicKey, services, corsOrigins: ['http://localhost:5173'] }).app
   const handler = idempotentHandler(db, handleAccessEvent)
@@ -88,8 +89,8 @@ describe('routing', () => {
       ['/api/v1/auth/me', 'auth'],
       ['/api/v1/products?limit=5', 'product'],
       ['/api/v1/campaigns/abc/products', 'campaign'],
-      ['/api/v1/ad/abc/clicks?from=2026-10-01T00:00:00Z', 'analytics'],
-      ['/api/v1/analytics/campaigns/abc/timeseries?metric=clicks', 'analytics'],
+      ['/api/v1/ad/abc/clicks?from=2026-10-01T00:00:00Z', 'insights'],
+      ['/api/v1/analytics/campaigns/abc/timeseries?metric=clicks', 'ingestion'],
     ]
     for (const [url, service] of cases) {
       hits = []
@@ -309,7 +310,7 @@ describe('edge protection', () => {
       db,
       logger: createLogger('gateway-test'),
       publicKey: keys.publicKey,
-      services: { auth: 'http://127.0.0.1:1', product: 'http://127.0.0.1:1', campaign: 'http://127.0.0.1:1', analytics: 'http://127.0.0.1:1' },
+      services: { auth: 'http://127.0.0.1:1', product: 'http://127.0.0.1:1', campaign: 'http://127.0.0.1:1', ingestion: 'http://127.0.0.1:1', insights: 'http://127.0.0.1:1' },
       corsOrigins: [],
     }).app
     const res = await request(down).post('/api/v1/auth/login').send({})

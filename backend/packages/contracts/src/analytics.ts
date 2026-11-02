@@ -3,7 +3,7 @@
  *   interaction  ad and storefront activity (INTERACTIONS_TOPIC)
  *   identity     login and user activity (IDENTITY_TOPIC): what the shopper's
  *                client sends, and what only the retailer's server can vouch for
- * analytics-service publishes them; the Flink job (backend/flink) reads both topics
+ * ingestion-service publishes them; the Flink job (backend/flink) reads both topics
  * and writes the SERVING_TOPICS, which ClickHouse loads (infra/clickhouse/03_kafka.sql).
  * What exists (sellers, products, campaigns) is reference data: retail.ts.
  */
@@ -77,7 +77,7 @@ export const INTERACTIONS_TOPIC = 'retail.interactions.v1'
 
 /**
  * Identity events: their own topic, since part of them comes only from the
- * retailer's server (different access), and analytics-service applies erasure
+ * retailer's server (different access), and ingestion-service applies erasure
  * (user_deleted) from it (different processing).
  */
 export const IDENTITY_TOPIC = 'retail.identity-events.v1'
@@ -88,7 +88,7 @@ export function topicOf(eventName: AnalyticsEventName): string {
 }
 
 /**
- * analytics-service publishes the current time here every 30 s. The Flink job
+ * ingestion-service publishes the current time here every 30 s. The Flink job
  * reads it with the interactions, so the session windows' watermark keeps moving
  * when no events arrive (after a replay, or a quiet night); without it, sessions
  * would stay open until the next event. It has no eventId or tenantId, so the
@@ -125,6 +125,6 @@ export interface AnalyticsEventPayload {
   properties: Record<string, unknown>
   /** When it happened (client clock), ISO 8601. */
   timestamp: string
-  /** When analytics-service received it, ISO 8601. */
+  /** When ingestion-service received it, ISO 8601. */
   receivedAt: string
 }

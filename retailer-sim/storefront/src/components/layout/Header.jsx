@@ -18,7 +18,7 @@ const cartIcon = (
 
 const navClass = ({ isActive }) => (isActive ? 'nav-link nav-link--active' : 'nav-link')
 
-/** The store's name, Home, the signed-in user and Logout (or Log in for visitors), and the cart. */
+/** The store's name, Home and Stores, the signed-in user and Logout (or Log in for visitors), and the cart. */
 export function Header() {
   const { totalQuantity } = useCart()
   const { user, logout } = useAuth()
@@ -46,6 +46,9 @@ export function Header() {
         <nav className="site-nav" aria-label="Main">
           <NavLink to="/store" end className={navClass}>
             Home
+          </NavLink>
+          <NavLink to="/stores" className={navClass}>
+            Stores
           </NavLink>
         </nav>
         <div className="site-header__actions">

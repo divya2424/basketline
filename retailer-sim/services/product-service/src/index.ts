@@ -1,4 +1,3 @@
-import { TOPICS } from '@basketline/contracts'
 import {
   closeDb,
   createBusFromEnv,
@@ -10,35 +9,36 @@ import {
   loadPublicKey,
   requireEnv,
   secretEnv,
-  retailerIntegrationFromEnv
 } from '@basketline/platform'
+import { createBasketlineSender, openSecret, RETAILER_EVENTS, RETAILER_TOPICS } from '@retailer-sim/shared'
 import { buildProductApp } from './app.ts'
 import { createProductDb, migrateProductDb } from './db/client.ts'
-import { createTenantSeeder, handleTenantDeleted } from './events/tenant.consumer.ts'
+import { createStoreConnector } from './events/store.consumer.ts'
+import { findSealedApiKey } from './repositories/store.repository.ts'
 
 const logger = createLogger('product-service')
 const health = createHealth()
 
 const db = createProductDb(requireEnv('DATABASE_URL'), logger)
 await migrateProductDb(db)
-const bus = await createBusFromEnv('product-service', logger, [TOPICS.products, TOPICS.tenants])
+const bus = await createBusFromEnv('product-service', logger, [RETAILER_TOPICS.products, RETAILER_TOPICS.stores])
 health.addCheck('kafka', () => bus.healthCheck())
 
-// Seeds each newly onboarded tenant's catalog (TenantOnboarded from auth-service), and
-// deletes a deleted tenant's (TenantDeleted).
-// Acting as each tenant's backend: products also go to Basketline's catalog API.
-const retailer = retailerIntegrationFromEnv(logger)
-const seedTenant = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', logger), retailer })
-await bus.subscribe({
-  groupId: 'product-service',
-  topics: [TOPICS.tenants],
-  handler: async (envelope) => {
-    await seedTenant(envelope)
-    await handleTenantDeleted(db, envelope)
+// As each store's backend: its products go to Basketline with its API key.
+const secretsKey = secretEnv('RETAILER_SECRETS_KEY')
+const basketline = createBasketlineSender({
+  apiUrl: requireEnv('BASKETLINE_API_URL'),
+  apiKeyFor: async (tenantId) => {
+    const sealed = await findSealedApiKey(db, tenantId)
+    return sealed ? openSecret(sealed, secretsKey) : null
   },
+  logger,
 })
+// Seeds each newly connected store's catalog (StoreConnected, from retailer-auth-service).
+const connectStore = createStoreConnector({ db, publish: createEventPublisher(bus, 'product-service', logger, { registry: RETAILER_EVENTS }), basketline })
+await bus.subscribe({ groupId: 'product-service', topics: [RETAILER_TOPICS.stores], handler: connectStore })
 
-const app = buildProductApp({ db, bus, logger, health, retailer, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+const app = buildProductApp({ db, bus, logger, health, basketline, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4002)
 const server = app.listen(port, () => {
   health.markStarted()

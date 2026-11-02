@@ -4,6 +4,8 @@
  *   2. No service imports another service's code.
  *   3. Each service's DATABASE_URL in its folder's docker-compose.yml points at its own database.
  *      ingestion-service and insights-service have no Postgres database: they use ClickHouse.
+ *   4. The simulated retailer reaches Basketline only through its public API: none of
+ *      Basketline's own Kafka topics (users, sessions, tenants).
  * Covers the platform (basketline/) and the simulated retailer (retailer-sim/).
  *
  *   pnpm check:architecture
@@ -14,7 +16,7 @@ import path from 'node:path'
 const repo = path.join(import.meta.dirname, '..', '..')
 
 /** The simulated retailer's services, in retailer-sim/; the rest are Basketline's, in basketline/. */
-const RETAILER_SERVICES = new Set(['product-service', 'campaign-service'])
+const RETAILER_SERVICES = new Set(['retailer-auth-service', 'product-service', 'campaign-service'])
 /** The folder holding the service's services/ and docker-compose.yml. */
 const folderOf = (service: string) => path.join(repo, RETAILER_SERVICES.has(service) ? 'retailer-sim' : 'basketline')
 
@@ -23,6 +25,7 @@ export const SERVICE_DATABASES: Record<string, string | null> = {
   'auth-service': 'identity_db',
   'product-service': 'product_db',
   'campaign-service': 'campaign_db',
+  'retailer-auth-service': 'retailer_auth_db',
   'ingestion-service': null,
   'insights-service': null,
   gateway: 'gateway_db',
@@ -45,9 +48,12 @@ export function scanSource(service: string, file: string, source: string): strin
   for (const match of source.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
     const target = match[1]!
     const other = Object.keys(SERVICE_DATABASES).find(
-      (name) => name !== service && (target.includes(`/services/${name}/`) || target.includes(`../${name}/`) || target === `@basketline/${name}`),
+      (name) => name !== service && (target.includes(`/services/${name}/`) || target.includes(`../${name}/`) || target === `@basketline/${name}` || target === `@retailer-sim/${name}`),
     )
     if (other) problems.push(`${service}/${file} imports code from ${other}`)
+  }
+  if (RETAILER_SERVICES.has(service) && (/\bTOPICS\b/.test(source) || /auth\.(user|session|tenant)\.v1/.test(source))) {
+    problems.push(`${service}/${file} uses Basketline's own Kafka topics (a retailer talks to Basketline only through its public API)`)
   }
   return problems
 }

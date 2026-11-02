@@ -23,7 +23,7 @@ scrape_configs:
   # The services' request metrics (RED) and Node process metrics (packages/platform/src/metrics.ts).
   - job_name: services
     static_configs:
-      - targets: ["gateway:8080", "auth-service:4001", "product-service:4002", "campaign-service:4003", "ingestion-service:4004", "insights-service:4005"]
+      - targets: ["gateway:8080", "auth-service:4001", "ingestion-service:4004", "insights-service:4005"]
 
   # Consumer group lag, per topic.
   - job_name: kafka

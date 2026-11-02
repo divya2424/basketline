@@ -49,8 +49,6 @@ beforeAll(async () => {
   keys = await createTestKeys()
   const services = {
     auth: await fakeService('auth'),
-    product: await fakeService('product'),
-    campaign: await fakeService('campaign'),
     ingestion: await fakeService('ingestion'),
     insights: await fakeService('insights'),
   }
@@ -87,8 +85,7 @@ describe('routing', () => {
     const user = await tokenFor(keys, 'campaign-manager')
     const cases: [string, string][] = [
       ['/api/v1/auth/me', 'auth'],
-      ['/api/v1/products?limit=5', 'product'],
-      ['/api/v1/campaigns/abc/products', 'campaign'],
+      ['/api/v1/ad/campaigns', 'insights'],
       ['/api/v1/ad/abc/clicks?from=2026-10-01T00:00:00Z', 'insights'],
       ['/api/v1/analytics/campaigns/abc/timeseries?metric=clicks', 'ingestion'],
     ]
@@ -116,10 +113,14 @@ describe('routing', () => {
 })
 
 describe('permissions', () => {
-  it('lets anyone register, log in and get a visitor token; shopper tokens go to auth-service, which checks the API key', async () => {
-    for (const url of ['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token']) {
+  it('lets anyone log in and get a visitor token; shopper and integration tokens go to auth-service, which checks the API key', async () => {
+    for (const url of ['/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token', '/api/v1/auth/integration-token']) {
       expect((await request(gateway).post(url).send({})).status, url).toBe(200)
     }
+    // Basketline's users are dashboard users, created by an operator: no sign-up.
+    hits = []
+    expect((await request(gateway).post('/api/v1/auth/register').send({})).status).toBe(401)
+    expect(hits).toHaveLength(0)
   })
 
   it('lets anyone list and onboard tenants (auth-service), and nothing else on /accounts', async () => {
@@ -139,7 +140,7 @@ describe('permissions', () => {
       return req.send({ events: [] })
     }
     expect((await events((await visitorTokenFor(keys)).header)).status).toBe(200)
-    expect((await events((await tokenFor(keys, 'standard-user')).header)).status).toBe(200)
+    expect((await events((await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
     // A vendor's shopper (events-only, registered).
     const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
     expect((await events(`Bearer ${shopper.token}`)).status).toBe(200)
@@ -153,38 +154,37 @@ describe('permissions', () => {
   })
 
   it("limits a tenant's API keys to its campaign managers", async () => {
-    const shopper = (await tokenFor(keys, 'standard-user')).header
+    const sellerManager = (await tokenFor(keys, 'seller-manager', { sel: randomUUID() })).header
     const manager = (await tokenFor(keys, 'campaign-manager')).header
-    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', shopper)).status).toBe(403)
-    expect((await request(gateway).delete('/api/v1/auth/api-keys/bl_sk_abc').set('Authorization', shopper)).status).toBe(403)
+    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', sellerManager)).status).toBe(403)
+    expect((await request(gateway).delete('/api/v1/auth/api-keys/bl_sk_abc').set('Authorization', sellerManager)).status).toBe(403)
     expect((await request(gateway).get('/api/v1/auth/api-keys')).status).toBe(401)
     expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', manager)).body).toEqual({ from: 'auth', url: '/api/v1/auth/api-keys' })
   })
 
-  it('limits campaign metrics to campaign managers', async () => {
+  it('limits campaign metrics to campaign and seller managers, never events-only tokens', async () => {
     const path = '/api/v1/ad/abc/clicks'
-    expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'standard-user')).header)).status).toBe(403)
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
+    expect((await request(gateway).get(path)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', (await visitorTokenFor(keys)).header)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', `Bearer ${shopper.token}`)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'seller-manager', { sel: randomUUID() })).header)).status).toBe(200)
     expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
   })
 
-  it('allows anonymous catalog reads, requires a token for metrics and the campaign-manager role for writes', async () => {
-    const user = await tokenFor(keys, 'standard-user')
+  it("doesn't route a retailer's own APIs: its catalog and campaigns are its business", async () => {
     const manager = await tokenFor(keys, 'campaign-manager')
-    expect((await request(gateway).get('/api/v1/products')).status).toBe(200)
-    expect((await request(gateway).get('/api/v1/campaigns')).status).toBe(200)
     hits = []
-    expect((await request(gateway).get('/api/v1/ad/abc/clicks')).status).toBe(401)
-    expect((await request(gateway).get('/api/v1/products').set('Authorization', 'Bearer nonsense')).status).toBe(401)
-    expect((await request(gateway).post('/api/v1/products').send({})).status).toBe(401)
-    expect((await request(gateway).post('/api/v1/campaigns').set('Authorization', user.header).send({})).status).toBe(403)
+    for (const path of ['/api/v1/products', '/api/v1/campaigns', '/api/v1/sellers']) {
+      expect((await request(gateway).get(path).set('Authorization', manager.header)).status, path).toBe(404)
+      expect((await request(gateway).post(path).set('Authorization', manager.header).send({})).status, path).toBe(404)
+    }
     expect(hits).toHaveLength(0)
-    expect((await request(gateway).post('/api/v1/campaigns').set('Authorization', manager.header).send({})).status).toBe(200)
   })
 
   it('sets user_id from the token and drops a client-supplied one; passes tenant_id through', async () => {
-    const user = await tokenFor(keys, 'standard-user')
-    await request(gateway).get('/api/v1/products').set('Authorization', user.header).set('user_id', 'spoofed').set('tenant_id', 'tenant_acme')
+    const user = await tokenFor(keys, 'campaign-manager')
+    await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header).set('user_id', 'spoofed').set('tenant_id', 'tenant_acme')
     expect(hits[0]!.headers).toMatchObject({ user_id: user.sub, tenant_id: 'tenant_acme' })
     const visitor = await visitorTokenFor(keys)
     await request(gateway).post('/api/v1/analytics/events').set('Authorization', visitor.header).set('user_id', 'spoofed').send({ events: [] })
@@ -194,10 +194,10 @@ describe('permissions', () => {
 
 describe('revocation (from auth events, no calls to the auth service)', () => {
   it('rejects a token once its session is revoked', async () => {
-    const user = await tokenFor(keys, 'standard-user')
-    expect((await request(gateway).get('/api/v1/products').set('Authorization', user.header)).status).toBe(200)
+    const user = await tokenFor(keys, 'campaign-manager')
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)).status).toBe(200)
     await apply(authEvent('SessionRevoked', user.sub, 1, { sessionId: user.sid, revokedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 1_800_000).toISOString() }))
-    const res = await request(gateway).get('/api/v1/products').set('Authorization', user.header)
+    const res = await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)
     expect(res.status).toBe(401)
     expect(res.body.error.code).toBe('SESSION_REVOKED')
     // A revoked user can't send events with that token either.
@@ -257,29 +257,29 @@ describe('revocation (from auth events, no calls to the auth service)', () => {
     // Managers read and set the list; the gateway only routes it.
     const manager = await tokenFor(keys, 'campaign-manager', { tid: tenant })
     expect((await request(gateway).put('/api/v1/auth/allowed-origins').set('Authorization', manager.header).send({ origins: [] })).body).toEqual({ from: 'auth', url: '/api/v1/auth/allowed-origins' })
-    expect((await request(gateway).get('/api/v1/auth/allowed-origins').set('Authorization', (await tokenFor(keys, 'standard-user', { tid: tenant })).header)).status).toBe(403)
+    expect((await request(gateway).get('/api/v1/auth/allowed-origins').set('Authorization', (await tokenFor(keys, 'seller-manager', { tid: tenant, sel: randomUUID() })).header)).status).toBe(403)
   })
 
   it('rejects all tokens of a disabled user', async () => {
-    const user = await tokenFor(keys, 'standard-user')
+    const user = await tokenFor(keys, 'campaign-manager')
     await apply(authEvent('UserDisabled', user.sub, 2, { disabledAt: new Date().toISOString() }))
-    expect((await request(gateway).get('/api/v1/products').set('Authorization', user.header)).body.error.code).toBe('ACCOUNT_DISABLED')
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)).body.error.code).toBe('ACCOUNT_DISABLED')
   })
 
   it('rejects tokens issued before a role change, but accepts new ones', async () => {
     const userId = randomUUID()
-    const old = await tokenFor(keys, 'standard-user', { sub: userId, issuedAt: new Date(Date.now() - 60_000) })
-    await apply(authEvent('UserRoleChanged', userId, 2, { role: 'campaign-manager', previousRole: 'standard-user', changedAt: new Date(Date.now() - 30_000).toISOString() }))
-    expect((await request(gateway).get('/api/v1/products').set('Authorization', old.header)).body.error.code).toBe('TOKEN_STALE')
+    const old = await tokenFor(keys, 'seller-manager', { sub: userId, sel: randomUUID(), issuedAt: new Date(Date.now() - 60_000) })
+    await apply(authEvent('UserRoleChanged', userId, 2, { role: 'campaign-manager', previousRole: 'seller-manager', changedAt: new Date(Date.now() - 30_000).toISOString() }))
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', old.header)).body.error.code).toBe('TOKEN_STALE')
     const fresh = await tokenFor(keys, 'campaign-manager', { sub: userId })
-    expect((await request(gateway).get('/api/v1/products').set('Authorization', fresh.header)).status).toBe(200)
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', fresh.header)).status).toBe(200)
   })
 })
 
 describe('edge protection', () => {
-  it('answers CORS preflight for the frontend, allowing tenant_id and user_id', async () => {
+  it('answers CORS preflight for the dashboard, allowing tenant_id and user_id', async () => {
     const res = await request(gateway)
-      .options('/api/v1/products')
+      .options('/api/v1/ad/campaigns')
       .set('Origin', 'http://localhost:5173')
       .set('Access-Control-Request-Method', 'GET')
       .set('Access-Control-Request-Headers', 'authorization,tenant_id')
@@ -294,7 +294,7 @@ describe('edge protection', () => {
     for (const path of ['/api/v1/analytics/events', '/api/v1/auth/visitor']) {
       expect((await preflight(path, 'https://shop.example.com')).headers['access-control-allow-origin'], path).toBe('https://shop.example.com')
     }
-    for (const path of ['/api/v1/products', '/api/v1/auth/login', '/api/v1/auth/shopper-token']) {
+    for (const path of ['/api/v1/ad/campaigns', '/api/v1/auth/login', '/api/v1/auth/shopper-token']) {
       expect((await preflight(path, 'https://shop.example.com')).headers['access-control-allow-origin'], path).toBeUndefined()
     }
   })
@@ -310,7 +310,7 @@ describe('edge protection', () => {
       db,
       logger: createLogger('gateway-test'),
       publicKey: keys.publicKey,
-      services: { auth: 'http://127.0.0.1:1', product: 'http://127.0.0.1:1', campaign: 'http://127.0.0.1:1', ingestion: 'http://127.0.0.1:1', insights: 'http://127.0.0.1:1' },
+      services: { auth: 'http://127.0.0.1:1', ingestion: 'http://127.0.0.1:1', insights: 'http://127.0.0.1:1' },
       corsOrigins: [],
     }).app
     const res = await request(down).post('/api/v1/auth/login').send({})

@@ -1,5 +1,5 @@
 image:
-  repository: basketline/campaign-service
+  repository: retailer-sim/campaign-service
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -14,14 +14,19 @@ config:
   KAFKA_BROKERS: kafka:19092
   # Replicas of the topics this service creates; use 3 on a 3-broker cluster.
   KAFKA_REPLICATION: "1"
+  # Basketline's public API (its gateway), where the store's records go with its API key.
+  BASKETLINE_API_URL: http://gateway:8080/api/v1
 
 # The chart stores these in a Secret. Or set existingSecret to a Secret you manage with the same keys.
 secrets:
   DATABASE_URL: ""
+  # Seals the stores' Basketline API keys (32 bytes, base64).
+  RETAILER_SECRETS_KEY: ""
 existingSecret: ""
 
+# The retailer's own token keys, not Basketline's.
 jwt:
-  secretName: basketline-jwt
+  secretName: retailer-jwt
   privateKey: false
 
 resources:

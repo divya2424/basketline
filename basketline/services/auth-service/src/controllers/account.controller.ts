@@ -17,8 +17,8 @@ export function createAccountController(service: AccountService) {
     },
 
     async onboard(req: Request, res: Response) {
-      const { account, users, password, apiKey, seed } = await service.onboard(req.body)
-      res.status(201).json({ account: toPublicAccount(account), users, password, apiKey, seed })
+      const { account, users, password, apiKey } = await service.onboard(req.body)
+      res.status(201).json({ account: toPublicAccount(account), users, password, apiKey })
     },
   }
 }

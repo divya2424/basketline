@@ -67,7 +67,7 @@ export function createBaseApp({
 }
 
 /** The bearer token, or null without an Authorization header. */
-function bearerToken(req: Request): string | null {
+export function bearerToken(req: Request): string | null {
   const header = req.headers.authorization
   if (!header) return null
   const [scheme, token] = header.split(' ')

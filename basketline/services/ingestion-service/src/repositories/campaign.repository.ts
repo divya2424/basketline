@@ -1,6 +1,6 @@
 /**
  * analytics.campaigns: this service's copy of each campaign (tenant, seller,
- * status), from retail.campaign-events.v1. ReplacingMergeTree(version) keeps the
+ * title, status), from retail.campaign-events.v1. ReplacingMergeTree(version) keeps the
  * newest version, so replays and out-of-order events are harmless.
  */
 import type { ReferenceEventPayload } from '@basketline/contracts'
@@ -14,6 +14,7 @@ export async function upsertCampaign(clickhouse: ClickHouse, campaign: Reference
       campaign_id: campaign.campaignId,
       tenant_id: campaign.tenantId,
       seller_id: campaign.sellerId,
+      title: campaign.title,
       status: campaign.status,
       archived: campaign.archived,
       issues,

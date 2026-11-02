@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from 'express'
 import { requireRole, validate } from '@basketline/platform'
 import type { AuthController } from '../controllers/auth.controller.ts'
-import { validateAllowedOrigins, validateApiKey, validateLogin, validateRegister, validateShopperToken, validateVisitor } from '../validators/auth.validator.ts'
+import { validateAllowedOrigins, validateApiKey, validateLogin, validateShopperToken, validateVisitor } from '../validators/auth.validator.ts'
 
 /** Mounted at /api/v1/auth. */
 export function authRoutes(
@@ -10,7 +10,6 @@ export function authRoutes(
 ): Router {
   const router = Router()
 
-  router.post('/register', validate(validateRegister), controller.register)
   router.post('/login', validate(validateLogin), loginLimiter, controller.login)
   router.post('/visitor', validate(validateVisitor), controller.visitor)
   // A vendor's backend, with its API key: a token for its signed-in customer.

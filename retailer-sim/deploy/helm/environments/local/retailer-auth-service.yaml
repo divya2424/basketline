@@ -1,0 +1,10 @@
+# Images from `docker compose build` (retailer-sim/), loaded into the local cluster.
+image:
+  repository: retailer-sim-retailer-auth-service
+  tag: latest
+replicaCount: 1
+# The docker-compose development credentials.
+secrets:
+  DATABASE_URL: postgres://retailer_auth_svc:retailer_auth_svc_dev@retailer-postgres:5432/retailer_auth_db
+  # retailer-sim/keys/secrets.key
+  RETAILER_SECRETS_KEY: ""

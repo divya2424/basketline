@@ -1,6 +1,6 @@
 /**
  * product_db tables — the source of truth for the schema. After a change run
- * `pnpm --filter @basketline/product-service db:generate`; migrations apply on startup.
+ * `pnpm --filter @retailer-sim/product-service db:generate`; migrations apply on startup.
  */
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, numeric, pgTable, text, uuid, varchar } from 'drizzle-orm/pg-core'
@@ -9,6 +9,13 @@ import { bigint, boolean, check, index, numeric, pgTable, text, uuid, varchar } 
 import { timestamptz } from '@basketline/platform/tables'
 
 export { auditLog } from '@basketline/platform/tables'
+
+/** The stores connected to Basketline (StoreConnected): the API key this service sends their products with, sealed. */
+export const stores = pgTable('stores', {
+  tenantId: uuid('tenant_id').primaryKey(),
+  sealedApiKey: text('sealed_api_key').notNull(),
+  connectedAt: timestamptz('connected_at').notNull().defaultNow(),
+})
 
 /** The tenant's sellers (marketplace sellers, or the retailer itself): each product is one seller's. */
 export const sellers = pgTable(

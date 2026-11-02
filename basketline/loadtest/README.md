@@ -24,16 +24,15 @@ Measures three p99s for the analytics path:
 
 ## Run it locally
 
-From `basketline/`, with the stack up. Create the load-test tenant once: an `onboarding` campaign manager, so `seed-tenant` can seed its sellers, products and campaigns (and send them to the retail API, so analytics knows the campaigns), and the `loadtest` user the script signs in as. `pnpm seed` adds the sample catalog's campaigns:
+From `basketline/`, with the stack up. Create the load-test tenant once, with the `loadtest` user the script signs in as and an API key, then send it the sample catalog through the retail API (`pnpm seed`: a seller, 10 products, 4 active campaigns), as a retailer's backend would:
 
 ```bash
-cli() { docker compose exec auth-service node basketline/services/auth-service/src/cli.ts "$@"; }
+cli() { docker compose exec -T auth-service node basketline/services/auth-service/src/cli.ts "$@"; }
 T=0ad7e570-0000-4000-8000-000000000001
 cli create-account --name 'Load test' --tenant $T
-cli create-user --username onboarding --password 'load test password' --role campaign-manager --tenant $T
-cli seed-tenant --tenant $T
 cli create-user --username loadtest --password 'load test password' --role campaign-manager --tenant $T
-SEED_USERNAME=loadtest SEED_PASSWORD='load test password' SEED_TENANT=$T pnpm seed
+KEY=$(cli create-api-key --tenant $T --name 'Load test' | jq -r .key)
+SEED_TENANT=$T SEED_API_KEY=$KEY pnpm seed
 ```
 
 The gateway limits each client IP to 300 requests/min (120 for event posts, 10 visitor tokens). One k6 machine is one IP, so raise the limits for the test, and put them back afterwards:

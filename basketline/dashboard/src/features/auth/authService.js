@@ -9,13 +9,11 @@ export const ROLES = Object.freeze({
   CAMPAIGN_MANAGER: 'campaign-manager',
   // One seller's user: sees only that seller's campaigns (the API enforces it).
   SELLER_MANAGER: 'seller-manager',
-  CUSTOMER: 'standard-user',
 })
 
 export const ROLE_LABELS = {
   [ROLES.CAMPAIGN_MANAGER]: 'Campaign manager',
   [ROLES.SELLER_MANAGER]: 'Seller manager',
-  [ROLES.CUSTOMER]: 'Customer',
 }
 
 export class AuthError extends Error {

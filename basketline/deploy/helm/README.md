@@ -14,7 +14,7 @@ deploy/helm/
       templates/manifests.yaml
 ```
 
-The simulated retailer's product- and campaign-service have their own charts and helmfile in `../../../retailer-sim/deploy/helm` (same namespace, on the same `basketline-lib`); deploy them after the platform with `helmfile -e local apply` there.
+The simulated retailer's services (retailer-auth-, product- and campaign-service) have their own charts and helmfile in `../../../retailer-sim/deploy/helm` (same namespace, on the same `basketline-lib`); deploy them after the platform with `helmfile -e local apply` there. They need their own Postgres (`../../../retailer-sim/infra/postgres/init.sql`), their own token keys in a Secret `retailer-jwt` (from `retailer-sim/keys/`, `pnpm keys` there) and `RETAILER_SECRETS_KEY`, and reach Basketline only through the gateway.
 
 The releases don't wait for each other. A service whose database, Kafka or ClickHouse isn't reachable yet keeps restarting or stays unready until it is, and then joins on its own. So the order doesn't matter, and redeploying one service never redeploys another.
 

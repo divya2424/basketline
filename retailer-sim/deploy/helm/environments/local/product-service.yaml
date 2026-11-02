@@ -5,4 +5,6 @@ image:
 replicaCount: 1
 # The docker-compose development credentials.
 secrets:
-  DATABASE_URL: postgres://product_svc:product_svc_dev@postgres:5432/product_db
+  DATABASE_URL: postgres://product_svc:product_svc_dev@retailer-postgres:5432/product_db
+  # retailer-sim/keys/secrets.key
+  RETAILER_SECRETS_KEY: ""

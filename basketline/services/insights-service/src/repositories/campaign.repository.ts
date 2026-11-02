@@ -30,3 +30,25 @@ export async function findSellerCampaigns(clickhouse: ClickHouse, tenantId: stri
   })
   return (await result.json<{ id: string }>()).map((row) => row.id)
 }
+
+export interface CampaignSummary {
+  id: string
+  title: string
+  sellerId: string | null
+  status: string
+}
+
+/** The tenant's campaigns, not archived, newest state of each; one seller's when sellerId is given. */
+export async function listCampaigns(clickhouse: ClickHouse, tenantId: string, sellerId?: string): Promise<CampaignSummary[]> {
+  const result = await clickhouse.query({
+    query: `SELECT toString(campaign_id) AS id, argMax(title, version) AS title, toString(argMax(seller_id, version)) AS sellerId, argMax(status, version) AS status
+            FROM campaigns WHERE tenant_id = {tenantId:UUID}
+            GROUP BY campaign_id
+            HAVING NOT argMax(archived, version) ${sellerId ? 'AND sellerId = {sellerId:String}' : ''}
+            ORDER BY title, id`,
+    query_params: { tenantId, sellerId },
+    clickhouse_settings: tenantRead(tenantId),
+    format: 'JSONEachRow',
+  })
+  return result.json<CampaignSummary>()
+}

@@ -32,11 +32,6 @@ function sessionStatus(session: Session, now: number) {
 
 export function createAuthController(service: AuthService, shoppers: ShopperService, accounts: AccountService) {
   return {
-    async register(req: Request, res: Response) {
-      const user = await service.register(req.body, requireTenant(req))
-      res.status(201).json({ user: toPublicUser(user) })
-    },
-
     async visitor(req: Request, res: Response) {
       const { token, visitorId } = await service.visitor(requireTenant(req), req.body ?? {})
       res.status(201).json({ visitorToken: token, tokenType: 'Bearer', expiresIn: VISITOR_TOKEN_TTL_SECONDS, userId: visitorId })

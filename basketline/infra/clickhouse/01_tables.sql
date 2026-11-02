@@ -104,10 +104,11 @@ SETTINGS ttl_only_drop_parts = 1, storage_policy = 'tiered';
 -- retail.catalog-events.v1 and retail.campaign-events.v1 (ingestion-service). The
 -- newest version (updatedAt) wins, so replayed and out-of-order updates are harmless.
 
--- Each campaign's tenant, seller and status. Metric events are accepted only for a
--- campaign of the sender's tenant that is active and not archived; a seller-manager
--- sees only its seller's. issues: what is wrong with it (a product of another
--- seller, or one the catalog hasn't sent), kept and flagged rather than refused.
+-- Each campaign's tenant, seller, title and status. Metric events are accepted only
+-- for a campaign of the sender's tenant that is active and not archived; a
+-- seller-manager sees only its seller's; the dashboard lists them (GET /ad/campaigns).
+-- issues: what is wrong with it (a product of another seller, or one the catalog
+-- hasn't sent), kept and flagged rather than refused.
 CREATE TABLE IF NOT EXISTS analytics.campaigns
 (
     campaign_id UUID,
@@ -116,7 +117,8 @@ CREATE TABLE IF NOT EXISTS analytics.campaigns
     archived    Bool,
     version     UInt64,
     seller_id   Nullable(UUID),
-    issues      Array(String) DEFAULT []
+    issues      Array(String) DEFAULT [],
+    title       String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY campaign_id;

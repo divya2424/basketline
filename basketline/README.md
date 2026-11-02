@@ -2,7 +2,7 @@
 
 [Basketline](../README.md), an ads analytics platform for retailers: four Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHouse for the metrics, Airflow for the archive and backfills, and the web dashboard (`dashboard/`, [README](dashboard/README.md)).
 
-**The product is the analytics side** (ingestion-service, insights-service, Flink, ClickHouse, Airflow). The simulated retailer's product- and campaign-service ([`../retailer-sim`](../retailer-sim/README.md)) stand in for a retailer's own systems, with auth-service holding its users for now: they own the tenant's catalog and campaigns, and send them to Basketline the way any retailer's backend would, through the retail API with an integration token (`packages/platform/src/retailer.ts`). Apart from that, services talk to each other only through **Kafka** events.
+**The product is the analytics side** (ingestion-service, insights-service, Flink, ClickHouse, Airflow), with auth-service for tenants, dashboard users and tokens. Retailers integrate through its public API only: they onboard (`POST /accounts`) and keep an API key, send their catalog and campaigns to the retail API (`/retail/*`) with integration tokens, vouch for their signed-in shoppers with shopper tokens, and their sites send events with the SDK. The simulated retailer ([`../retailer-sim`](../retailer-sim/README.md)) does exactly that, with its own logins, services and database. Basketline's services talk to each other only through **Kafka** events.
 
 **Contents:**
 
@@ -12,24 +12,24 @@
 - Code: [Code layout](#code-layout)
 
 ```
-                   ┌──────────── gateway :8080 ────────────┐
- dashboard ─HTTP──►│ CORS · rate limits · JWT check ·       │──HTTP──► one service per request
-  storefront       │ session revocation · route permissions │
-                   └────────────────────────────────────────┘
- auth-service      product-service     campaign-service        ingestion-service      insights-service (/ad)
-   identity_db        product_db          campaign_db             │ publish           ▲ reads (SQL, one tenant)
-     │  publish          │  publish          ▲ consume  │           ▼                   │
-     ▼                   ▼                   │          │         retail.interactions.v1  ClickHouse
- auth.user.v1      product.v1 ─────────────── ┘          │         retail.identity-events.v1 ──► flink-streaming ──┘
- auth.session.v1 ──► gateway                             │
-                         └──── POST /retail/catalog, /retail/campaigns ──► ingestion-service ──► retail.catalog-events.v1,
-                               (as the retailer's backend)                                       retail.campaign-events.v1 ──► ClickHouse copies
+                    ┌──────────── gateway :8080 ────────────┐
+ dashboard ─HTTP───►│ CORS · rate limits · JWT check ·       │──HTTP──► one service per request
+ retailer's site    │ session revocation · route permissions │
+  (SDK) and backend └────────────────────────────────────────┘
+ auth-service                    ingestion-service                      insights-service (/ad)
+   identity_db                     │ publish                            ▲ reads (SQL, one tenant)
+     │  publish                    ▼                                    │
+     ▼                           retail.interactions.v1                 ClickHouse
+ auth.user.v1                    retail.identity-events.v1 ──► flink-streaming ──┘
+ auth.session.v1 ──► gateway     retail.catalog-events.v1,
+ auth.tenant.v1                  retail.campaign-events.v1 ──► ClickHouse copies
+   (the retailer's backend: POST /retail/catalog, /retail/campaigns, with its API key's integration token)
 ```
 
 **Principles:**
 
 - **A database per service.** Each service has its own Postgres database and its own login, which can't connect to any other service's database. ingestion-service and insights-service have none: ingestion publishes to Kafka and keeps its reference copies in ClickHouse; insights only reads ClickHouse, as a user that sees one tenant per query, with no Kafka connection or write access.
-- **Local copies instead of calls.** A service that needs another's data keeps a *projection* built from that service's events. For example, campaign-service keeps a `products` table and checks product IDs against it.
+- **Local copies instead of calls.** A service that needs another's data keeps a *projection* built from that service's events. For example, the gateway keeps users, sessions and deleted tenants from auth-service's topics to check tokens.
 - **The analytics pipeline:**
   1. ingestion-service validates each event and publishes it to its topic.
   2. Flink credits basket additions to ad clicks and builds sessions.
@@ -39,14 +39,12 @@
 
 ## Services and URLs
 
-Everything below runs with `docker compose up -d --build`, as the Compose project `basketline`, except the simulated retailer's services (`../retailer-sim/docker-compose.yml`, project `retailer-sim`, on this project's network) and the two web apps: containers are named `basketline-<service>-1` (e.g. `basketline-gateway-1`), and data lives in the `basketline_*` volumes. The development credentials are for local use only.
+Everything below runs with `docker compose up -d --build`, as the Compose project `basketline`, except the web apps (and the simulated retailer, `../retailer-sim`, with its own Compose project on this project's network): containers are named `basketline-<service>-1` (e.g. `basketline-gateway-1`), and data lives in the `basketline_*` volumes. The development credentials are for local use only.
 
 | Service | URL (from your machine) | Inside Compose | Notes |
 | --- | --- | --- | --- |
 | **Gateway** (the API) | http://localhost:8080/api/v1 | `gateway:8080` | The only HTTP entry point. Health: http://localhost:8080/health/ready |
 | auth-service | not published | `auth-service:4001` | Accounts, users, sign-in, tokens, vendors' API keys |
-| product-service (`../retailer-sim`) | not published | `product-service:4002` | The simulated retailer's products |
-| campaign-service (`../retailer-sim`) | not published | `campaign-service:4003` | The simulated retailer's campaigns |
 | ingestion-service | not published | `ingestion-service:4004` | The write path: SDK events (`/analytics/events`), the retail API (`/retail/*`), the reference copies in ClickHouse |
 | insights-service | not published | `insights-service:4005` | The read path: the insights API (`/ad/*`), as ClickHouse's tenant-scoped reader |
 | **Flink** web UI | http://localhost:8081 | `flink-streaming:8081` | Job graph, checkpoints, backpressure |
@@ -56,7 +54,7 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | **Postgres** | `localhost:5432` | `postgres:5432` | Superuser `postgres` / `postgres`; one database and login per service (`infra/postgres/init.sql`) |
 | **S3** for the archive (SeaweedFS) | http://localhost:8333 · UI http://localhost:23646 | `archive-storage:8333` | Bucket `ad-insights-archive`, keys `archive` / `archive_dev` |
 | **Dashboard** (dev server) | http://localhost:5173 | — | Started from `dashboard/` with `pnpm dev` |
-| Storefront (dev server) | http://localhost:5174 | — | The simulated retailer's: started from `../retailer-sim/storefront` with `pnpm dev` |
+| Storefront (dev server) | http://localhost:5174 | — | The simulated retailer's (`../retailer-sim`), a retailer's site sending events with the SDK |
 | **Grafana** (profile `monitoring`) | http://localhost:3000 | `grafana:3000` | Dashboard "Pipeline" (the home page); viewing needs no login, editing `admin` / `basketline_dev` |
 | **Prometheus** (profile `monitoring`) | http://localhost:9090 · alerts http://localhost:9090/alerts | `prometheus:9090` | Scrapes Flink, ClickHouse, the pipeline's SQL metrics and Kafka lag |
 
@@ -64,7 +62,6 @@ The services aren't published to the host. Reach their health probes from inside
 
 ```bash
 docker compose exec auth-service wget -qO- localhost:4001/health/ready   # 4004 ingestion, 4005 insights
-# product-service (4002) and campaign-service (4003): the same from ../retailer-sim
 ```
 
 ## Run it
@@ -81,7 +78,7 @@ docker compose up -d --build     # the platform
 
 **The token:** the Kafka event bus is its own package, `@divya2424/basketline-kafka`, on GitHub Packages, which needs a token even to install. Use a classic personal access token with only `read:packages`, in `NODE_AUTH_TOKEN`. pnpm takes registry tokens only from your user config, so add `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` to `~/.npmrc` once (the repo's `.npmrc` only says which registry `@divya2424` packages come from). Docker builds get the token as the build secret `npm_token` (`docker-compose.yml`), so it never ends up in an image. Images build from the repo root (`../Dockerfile`), since the workspace and lockfile live there.
 
-The quickest way in is the dashboard's onboarding page. It creates a tenant with an `onboarding` campaign manager (password `test`), plus sample products and campaigns.
+The quickest way in is the simulated retailer (`../retailer-sim`): its storefront's Stores page onboards a store here with `POST /accounts`, which creates a tenant with an `onboarding` campaign manager (password `test`), and its services then send the store's sellers, products and campaigns through the retail API.
 
 **From the command line instead** (the default storefront tenant, `VITE_TENANT_ID` in `dashboard/.env.example`):
 
@@ -90,23 +87,23 @@ cli() { docker compose exec auth-service node basketline/services/auth-service/s
 cli create-account --name 'Default storefront' --tier free --tenant 5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01
 cli create-user --username maya --password 'correct horse battery' --role campaign-manager \
   --tenant 5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01
-pnpm seed                     # 10 sample products and 4 campaigns in that tenant (safe to re-run)
+cli create-api-key --name 'Sample feed' --tenant 5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01
+SEED_API_KEY=<the key> pnpm seed   # 10 sample products and 4 campaigns, through the retail API (safe to re-run)
 ```
 
 | CLI command | What it does |
 | --- | --- |
 | `create-account --name … [--tier free|pro|enterprise] [--tenant <uuid>]` | Creates a tenant (generates the UUID if omitted) |
-| `create-user --username … --password … --role … --tenant <uuid>` | Creates a user. Registration through the API only ever creates standard users |
+| `create-user --username … --password … --role campaign-manager|seller-manager [--seller <id>] --tenant <uuid>` | Creates a dashboard user |
 | `set-role --username … --role … --tenant <uuid>` | Changes a role (published as an event, so the gateway picks it up) |
 | `disable --username … --tenant <uuid>` | Disables a user |
-| `seed-tenant --tenant <uuid>` | Seeds a tenant onboarded before seeding existed (needs its `onboarding` user) |
-| `create-api-key --tenant <uuid> --name '…'` | A vendor's secret API key for `POST /auth/shopper-token`. Printed once; only its hash is stored |
+| `create-api-key --tenant <uuid> --name '…'` | A retailer's secret API key, for shopper and integration tokens. Printed once; only its hash is stored |
 | `list-api-keys --tenant <uuid>` | The tenant's keys: prefix, name, created, revoked |
 | `revoke-api-key --tenant <uuid> --prefix bl_sk_…` | Revokes a key; its shopper tokens stop being issued at once |
 
-All data is per tenant: a campaign manager sees and changes only their tenant's products, campaigns and metrics.
+All data is per tenant: a campaign manager sees only their tenant's campaigns and metrics.
 
-**Web apps:** set `VITE_API_BASE_URL=http://localhost:8080/api/v1` in `dashboard/.env` and `../retailer-sim/storefront/.env`. The gateway allows CORS from http://localhost:5173 and :5174 (`CORS_ORIGINS`).
+**Web apps:** set `VITE_API_BASE_URL=http://localhost:8080/api/v1` in `dashboard/.env`. The gateway allows CORS from the dashboard, http://localhost:5173 (`CORS_ORIGINS`); retailers' sites (the storefront on :5174) use the SDK's endpoints, which accept any origin.
 
 ## Test it
 
@@ -129,14 +126,13 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | Method | Path | Who | What |
 | --- | --- | --- | --- |
 | GET | `/accounts` | anyone | Every tenant, newest first: `{items: [{tenantId, name, tier, createdAt}]}` |
-| POST | `/accounts` | anyone | Demo onboarding: `{name, tier, dummyUsers}` → 201 `{account, users, password, apiKey, seed}`. `apiKey` is the vendor's first API key, shown only here |
+| POST | `/accounts` | anyone | Onboarding, from a retailer's backend: `{name, tier, sellerManagers?: [{username, sellerId}]}` → 201 `{account, users, password, apiKey}`. `apiKey` is the retailer's first API key, shown only here |
 | DELETE | `/accounts/:tenantId` | anyone | Deletes the tenant and all of its data: `{confirmName}` must be the tenant's name exactly, else 400 `CONFIRMATION_MISMATCH` → `{deleted: {tenantId, name, deletedAt}}`. See [Deleting a tenant](#deleting-a-tenant) |
 | GET | `/auth/api-keys` | campaign manager | The tenant's API keys: `{items: [{prefix, name, createdAt, revokedAt}]}`, never the keys |
 | POST | `/auth/api-keys` | campaign manager | `{name}` → 201 `{key, prefix, name, createdAt}`: a new key, shown only here |
 | DELETE | `/auth/api-keys/:prefix` | campaign manager | Revokes the key (404 if no active key has that prefix) |
 | GET | `/auth/allowed-origins` | campaign manager | The tenant's allowed websites: `{origins: ["https://shop.example", …]}`; empty means any website |
 | PUT | `/auth/allowed-origins` | campaign manager | `{origins: [...]}` replaces the list (at most 20; each `http(s)://host[:port]`, no path or wildcard). Normalized and deduplicated; publishes `TenantOriginsChanged` |
-| POST | `/auth/register` | anyone | `{username, password, visitorToken?}` → a standard user in the `tenant_id` header's tenant |
 | POST | `/auth/login` | anyone | `{username, password, clientType: web|mobile}` → `{accessToken, expiresIn: 1800, user, session}`. Rate limited |
 | POST | `/auth/visitor` | anyone | `{userId?, clientType?}` → `{visitorToken, expiresIn: 1800, userId}`. Valid only for `POST /analytics/events`. Rate limited per IP |
 | POST | `/auth/shopper-token` | a vendor's backend, with `Authorization: ApiKey bl_sk_…` | `{customerId, visitorId?, clientType?}` → `{shopperToken, expiresIn: 1800, userId}`: a registered, events-only token for the vendor's signed-in customer. Rate limited per API key |
@@ -145,16 +141,18 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | GET | `/auth/me` | signed in | The current user |
 | GET | `/auth/sessions` | signed in | The user's sessions, newest first; `?limit&offset` |
 
-- **Tenant header:** register, login and visitor tokens need the storefront's `tenant_id` header (a UUID; else `400 TENANT_REQUIRED`), for an existing account (else `404 TENANT_NOT_FOUND`). Usernames are unique per tenant.
+- **Tenant header:** login, visitor, shopper and integration tokens need the storefront's `tenant_id` header (a UUID; else `400 TENANT_REQUIRED`), for an existing account (else `404 TENANT_NOT_FOUND`). Usernames are unique per tenant.
 
 - **Tokens:** they carry the tenant (`tid`) and client type (`client`).
 
 - **Onboarding** creates:
 
-  - an `onboarding` campaign manager, plus `user01`–`user10` and the seller manager `seller01` with `dummyUsers: true`, **all with the password** `test`;
-  - sample sellers (with a first-party one), 10–15 sample products and 2 active campaigns, seeded by product- and campaign-service from `TenantOnboarded` within seconds, and sent to the retail API.
+  - an `onboarding` campaign manager, and a seller manager for each of `sellerManagers` (up to 20; the retailer names them for its sellers' IDs), **all with the password** `test`;
+  - the retailer's first API key ("Default"), with which its backend sends its catalog and campaigns to the retail API and vouches for its shoppers.
 
-- **Roles:** `campaign-manager` (the retailer's admin: every seller), `seller-manager` (one seller: its token carries `sel`, and `/ad` answers only for that seller's campaigns; the CLI's `create-user --role seller-manager --seller <id>`), `standard-user` (a shopper).
+  Basketline holds no shoppers and no catalog of its own: those are the retailer's, sent with the API key.
+
+- **Roles:** `campaign-manager` (the retailer's admin: every seller), `seller-manager` (one seller: its token carries `sel`, and `/ad` answers only for that seller's campaigns; `sellerManagers` at onboarding, or the CLI's `create-user --role seller-manager --seller <id>`). Both are dashboard users; shoppers are the retailer's (shopper tokens, below).
 
 - **Shopper tokens (vendors' signed-in customers):**
 
@@ -178,31 +176,12 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
   - **The client side:** see the SDK, [divya2424/basketline-sdk](https://github.com/divya2424/basketline-sdk).
 
-- **Register with a visitor token:** the new user keeps the visitor's UUID, so their analytics stay one person. An invalid token, another tenant's, or a UUID that's already a user gets a random ID instead; the sign-up never fails over it. A `role` field is rejected.
-
-### Catalog
-
-| Method | Path | Who | What |
-| --- | --- | --- | --- |
-| GET | `/products`, `/products/:id` | anyone | One tenant's catalog; `?category&includeInactive&limit&offset` |
-| GET | `/sellers` | anyone | The tenant's sellers: `{sellers: [{sellerId, name}]}` |
-| POST / PATCH | `/products`, `/products/:id` | campaign manager | `{sellerId, name, description, price, image?, category?}`; `sellerId` (one of the tenant's sellers) on create only, it never changes; price &gt; 0, 2 decimals |
-| DELETE | `/products/:id` | campaign manager | Deactivates (never hard-deleted) |
-| GET | `/campaigns`, `/campaigns/:id` | anyone | One tenant's campaigns, with `productIds`; `?status&includeArchived&limit&offset` |
-| POST | `/campaigns` | campaign manager | `{sellerId, title, type, description?, status?, startTime?, endTime?, productIds?}`, in one transaction. Its products must be its seller's (else 422 `PRODUCT_OF_ANOTHER_SELLER`) |
-| PATCH | `/campaigns/:id` | campaign manager | Status: draft → active|completed, active → paused|completed, paused → active|completed |
-| DELETE | `/campaigns/:id` | campaign manager | Archives (soft delete) |
-| GET / POST | `/campaigns/:id/products` | GET anyone, POST manager | POST `{productIds: [...]}` |
-| DELETE | `/campaigns/:id/products/:productId` | campaign manager | Removes one product |
-
-- **Which tenant:** reads use the signed-in user's tenant, else the `tenant_id` header. `includeInactive` and `includeArchived` work only for campaign managers. Another tenant's product or campaign is 404.
-- **A product the campaign service doesn't know yet:** right after a product is created, campaign-service may not have its event yet. Adding it to a campaign then returns `409 PRODUCT_NOT_YET_AVAILABLE` with `Retry-After: 5`; retry.
-
 ### Analytics
 
 | Method | Path | Who | What |
 | --- | --- | --- | --- |
 | POST | `/analytics/events` | access or visitor token | `{tenantId, userId, userType, events: [...]}`, 1–100 events → `accepted`/`rejected` per event |
+| GET | `/ad/campaigns` | campaign or seller manager | The tenant's campaigns, as the retail API sent them: `{items: [{id, title, sellerId, status}]}`, not archived; a seller manager gets their seller's only |
 | GET | `/ad/:campaignId/impressions` | `clicks` | `clickToBasket` | campaign or seller manager | `?from&to` → `{count, customers, total_*, customers_*, period}` |
 | GET | `/ad/:campaignId/uniqueCustomers` | campaign or seller manager | → `has_visited`, its web, mobile, both, registered and visitor splits |
 | GET | `/ad/:campaignId/sessions` | campaign or seller manager | → `total_sessions`, `total_converted_sessions`, `avg_session_duration_ms` |
@@ -211,7 +190,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | POST | `/retail/campaigns` | integration token | `campaign_upserted` `{campaignId, sellerId, title, status, startTime?, endTime?, archived?, productIds}`, `campaign_removed` `{campaignId}` |
 | POST | `/retail/identity` | integration token | `user_identified` `{userId, visitorId?}`, `user_deleted` `{userId}` (erasure) |
 
-- **Identity check on events:** the batch's tenant, user and user type must match its token (`registered` for an access token, `visitor` for a visitor token). Any difference, or a `tenant_id` header for another tenant, rejects the whole batch with `403 IDENTITY_MISMATCH`.
+- **Identity check on events:** the batch's tenant, user and user type must match its token (`registered` for a shopper or access token, `visitor` for a visitor token). Any difference, or a `tenant_id` header for another tenant, rejects the whole batch with `403 IDENTITY_MISMATCH`.
 - **Event errors:** `429 TOO_MANY_EVENTS` past 300 events per sender per minute; `503 EVENTS_NOT_DELIVERED` when Kafka is down.
 - **What answers the spec:** "the number of customers who clicked / viewed / added to cart after clicking" is `customers` on `/ad/:id/clicks`, `impressions` and `clickToBasket`; the dashboard shows it as the headline. `count` is the number of events (one customer can click many times), kept for rates such as CTR. `customers` is a `uniqCombined64` sketch: exact up to a few thousand, within about 1% above; `count` is exact.
 - `/ad` **columns:** `count` is the event total and `customers` the people behind it. The columns split them:
@@ -230,7 +209,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properties?}`. What it's about goes in `properties`: `campaignId` (required on `impression` and `click`), `productId` (what click-to-basket credits), and any other attribute. On arrival, ingestion-service lifts `campaignId` and `productId` out of `properties` into their own fields, which attribution and the `/ad` metrics key on.
 
-- **Who sent it.** A registered user sends their access token. A visitor gets a visitor token for the UUID the client keeps for them, from `POST /auth/visitor`. The client keeps the same UUID before and after registration. The stored tenant, `userId`, `userType` and `clientType` always come from the token.
+- **Who sent it.** A signed-in shopper's events go with the shopper token the retailer's backend got for them (`POST /auth/shopper-token`). A visitor gets a visitor token for the UUID the client keeps for them, from `POST /auth/visitor`. The client keeps the same UUID before and after sign-in. The stored tenant, `userId`, `userType` and `clientType` always come from the token.
 
 - **Checks on arrival:**
 
@@ -330,9 +309,7 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 | --- | --- | --- |
 | `auth.user.v1` | UserCreated, UserRoleChanged, UserDisabled | gateway (disabled accounts, stale tokens) |
 | `auth.session.v1` | SessionRevoked | gateway (rejects revoked sessions) |
-| `auth.tenant.v1` | TenantOnboarded, with the seed plan; TenantDeleted; TenantOriginsChanged | product-service, campaign-service (seed by the planned IDs); on TenantDeleted every service deletes its own data, and the gateway rejects the tenant's tokens; the gateway keeps TenantOriginsChanged's allowed websites |
-| `product.v1` | ProductCreated, ProductUpdated, ProductDeactivated (the retailer's internal events) | campaign-service (its `products` table) |
-| `campaign.v1` | CampaignCreated, CampaignUpdated, CampaignProductAssociated, CampaignProductRemoved (internal) | nobody yet (analytics learns campaigns from the retail API) |
+| `auth.tenant.v1` | TenantOnboarded (its tier); TenantDeleted; TenantOriginsChanged | ingestion-service (the tier sizes the tenant's budget; on TenantDeleted it deletes the tenant's data); the gateway (rejects a deleted tenant's tokens, keeps the allowed websites) |
 | `retail.interactions.v1` | AnalyticsEventRecorded for every interaction, all tenants (key = the client's `eventId`). Kept **14 days** | flink-streaming |
 | `retail.identity-events.v1` | Identity events, from the browser and the retailer's server. Kept **14 days** | flink-streaming (stores the browser's), ingestion-service (`user_deleted`) |
 | `retail.catalog-events.v1`, `retail.campaign-events.v1` | The retail API's updates, keyed by entity ID. **Compacted**: the latest state per ID is kept for good | ingestion-service (`analytics.sellers`, `products`, `campaigns`) |
@@ -342,9 +319,9 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 - **Retention:** ingestion-service sets it when it creates a topic. Flink keeps clicks for 13 days, so the interaction topics' 14 days let a replay rebuild all of it. Other topics keep Kafka's default of 7 days.
 - **Why shared topics:** every tenant's events of one domain share its topic (keyed and filtered by tenant). A domain gets a topic of its own only when its retention, access, throughput or processing differ: reference data is compacted, identity carries erasures, interactions are the volume. So adding retailers or event names adds no topics.
 - **The old** `analytics.<eventName>.v1` **topics** (one per event name, before the shared ones) are no longer read; delete them (see [Upgrading](#upgrading-an-existing-setup)).
+- **The simulated retailer's topics** (`retailer.store.v1`, `product.v1`, `campaign.v1`) share this broker but are its own: Basketline reads none of them (`scripts/check-architecture.ts` keeps it that way).
 - **Consumers:**
   - the gateway records each `eventId` in `processed_events`, so a redelivery applies once;
-  - campaign-service skips an event older than the version it holds;
   - a failing message is retried 5 times with backoff, then sent to `dlq.<service>`.
 
 ## Operations
@@ -394,13 +371,13 @@ Compose and the Helm charts use a 35 s grace period.
 A service's local copy of another's data can be rebuilt by replaying that service's topics. It's safe: consumers skip events they've already applied.
 
 ```bash
-(cd ../retailer-sim && docker compose stop campaign-service)
+docker compose stop gateway
 docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
-  --group campaign-service --reset-offsets --to-earliest --all-topics --execute
-(cd ../retailer-sim && docker compose start campaign-service)
+  --group gateway --reset-offsets --to-earliest --all-topics --execute
+docker compose start gateway
 ```
 
-Consumer groups: `campaign-service`, `gateway`, `ingestion-service`. When the events have expired, product-service can republish every product's current state (from `../retailer-sim`): `docker compose exec product-service node retailer-sim/services/product-service/src/cli.ts republish`.
+Consumer groups: `gateway`, `ingestion-service`. The retail API's reference data can always be sent again by the retailer (the simulated one: `cli.ts republish` in its product- and campaign-service, `../retailer-sim/README.md`).
 
 ### Resetting and replaying ClickHouse
 
@@ -506,21 +483,21 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's re
 | Unused `analytics_db` | `docker compose exec postgres psql -U postgres -c 'DROP DATABASE analytics_db'` |
 | Shared retail topics and sellers | 1\. ClickHouse: `migrations/004_sellers_and_event_types.sql`, then `01_tables.sql` and `03_kafka.sql` (commands at the top of 004). 2. The archive's new columns: `docker compose exec airflow sh -c 'cd /opt/airflow/jobs && /opt/jobs/bin/python -c "from pyiceberg.catalog import load_catalog; from export_archive import iceberg_table; c = load_catalog(\"archive\"); [iceberg_table(c, \"archive\", t) for t in (\"events\", \"attributed_baskets\", \"sessions\")]"'`. 3. `docker compose up -d --build` (the services' migrations give existing products the first-party seller). 4. Reset Flink's checkpoint (`flink/README.md`): the join's rows changed. 5. Send existing data through the retail API: `docker compose exec product-service node retailer-sim/services/product-service/src/cli.ts republish`, then `docker compose exec campaign-service node retailer-sim/services/campaign-service/src/cli.ts republish` (gives each older campaign its products' seller) |
 | Old per-event topics, 14 days after the above | Delete the `analytics.*.v1` topics, rebuild flink-streaming (its source no longer reads them) and reset its checkpoint: a checkpoint that still lists a deleted topic's partitions keeps the job restarting (`Timeout … before the position for partition … could be determined`) |
+| Retailers integrate through the public API | 1\. ClickHouse: `docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery < infra/clickhouse/migrations/005_campaign_titles.sql` (campaign titles, for `GET /ad/campaigns`). 2. `docker compose up -d --build`: auth-service's migration deletes the `standard-user` accounts (shoppers are the retailer's now) and their sign-ins. 3. The simulated retailer: `pnpm keys` in `../retailer-sim` (its own token and secrets keys), then `docker compose up -d --build` there; it has its own Postgres. Tenants onboarded before have no API key at the retailer, so connect stores again on the storefront's Stores page |
 | ClickHouse waits for `archive-storage` | Nothing: a ClickHouse started before its cold volume's storage left the tiered tables unloaded; compose now orders them. If it happens, `docker compose restart clickhouse` |
 
 ## Deleting a tenant
 
-`DELETE /accounts/:tenantId` (or **Details → Delete tenant** on the onboarding page) removes everything the tenant owns, for good:
+`DELETE /accounts/:tenantId` (or **Details → Delete tenant** on the dashboard's tenants page) removes everything the tenant owns at Basketline, for good:
 
 | Where | What | When |
 | --- | --- | --- |
 | auth-service (`identity_db`) | users, sign-ins, API keys, shopper mappings, the account | in the request, then it publishes `TenantDeleted` on `auth.tenant.v1` |
 | gateway | records the tenant in `deleted_tenants`: its access, visitor and shopper tokens get 401 `TENANT_DELETED` | on the event |
-| product-service, campaign-service | products, campaigns and their links | on the event |
 | ingestion-service (ClickHouse) | raw events, attributed baskets, sessions, the daily tables, the campaign projection; adds the tenant to `analytics.deleted_tenants`, which the Kafka queue views filter on, so events still in flight are dropped | on the event |
 | Airflow `tenant_purge` (daily 02:00 UTC) | the tenant's rows in the Iceberg archive and the backfill tables | next run, and again each day for 15 days, since a Kafka replay can archive its events again (marked done in `deleted_tenants`) |
 
-The Kafka topics keep the tenant's past messages until they expire (14 days at most); nothing reads them back into a deleted tenant.
+The Kafka topics keep the tenant's past messages until they expire (14 days at most); nothing reads them back into a deleted tenant. The retailer's own data (its store, logins, catalog) is the retailer's: deleting the tenant here doesn't touch it, and its API key stops working.
 
 **Erasing one shopper:** the retailer's server sends `user_deleted` (`POST /retail/identity`, or the server SDK's `identity.deleteUser`). ingestion-service records the shopper in `analytics.deleted_users` and deletes their raw rows at once; the Kafka queue views drop any a replay brings back; `tenant_purge` deletes their archived rows, on the same 15-day terms. The daily tables hold no user IDs (counts and sketches).
 
@@ -529,7 +506,6 @@ The Kafka topics keep the tenant's past messages until they expire (14 days at m
 - **No transactional outbox, by choice.** Events are published right after the database commit. If Kafka is unreachable at that moment, the change is saved but its event is lost (logged as an error). This departs from PRD §3.3 / §5.2 and acceptance criterion 10.
 - **Revocation is eventually consistent.** After logout, the gateway rejects the token once `SessionRevoked` arrives, under 5 s in tests. Only the gateway checks revocation.
 - **Retries are in-process.** A message being retried blocks its partition for up to about 3 s before going to the dead-letter topic.
-- **Public catalog reads, by choice.** `GET /products` and `/campaigns` need no token, so visitors can browse. This departs from PRD §6.2 and §6.3. All writes still require a campaign manager.
 - **Anonymous events can be faked, at a cost.** Anyone can get a visitor token. This is limited, not prevented:
   - 10 visitor tokens per IP per minute;
   - 300 events per token per minute;
@@ -538,7 +514,7 @@ The Kafka topics keep the tenant's past messages until they expire (14 days at m
 - **Tenants are isolated in the data, not the infrastructure.** Every row and query is scoped by tenant, and the `/ad` reads are also enforced by ClickHouse: they run as `basketline_reader`, whose row policy (`infra/clickhouse/04_access.sql`) returns only the tenant named on each query (`SQL_tenant_id`, from the token) and nothing when none is named. Tenants still share the services, databases and topics.
 - **Reference data comes from the retailer.** Analytics knows a product's seller and a campaign only once the retailer's backend has sent them (the retail API). The topics are compacted, so a rebuilt ClickHouse gets them all back by replaying them.
 - **Events don't get a seller later.** An event for a product the catalog hadn't received yet keeps `seller_id` NULL; nothing fills it in when the product arrives. Seller reports go through campaigns, which always have a seller, so they aren't affected.
-- **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.
+- **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded dashboard users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.
 - **Deleting a tenant is open to anyone,** like onboarding: typing the tenant's name is a guard against mistakes, not a permission. Put `DELETE /accounts/:tenantId` behind an admin role too.
 - **Not implemented:** `CampaignMetricUpdated` events, OpenAPI files, refresh tokens, a time-series endpoint.
 
@@ -549,7 +525,7 @@ packages/contracts/   event types, topic names, roles, the retail API's payloads
 packages/platform/    shared infrastructure: Express middleware, Drizzle helpers and shared tables,
                       JWT, health, shutdown; re-exports the Kafka event bus
                       (@divya2424/basketline-kafka, its own repo)
-services/<service>/    gateway, auth-, ingestion- and insights-service (product- and campaign-service: ../retailer-sim/services)
+services/<service>/    gateway, auth-, ingestion- and insights-service
   drizzle/            SQL migrations generated by drizzle-kit (applied on startup)
   src/
     index.ts          database, Kafka, consumers, server, shutdown

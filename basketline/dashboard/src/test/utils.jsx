@@ -3,10 +3,9 @@ import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { App } from '../app/App.jsx'
 import { campaigns } from './campaignData.js'
-import { products } from './productData.js'
 
-/** The sample catalog, standing in for GET /products and /campaigns. */
-export const SAMPLE_CATALOG = { products, campaigns }
+/** The sample campaigns, standing in for GET /ad/campaigns. */
+export const SAMPLE_CATALOG = { campaigns }
 
 /**
  * Renders the whole dashboard under StrictMode, like production, at `route`. By
@@ -42,13 +41,5 @@ export const SELLER = {
   role: 'seller-manager',
   sellerId: 'aaaaaaaa-0000-4000-8000-000000000001',
   accessToken: 'seller-token',
-  expiresAt: inHalfAnHour(),
-}
-export const SHOPPER = {
-  userId: '22222222-2222-4222-8222-222222222222',
-  username: 'sam',
-  displayName: 'sam',
-  role: 'standard-user',
-  accessToken: 'shopper-token',
   expiresAt: inHalfAnHour(),
 }

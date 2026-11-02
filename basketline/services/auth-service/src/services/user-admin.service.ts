@@ -4,7 +4,7 @@
  * to publish once that transaction has committed.
  */
 import { randomUUID } from 'node:crypto'
-import { STANDARD_USER, type Role } from '@basketline/contracts'
+import type { Role } from '@basketline/contracts'
 import { badRequest, conflict, event, isUniqueViolation, notFound, writeAudit, type NewEvent } from '@basketline/platform'
 import type { DbOrTx } from '../db/client.ts'
 import { endOpenSessionsForUser, type Session } from '../repositories/session.repository.ts'
@@ -26,17 +26,16 @@ async function requireUserForUpdate(db: DbOrTx, tenantId: string, username: stri
 
 export async function createUser(
   db: DbOrTx,
-  // id: a given user ID (a visitor's UUID at sign-up), else a random one.
-  input: { username: string; password: string; role?: Role; tenantId: string; id?: string; sellerId?: string },
+  input: { username: string; password: string; role: Role; tenantId: string; sellerId?: string },
   actorId: string | null,
 ): Promise<AdminResult> {
-  const role = input.role ?? STANDARD_USER
+  const { role } = input
   // A seller-manager sees one seller's data, so it needs its seller; no other role has one.
   if ((role === 'seller-manager') !== Boolean(input.sellerId)) throw badRequest('SELLER_REQUIRED', 'A seller-manager needs a seller (and only a seller-manager has one)')
   let user: User
   try {
     user = await insertUser(db, {
-      id: input.id ?? randomUUID(),
+      id: randomUUID(),
       username: input.username.trim(),
       passwordHash: await hashPassword(input.password),
       role,

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { createLogger } from '@basketline/platform'
+import { createLogger, signShopperToken } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 import { createTestClickHouse, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildInsightsApp } from '../src/app.ts'
@@ -39,11 +39,11 @@ afterAll(async () => {
 })
 
 /** A campaign in the campaigns copy, as ingestion-service keeps it from the retail API. */
-async function insertCampaign(campaignId: string, sellerId: string) {
+async function insertCampaign(campaignId: string, sellerId: string, { title = '', archived = false, version = 1, tenantId = TENANT } = {}) {
   await clickhouse.insert({
     table: 'campaigns',
     format: 'JSONEachRow',
-    values: [{ campaign_id: campaignId, tenant_id: TENANT, status: 'active', archived: false, version: 1, seller_id: sellerId }],
+    values: [{ campaign_id: campaignId, tenant_id: tenantId, status: 'active', archived, version, seller_id: sellerId, title }],
   })
 }
 
@@ -188,9 +188,9 @@ describe('the /ad metrics, read from ClickHouse', () => {
     expect((await metric(campaignId, 'clicks', '', otherManager)).body.count).toBe(2)
   })
 
-  it('is only for campaign managers: not shoppers, and not visitor tokens', async () => {
-    const shopper = (await tokenFor(keys, 'standard-user', { tid: TENANT })).header
-    expect((await metric(randomUUID(), 'clicks', '', shopper)).status).toBe(403)
+  it("is only for campaign and seller managers: not shoppers' or visitors' tokens", async () => {
+    const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId: randomUUID() })).token}`
+    expect((await metric(randomUUID(), 'clicks', '', shopper)).status).toBe(401)
     expect((await metric(randomUUID(), 'clicks', '', visitor)).status).toBe(401)
   })
 
@@ -573,5 +573,29 @@ describe('sellers', () => {
     expect((await sellerTotals(other, sellerManager)).status).toBe(403)
     // The retailer's campaign managers see every seller.
     expect((await sellerTotals(other, reader)).body).toMatchObject({ campaigns: 1, count: 1 })
+  })
+})
+
+describe('the campaign list (GET /ad/campaigns)', () => {
+  it("lists the tenant's campaigns with their newest title, not archived ones; a seller-manager's seller's only", async () => {
+    const [north, south] = [randomUUID(), randomUUID()]
+    const [renamed, other, archived, foreign] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    await insertCampaign(renamed, north, { title: 'Spring Sale' })
+    await insertCampaign(renamed, north, { title: 'Summer Sale', version: 2 })
+    await insertCampaign(other, south, { title: 'Clearance' })
+    await insertCampaign(archived, north, { title: 'Gone', archived: true })
+    await insertCampaign(foreign, north, { title: 'Not ours', tenantId: OTHER_TENANT })
+    const list = (auth: string) => request(app).get('/api/v1/ad/campaigns').set('Authorization', auth)
+
+    const all = (await list(reader)).body.items as { id: string }[]
+    const ids = all.map((campaign) => campaign.id)
+    expect(all.find((campaign) => campaign.id === renamed)).toEqual({ id: renamed, title: 'Summer Sale', sellerId: north, status: 'active' })
+    expect(ids).toContain(other)
+    expect(ids).not.toContain(archived)
+    expect(ids).not.toContain(foreign)
+
+    const sellerManager = (await tokenFor(keys, 'seller-manager', { tid: TENANT, sel: north })).header
+    expect((await list(sellerManager)).body.items.map((campaign: { id: string }) => campaign.id)).toEqual([renamed])
+    expect((await list(visitor)).status).toBe(401)
   })
 })

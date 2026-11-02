@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { renderApp, MANAGER, SAMPLE_CATALOG, SELLER, SHOPPER } from '../../test/utils.jsx'
+import { renderApp, MANAGER, SAMPLE_CATALOG, SELLER } from '../../test/utils.jsx'
 import { DEFAULT_TENANT_ID, getRequestContext, switchTenant } from '../../api/requestContext.js'
 import { jsonResponse, mockFetch } from '../../test/mockFetch.js'
 
 const ACCOUNTS = {
   maya: { password: 'correct horse battery', profile: MANAGER },
-  sam: { password: 'another long password', profile: SHOPPER },
 }
 const TENANT = 'Default storefront'
 
@@ -56,7 +55,7 @@ afterEach(() => {
 const SIGNED_OUT = { authProps: { persist: false, initialUser: null } }
 const analyticsLink = () => screen.queryByRole('link', { name: 'Analytics' })
 const loginRequest = () => requests.find((r) => r.path === '/auth/login')
-const onboardingHeading = () => screen.findByRole('heading', { name: 'Onboard a tenant' })
+const onboardingHeading = () => screen.findByRole('heading', { name: 'Tenants' })
 
 /** On the onboarding page: the tenant row's Log in opens the tenant's sign-in dialog. */
 async function openSignIn(user) {
@@ -214,16 +213,6 @@ describe('role-based access to analytics', () => {
 
     await user.click(screen.getByRole('button', { name: 'Logout' }))
     await onboardingHeading()
-    expect(analyticsLink()).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Campaign Analytics' })).not.toBeInTheDocument()
-  })
-
-  it('does not show Analytics to a signed-in customer, and blocks the page', async () => {
-    const user = userEvent.setup()
-    renderApp('/', SIGNED_OUT)
-    await signIn(user, 'sam', 'another long password')
-    expect(await screen.findByRole('heading', { name: 'Access restricted' })).toBeInTheDocument()
-    expect(screen.getByText(/only available to a campaign manager or seller manager/)).toBeInTheDocument()
     expect(analyticsLink()).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Campaign Analytics' })).not.toBeInTheDocument()
   })

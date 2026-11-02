@@ -44,7 +44,7 @@ export const users = pgTable(
     id: uuid('id').primaryKey(),
     username: varchar('username', { length: 100 }).notNull(),
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
-    role: userRole('role').notNull().default('standard-user'),
+    role: userRole('role').notNull(),
     // The storefront the user signed up at; carried in their tokens as "tid".
     tenantId: uuid('tenant_id')
       .notNull()

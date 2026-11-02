@@ -32,7 +32,7 @@ Every retailer (tenant) is kept apart: users, sellers, products, campaigns, even
 
 The repo has two folders:
 - **[`basketline/`](basketline/README.md): the product.** The analytics path: ingestion-service (data in), Kafka, Flink, ClickHouse, insights-service (the `/ad` API), Iceberg and Airflow; with the gateway, auth-service and the dashboard.
-- **[`retailer-sim/`](retailer-sim/README.md): a simulated retailer**, so the integration can be shown end to end: product- and campaign-service (its catalog and campaigns, sent to Basketline's retail API) and its storefront (tracking shoppers with the SDK).
+- **[`retailer-sim/`](retailer-sim/README.md): a simulated retailer**, so the integration can be shown end to end, through Basketline's public API only: its own sign-in (retailer-auth-service, which onboards its stores at Basketline and keeps their API keys), product- and campaign-service (its catalog and campaigns, sent to Basketline's retail API), and its storefront (tracking shoppers with the SDK).
 
 **Design documents:**
 - [Platform architecture](docs/platform-architecture.svg): where the platform starts (ingestion) and what the simulated retailer owns.
@@ -83,8 +83,9 @@ cd basketline
 pnpm keys                 # JWT signing keys → basketline/keys/ (git-ignored)
 docker compose up -d --build
 
-# The simulated retailer's services, on the platform's network
+# The simulated retailer's services: their own Postgres, on the platform's network
 cd ../retailer-sim
+pnpm keys                 # its own keys → retailer-sim/keys/ (git-ignored)
 docker compose up -d --build
 
 # The two web apps, each in its own terminal from the repo root
@@ -94,8 +95,9 @@ docker compose up -d --build
 
 Without a GitHub token, `pnpm install` and the image builds fail on the two packages above (`401 Unauthorized`): create a classic token with only `read:packages`.
 
-1. Open the dashboard, http://localhost:5173, and onboard a tenant. It gets an `onboarding` campaign manager and a `seller01` seller manager (password `test`), sample sellers, products and campaigns.
-2. Click **Analytics** on its row to see the dashboard, or **Open store** to shop in the storefront (http://localhost:5174).
+1. On the storefront's Stores page, http://localhost:5174/stores, connect a store. The retailer onboards it at Basketline and keeps its API key: Basketline creates an `onboarding` campaign manager and a `seller01` seller manager (password `test`); the retailer creates its logins (`staff`, `user01`–`user10`, password `test`) and sends its sample sellers, products and campaigns to Basketline.
+2. **Open** it to shop; sign in as `user01` to shop as a customer.
+3. On the dashboard, http://localhost:5173, click **Analytics** on the tenant's row.
 
 To create tenants and users from the command line, see [basketline/README.md § Run it](basketline/README.md#run-it).
 
@@ -103,8 +105,8 @@ To create tenants and users from the command line, see [basketline/README.md § 
 
 | What | URL | Sign-in |
 |---|---|---|
-| **Dashboard** (Basketline) | http://localhost:5173 | Onboard a tenant, or sign in from its row |
-| **Storefront** (simulated retailer) | http://localhost:5174 | Opened from a tenant's row; visitors need no sign-in |
+| **Dashboard** (Basketline) | http://localhost:5173 | Sign in from a tenant's row |
+| **Storefront** (simulated retailer) | http://localhost:5174 · stores at /stores | Visitors need no sign-in; the store's logins are the retailer's |
 | **API gateway** | http://localhost:8080/api/v1 | Tokens from `/auth/login` or `/auth/visitor` |
 | Gateway health | http://localhost:8080/health/ready | — |
 | **Flink** web UI | http://localhost:8081 | — |
@@ -116,18 +118,18 @@ To create tenants and users from the command line, see [basketline/README.md § 
 | **Grafana** (`docker compose --profile monitoring up -d`) | http://localhost:3000 (dashboard "Pipeline") | Viewing: none; editing `admin` / `basketline_dev` |
 | **Prometheus** (same profile) | http://localhost:9090 · alerts http://localhost:9090/alerts | — |
 
-The services (auth 4001, product 4002, campaign 4003, ingestion 4004, insights 4005) are reached only through the gateway. See [basketline/README.md § Services and URLs](basketline/README.md#services-and-urls) for each service and its health probe. These are development credentials, for local use only.
+Basketline's services (auth 4001, ingestion 4004, insights 4005) are reached only through the gateway. The simulated retailer's (sign-in 4006, products 4002, campaigns 4003) are published on 127.0.0.1 for its storefront, with their own Postgres on port 5433. See [basketline/README.md § Services and URLs](basketline/README.md#services-and-urls) for each service and its health probe. These are development credentials, for local use only.
 
 **Docker.** The platform runs as the Compose project `basketline`, the simulated retailer's services as `retailer-sim` (on the platform's network):
 
 | | Named |
 |---|---|
-| Containers | `basketline-<service>-1`, e.g. `basketline-gateway-1`; `retailer-sim-product-service-1`, `retailer-sim-campaign-service-1` |
+| Containers | `basketline-<service>-1`, e.g. `basketline-gateway-1`; `retailer-sim-<service>-1`, e.g. `retailer-sim-retailer-auth-service-1` |
 | Images | `basketline-<service>`, `retailer-sim-<service>` |
-| Volumes | `basketline_pgdata`, `basketline_chdata`, `basketline_flink-checkpoints`, `basketline_archive-data` |
+| Volumes | `basketline_pgdata`, `basketline_chdata`, `basketline_flink-checkpoints`, `basketline_archive-data`; `retailer-sim_retailer-pgdata` |
 
 ```bash
-cd basketline              # or retailer-sim, for its two services
+cd basketline              # or retailer-sim, for its services
 docker compose ps                      # every container and its health
 docker compose logs -f gateway         # one service's logs
 docker compose down                    # stop (volumes kept); add -v to delete the data too
@@ -138,14 +140,14 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 | Folder | What it is | Docs |
 |---|---|---|
 | [`basketline/`](basketline/) | **The product:** the gateway and four services, Kafka contracts, Postgres and ClickHouse schemas | [basketline/README.md](basketline/README.md) |
-| [`basketline/dashboard/`](basketline/dashboard/) | Tenant onboarding and the campaign dashboard (React 19, Vite) | [dashboard/README.md](basketline/dashboard/README.md) |
+| [`basketline/dashboard/`](basketline/dashboard/) | The tenants and the campaign dashboard (React 19, Vite) | [dashboard/README.md](basketline/dashboard/README.md) |
 | [`basketline/flink/`](basketline/flink/) | The Flink SQL job: validation, click→basket attribution, sessions | [flink/README.md](basketline/flink/README.md) |
 | [`basketline/airflow/`](basketline/airflow/) | Nightly sessions export, archive maintenance, ClickHouse backups, tenant and shopper purges, and the Spark history backfill | [airflow/README.md](basketline/airflow/README.md) |
 | [`basketline/infra/monitoring/`](basketline/infra/monitoring/) | Prometheus scrape config and alerts, the Grafana "Pipeline" dashboard, Loki and Alloy | [basketline/README.md § Monitoring](basketline/README.md#monitoring) |
 | [`basketline/loadtest/`](basketline/loadtest/) | The k6 load test for the analytics path | [loadtest/README.md](basketline/loadtest/README.md) |
 | [`basketline/deploy/helm/`](basketline/deploy/helm/) | Kubernetes: a Helm chart per service, helmfile | [helm/README.md](basketline/deploy/helm/README.md) |
-| [`retailer-sim/`](retailer-sim/) | **The simulated retailer:** product- and campaign-service, their Compose file and Helm charts | [retailer-sim/README.md](retailer-sim/README.md) |
-| [`retailer-sim/storefront/`](retailer-sim/storefront/) | The retailer's web shop, tracking with the Basketline SDK (React 19, Vite) | [storefront/README.md](retailer-sim/storefront/README.md) |
+| [`retailer-sim/`](retailer-sim/) | **The simulated retailer:** its sign-in, product- and campaign-service, their Compose file and Helm charts | [retailer-sim/README.md](retailer-sim/README.md) |
+| [`retailer-sim/storefront/`](retailer-sim/storefront/) | The retailer's web shop and Stores page, tracking with the Basketline SDK (React 19, Vite) | [storefront/README.md](retailer-sim/storefront/README.md) |
 
 The root holds the one pnpm workspace (`pnpm-workspace.yaml`, the lockfile and the backend's shared dependencies) and the `Dockerfile` that builds every Node service.
 

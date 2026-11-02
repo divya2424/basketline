@@ -72,7 +72,7 @@ sql/
 
 Clients send no attribution: an `add_to_cart` is matched with every `click` that:
 
-1. is of the same tenant, by the same `user_id` (a person keeps their UUID when they register, so a click made as a visitor matches a basket addition after signing in);
+1. is of the same tenant, by the same `user_id` (a shopper keeps their visitor UUID when they sign in, through the shopper token, so a click made as a visitor matches a basket addition after signing in);
 2. was for the same product (a click without a product is never credited);
 3. came at most **7 days** before the basket addition (`event_time`, the user's own time), and not after it.
 

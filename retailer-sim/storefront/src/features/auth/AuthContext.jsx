@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { authenticate, endSession } from './authService.js'
+import { authenticate } from './authService.js'
 import { loadSession, saveSession } from './sessionStorage.js'
 import { setRequestUser } from '../../api/requestContext.js'
 import { setUnauthorizedHandler } from '../../api/httpClient.js'
@@ -33,10 +33,8 @@ export function AuthProvider({ children, initialUser, persist = true }) {
     [persist],
   )
 
-  const logout = useCallback(async () => {
-    await endSession()
-    clearSession()
-  }, [clearSession])
+  // The store's tokens aren't kept server-side: signing out forgets them.
+  const logout = useCallback(async () => clearSession(), [clearSession])
 
   // A 401 on a request that carried our token means it expired or was revoked.
   useEffect(() => {

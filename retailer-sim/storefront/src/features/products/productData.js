@@ -1,6 +1,6 @@
 // SAMPLE DATA. The app loads the real catalog from the API; this file is the
-// source for `pnpm seed` in basketline/ (which creates these products there)
-// and the fixture for the frontend tests. Prices are numeric INR values.
+// source for `pnpm seed` in basketline/ (which sends these products to a tenant
+// through Basketline's retail API) and the fixture for the frontend tests. Prices are numeric INR values.
 export const products = [
   {
     id: 'product_001',

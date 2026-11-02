@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { TOPICS, type EventEnvelope } from '@basketline/contracts'
-import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
-import { createTestDatabase, createTestKeys, tokenFor } from '@basketline/platform/testing'
+import type { EventEnvelope } from '@basketline/contracts'
+import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus } from '@basketline/platform'
+import { createTestDatabase, createTestKeys } from '@basketline/platform/testing'
+import { openSecret, RETAILER_EVENTS, RETAILER_TOPICS, sealSecret } from '@retailer-sim/shared'
+import { createFakeBasketline, retailerTokenFor } from '@retailer-sim/shared/testing'
 import { buildCampaignApp } from '../src/app.ts'
 import { createCampaignDb, migrateCampaignDb, type Db } from '../src/db/client.ts'
 import { handleProductEvent } from '../src/events/product.consumer.ts'
 import { fillCampaignSellers } from '../src/repositories/campaign.repository.ts'
-import { createTenantSeeder, handleTenantDeleted } from '../src/events/tenant.consumer.ts'
+import { createStoreConnector } from '../src/events/store.consumer.ts'
+import { findSealedApiKey } from '../src/repositories/store.repository.ts'
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
 let db: Db
@@ -19,12 +22,13 @@ const TENANT = '5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01'
 const SELLER = randomUUID()
 const OTHER_SELLER = randomUUID()
 
-/** What the service sent to Basketline's reference API, as a retailer's backend. */
-const sent: { tenantId: string; endpoint: string; updates: ReferenceUpdate[] }[] = []
-const retailer: RetailerIntegration = { send: async (tenantId, endpoint, updates) => void sent.push({ tenantId, endpoint, updates }) }
+/** What the service sent to Basketline with the SDK, as the store's backend. */
+const { basketline, sent } = createFakeBasketline()
+const SECRETS_KEY = Buffer.alloc(32, 7).toString('base64')
+/** The store's staff (they write campaigns), customers, and another store's. */
 let manager: string
 let managerId: string
-// Another manager of the same tenant.
+// Another staff member of the same store.
 let colleague: string
 let colleagueId: string
 let user: string
@@ -40,17 +44,17 @@ beforeAll(async () => {
   const keys = await createTestKeys()
   const logger = createLogger('campaign-test')
   bus = createMemoryEventBus(logger)
-  app = buildCampaignApp({ db, bus, logger, publicKey: keys.publicKey, retailer })
-  const managerToken = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
+  app = buildCampaignApp({ db, bus, logger, publicKey: keys.publicKey, basketline })
+  const managerToken = await retailerTokenFor(keys.privateKey, 'staff', { tid: TENANT })
   manager = managerToken.header
   managerId = managerToken.sub
-  const colleagueToken = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
+  const colleagueToken = await retailerTokenFor(keys.privateKey, 'staff', { tid: TENANT })
   colleague = colleagueToken.header
   colleagueId = colleagueToken.sub
-  user = (await tokenFor(keys, 'standard-user', { tid: TENANT })).header
+  user = (await retailerTokenFor(keys.privateKey, 'customer', { tid: TENANT })).header
   otherTenant = randomUUID()
-  otherManager = (await tokenFor(keys, 'campaign-manager', { tid: otherTenant })).header
-  otherUser = (await tokenFor(keys, 'standard-user', { tid: otherTenant })).header
+  otherManager = (await retailerTokenFor(keys.privateKey, 'staff', { tid: otherTenant })).header
+  otherUser = (await retailerTokenFor(keys.privateKey, 'customer', { tid: otherTenant })).header
   applyProductEvent = (envelope) => handleProductEvent(db, envelope)
 })
 
@@ -110,8 +114,9 @@ describe('creating campaigns', () => {
     expect(body.sellerId).toBe(SELLER)
     expect((await request(app).post(`/api/v1/campaigns/${body.id}/products`).set('Authorization', manager).send({ productIds: [theirs] })).status).toBe(422)
 
-    const update = sent.flatMap((s) => s.updates).findLast((u) => u.data.campaignId === body.id)
-    expect(update).toMatchObject({ eventName: 'campaign_upserted', data: { campaignId: body.id, sellerId: SELLER, title: 'Ours only', productIds: [ours], archived: false } })
+    const call = sent.findLast((s) => s.records.some((r) => r.campaignId === body.id))!
+    expect(call).toMatchObject({ tenantId: TENANT, call: 'campaigns.upsert' })
+    expect(call.records[0]).toMatchObject({ campaignId: body.id, sellerId: SELLER, title: 'Ours only', productIds: [ours], archived: false })
   })
 
   it('saves the campaign with its products in order and publishes the events', async () => {
@@ -132,7 +137,7 @@ describe('creating campaigns', () => {
     expect(events.map((e) => e.eventType)).toEqual(['CampaignCreated', 'CampaignProductAssociated', 'CampaignProductAssociated'])
     expect(events[0]!.payload).toMatchObject({ campaignId: res.body.id, tenantId: TENANT })
     expect(events[1]).toMatchObject({ aggregateVersion: 1, payload: { productId: a, position: 1 } })
-    expect(bus.published.every((m) => m.topic === TOPICS.campaigns)).toBe(true)
+    expect(bus.published.every((m) => m.topic === RETAILER_TOPICS.campaigns)).toBe(true)
   })
 
   it('returns a retryable 409 for products the projection has not seen yet', async () => {
@@ -172,7 +177,7 @@ describe('creating campaigns', () => {
     expect(backwards.body.error.code).toBe('INVALID_SCHEDULE')
   })
 
-  it('forbids standard users from creating or changing campaigns; anyone can read', async () => {
+  it('forbids customers from creating or changing campaigns; anyone can read', async () => {
     expect((await create({ title: 'Nope', type: 'x' }, user)).status).toBe(403)
     const { body } = await create({ title: 'Readable', type: 'x' })
     expect((await request(app).patch(`/api/v1/campaigns/${body.id}`).set('Authorization', user).send({ title: 'x' })).status).toBe(403)
@@ -371,10 +376,10 @@ describe('campaigns from before sellers (cli.ts republish)', () => {
   })
 })
 
-describe('seeding an onboarded tenant (TenantOnboarded)', () => {
-  it('creates the 2 planned active campaigns with their 2 and 3 products, once', async () => {
+describe('a store connected to Basketline (StoreConnected)', () => {
+  it('keeps its sealed API key, creates the 2 planned active campaigns with their 2 and 3 products once, and sends them to Basketline', async () => {
     const tenantId = randomUUID()
-    const onboardedBy = randomUUID()
+    const connectedBy = randomUUID()
     const products = Array.from({ length: 5 }, () => randomUUID())
     const sellers = [randomUUID(), randomUUID()]
     const plan = [
@@ -383,20 +388,22 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
     ]
     const envelope: EventEnvelope = {
       eventId: randomUUID(),
-      eventType: 'TenantOnboarded',
+      eventType: 'StoreConnected',
       eventVersion: 1,
       occurredAt: new Date().toISOString(),
-      producer: 'auth-service',
+      producer: 'retailer-auth-service',
       aggregateId: tenantId,
       aggregateVersion: 1,
       payload: {
-        tenantId, name: 'Seed Co', tier: 'pro', onboardedBy,
+        tenantId, name: 'Seed Co', sealedApiKey: sealSecret('bl_sk_store-key', SECRETS_KEY), connectedBy,
         seed: { productIds: [...products, randomUUID()], sellers: plan.map((p) => ({ sellerId: p.sellerId, name: 'Seller', productIds: p.productIds })), campaigns: plan },
       },
     }
-    const seed = createTenantSeeder({ db, publish: createEventPublisher(bus, 'campaign-service', createLogger('campaign-test')) })
-    await seed(envelope)
-    await seed(envelope)
+    const connect = createStoreConnector({ db, publish: createEventPublisher(bus, 'campaign-service', createLogger('campaign-test'), { registry: RETAILER_EVENTS }), basketline })
+    const sentBefore = sent.length
+    await connect(envelope)
+    await connect(envelope)
+    expect(openSecret((await findSealedApiKey(db, tenantId))!, SECRETS_KEY)).toBe('bl_sk_store-key')
 
     const list = await request(app).get('/api/v1/campaigns').set('tenant_id', tenantId)
     expect(list.body.page.total).toBe(2)
@@ -407,7 +414,7 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
         type: 'product_collection',
         status: 'active',
         archived: false,
-        createdBy: onboardedBy,
+        createdBy: connectedBy,
         sellerId: planned.sellerId,
         productIds: planned.productIds,
       })
@@ -415,12 +422,8 @@ describe('seeding an onboarded tenant (TenantOnboarded)', () => {
     const created = bus.published.filter((m) => plan.some((p) => p.campaignId === m.key)).map((m) => m.envelope.eventType)
     expect(created.filter((type) => type === 'CampaignCreated')).toHaveLength(2)
     expect(created.filter((type) => type === 'CampaignProductAssociated')).toHaveLength(5)
-
-    // TenantDeleted: its campaigns, their products and the local product copy go.
-    await handleTenantDeleted(db, { ...envelope, eventId: randomUUID(), eventType: 'TenantDeleted', aggregateVersion: 2, payload: { tenantId, name: 'Seed Co', deletedAt: new Date().toISOString() } })
-    expect((await request(app).get('/api/v1/campaigns').set('tenant_id', tenantId)).body.page.total).toBe(0)
-    for (const table of ['campaigns', 'campaign_products', 'products']) {
-      expect((await db.$client.query(`SELECT count(*)::int AS n FROM ${table} WHERE tenant_id = $1`, [tenantId])).rows[0].n, table).toBe(0)
-    }
+    // Once, with their products.
+    const calls = sent.slice(sentBefore)
+    expect(calls.map((c) => [c.tenantId, c.call, c.records.map((r) => r.productIds)])).toEqual([[tenantId, 'campaigns.upsert', plan.map((p) => p.productIds)]])
   })
 })

@@ -30,8 +30,8 @@ export async function handleReferenceEvent(clickhouse: ClickHouse, envelope: Eve
       // A removed campaign is archived: it no longer counts, and its numbers stay.
       const { tenantId, campaignId } = envelope.payload as ReferenceEventPayload<'campaign_removed'>
       await clickhouse.command({
-        query: `INSERT INTO campaigns (campaign_id, tenant_id, seller_id, status, archived, issues, version)
-                SELECT campaign_id, tenant_id, argMax(seller_id, version), argMax(status, version), true, argMax(issues, version), {version:UInt64}
+        query: `INSERT INTO campaigns (campaign_id, tenant_id, seller_id, title, status, archived, issues, version)
+                SELECT campaign_id, tenant_id, argMax(seller_id, version), argMax(title, version), argMax(status, version), true, argMax(issues, version), {version:UInt64}
                 FROM campaigns WHERE campaign_id = {campaignId:UUID} AND tenant_id = {tenantId:UUID} GROUP BY campaign_id, tenant_id
                 HAVING max(version) < {version:UInt64}`,
         query_params: { campaignId, tenantId, version },

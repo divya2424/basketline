@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
-import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@basketline/platform/testing'
+import { closeDb, createEventPublisher, createLogger, createMemoryEventBus, type MemoryEventBus } from '@basketline/platform'
+import { createTestDatabase, createTestKeys, type TestKeys } from '@basketline/platform/testing'
+import { openSecret, RETAILER_EVENTS, sealSecret } from '@retailer-sim/shared'
+import { createFakeBasketline, retailerTokenFor } from '@retailer-sim/shared/testing'
 import { buildProductApp } from '../src/app.ts'
 import { createProductDb, migrateProductDb, type Db } from '../src/db/client.ts'
-import { createTenantSeeder, handleTenantDeleted } from '../src/events/tenant.consumer.ts'
+import { createStoreConnector } from '../src/events/store.consumer.ts'
+import { findSealedApiKey } from '../src/repositories/store.repository.ts'
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
 let db: Db
@@ -13,9 +16,10 @@ let keys: TestKeys
 let app: ReturnType<typeof buildProductApp>
 let bus: MemoryEventBus
 const TENANT = '5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01'
+/** The store's staff (they write the catalog), customers, and another store's. */
 let manager: string
 let managerId: string
-// Another manager of the same tenant.
+// Another staff member of the same store.
 let colleague: string
 let colleagueId: string
 let user: string
@@ -26,9 +30,9 @@ const SELLER = randomUUID()
 const OTHER_TENANT_SELLER = randomUUID()
 const sample = { sellerId: SELLER, name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, image: '/images/aurora-earbuds.svg', category: 'Audio' }
 
-/** What the service sent to Basketline's reference API, as a retailer's backend. */
-const sent: { tenantId: string; endpoint: string; updates: ReferenceUpdate[] }[] = []
-const retailer: RetailerIntegration = { send: async (tenantId, endpoint, updates) => void sent.push({ tenantId, endpoint, updates }) }
+/** What the service sent to Basketline with the SDK, as the store's backend. */
+const { basketline, sent } = createFakeBasketline()
+const SECRETS_KEY = Buffer.alloc(32, 7).toString('base64')
 
 beforeAll(async () => {
   testDb = await createTestDatabase()
@@ -37,18 +41,18 @@ beforeAll(async () => {
   keys = await createTestKeys()
   const logger = createLogger('product-test')
   bus = createMemoryEventBus(logger)
-  app = buildProductApp({ db, bus, logger, publicKey: keys.publicKey, retailer })
-  const managerToken = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
+  app = buildProductApp({ db, bus, logger, publicKey: keys.publicKey, basketline })
+  const managerToken = await retailerTokenFor(keys.privateKey, 'staff', { tid: TENANT })
   manager = managerToken.header
   managerId = managerToken.sub
-  const colleagueToken = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
+  const colleagueToken = await retailerTokenFor(keys.privateKey, 'staff', { tid: TENANT })
   colleague = colleagueToken.header
   colleagueId = colleagueToken.sub
-  user = (await tokenFor(keys, 'standard-user', { tid: TENANT })).header
+  user = (await retailerTokenFor(keys.privateKey, 'customer', { tid: TENANT })).header
   const otherTenant = randomUUID()
   await db.$client.query("INSERT INTO sellers (id, tenant_id, name) VALUES ($1, $2, 'Northwind'), ($3, $4, 'Elsewhere')", [SELLER, TENANT, OTHER_TENANT_SELLER, otherTenant])
-  otherManager = (await tokenFor(keys, 'campaign-manager', { tid: otherTenant })).header
-  otherUser = (await tokenFor(keys, 'standard-user', { tid: otherTenant })).header
+  otherManager = (await retailerTokenFor(keys.privateKey, 'staff', { tid: otherTenant })).header
+  otherUser = (await retailerTokenFor(keys.privateKey, 'customer', { tid: otherTenant })).header
 })
 
 afterAll(async () => {
@@ -60,7 +64,7 @@ const create = (body: object = sample, auth = manager) => request(app).post('/ap
 const events = (productId: string) => bus.published.filter((m) => m.key === productId).map((m) => m.envelope)
 
 describe('products', () => {
-  it('lets a campaign manager create a product with frontend-compatible fields and emits ProductCreated', async () => {
+  it('lets the staff create a product with frontend-compatible fields and emits ProductCreated', async () => {
     const res = await create()
     expect(res.status).toBe(201)
     expect(res.body).toMatchObject({ ...sample, isActive: true })
@@ -84,9 +88,11 @@ describe('products', () => {
     expect(rows[0]).toEqual({ created_by: managerId, updated_by: managerId })
   })
 
-  it('forbids standard users from writing; anyone can read', async () => {
+  it("forbids customers from writing, and Basketline's tokens altogether; anyone can read", async () => {
     expect((await create(sample, user)).status).toBe(403)
     expect((await create(sample, '')).status).toBe(401)
+    // Signed with another key (Basketline's, say): not the retailer's.
+    expect((await create(sample, (await retailerTokenFor((await createTestKeys()).privateKey, 'staff', { tid: TENANT })).header)).status).toBe(401)
     expect((await request(app).get('/api/v1/products').set('tenant_id', TENANT)).status).toBe(200)
     expect((await request(app).get('/api/v1/products')).body.error.code).toBe('TENANT_REQUIRED')
     expect((await request(app).get('/api/v1/products').set('Authorization', user)).status).toBe(200)
@@ -175,9 +181,9 @@ describe('products', () => {
 
     const { body: created } = await create({ ...sample, name: 'Sent along' })
     expect(created.sellerId).toBe(SELLER)
-    const update = sent.flatMap((s) => s.updates).find((u) => u.data.productId === created.id)
-    expect(update).toMatchObject({ eventName: 'product_upserted', data: { productId: created.id, sellerId: SELLER, name: 'Sent along', isActive: true } })
-    expect(sent.find((s) => s.updates.includes(update!))).toMatchObject({ tenantId: TENANT, endpoint: 'catalog' })
+    const call = sent.find((s) => s.records.some((r) => r.productId === created.id))!
+    expect(call).toMatchObject({ tenantId: TENANT, call: 'catalog.upsertProduct' })
+    expect(call.records[0]).toMatchObject({ productId: created.id, sellerId: SELLER, name: 'Sent along', isActive: true, updatedAt: new Date(created.updatedAt) })
   })
 
   it('returns 404 for unknown products and 400 for malformed IDs', async () => {
@@ -186,51 +192,49 @@ describe('products', () => {
   })
 })
 
-describe('seeding an onboarded tenant (TenantOnboarded)', () => {
-  it('creates the planned products once, as the onboarding user, and announces each', async () => {
+describe('a store connected to Basketline (StoreConnected)', () => {
+  it('keeps its sealed API key, creates the planned products once, as its staff user, and sends them to Basketline', async () => {
     const tenantId = randomUUID()
-    const onboardedBy = randomUUID()
+    const connectedBy = randomUUID()
     const productIds = Array.from({ length: 12 }, () => randomUUID())
     const sellers = [
       { sellerId: randomUUID(), name: 'First', productIds: productIds.slice(0, 5) },
       { sellerId: randomUUID(), name: 'Second', productIds: productIds.slice(5) },
     ]
+    const sealedApiKey = sealSecret('bl_sk_store-key', SECRETS_KEY)
     const envelope = {
       eventId: randomUUID(),
-      eventType: 'TenantOnboarded',
+      eventType: 'StoreConnected',
       eventVersion: 1,
       occurredAt: new Date().toISOString(),
-      producer: 'auth-service',
+      producer: 'retailer-auth-service',
       aggregateId: tenantId,
       aggregateVersion: 1,
-      payload: { tenantId, name: 'Seed Co', tier: 'free', onboardedBy, seed: { productIds, sellers, campaigns: [] } },
+      payload: { tenantId, name: 'Seed Co', sealedApiKey, connectedBy, seed: { productIds, sellers, campaigns: [] } },
     }
-    const seed = createTenantSeeder({ db, publish: createEventPublisher(bus, 'product-service', createLogger('product-test')), retailer })
+    const connect = createStoreConnector({ db, publish: createEventPublisher(bus, 'product-service', createLogger('product-test'), { registry: RETAILER_EVENTS }), basketline })
     const sentBefore = sent.length
-    await seed(envelope)
-    await seed(envelope)
-    // Each product is its planned seller's, and the sellers and products went to Basketline once.
+    await connect(envelope)
+    await connect(envelope)
+    expect(openSecret((await findSealedApiKey(db, tenantId))!, SECRETS_KEY)).toBe('bl_sk_store-key')
+    // Each product is its planned seller's, and the sellers and products went to Basketline once, sellers first.
     const { rows: owned } = await db.$client.query('SELECT id, seller_id FROM products WHERE tenant_id = $1', [tenantId])
     expect(Object.fromEntries(owned.map((row) => [row.id, row.seller_id]))).toEqual(Object.fromEntries(sellers.flatMap((s) => s.productIds.map((id) => [id, s.sellerId]))))
-    const seededUpdates = sent.slice(sentBefore).flatMap((s) => s.updates)
-    expect(seededUpdates.filter((u) => u.eventName === 'seller_upserted')).toHaveLength(2)
-    expect(seededUpdates.filter((u) => u.eventName === 'product_upserted')).toHaveLength(12)
+    const calls = sent.slice(sentBefore)
+    expect(calls.map((c) => [c.tenantId, c.call, c.records.length])).toEqual([
+      [tenantId, 'catalog.upsertSeller', 2],
+      [tenantId, 'catalog.upsertProduct', 12],
+    ])
 
     const { rows } = await db.$client.query('SELECT id, name, created_by, updated_by, is_active FROM products WHERE tenant_id = $1', [tenantId])
     expect(rows.map((row) => row.id).sort()).toEqual([...productIds].sort())
     expect(new Set(rows.map((row) => row.name)).size).toBe(12)
-    expect(rows.every((row) => row.created_by === onboardedBy && row.updated_by === onboardedBy && row.is_active)).toBe(true)
+    expect(rows.every((row) => row.created_by === connectedBy && row.updated_by === connectedBy && row.is_active)).toBe(true)
     const announced = productIds.flatMap((id) => events(id))
     expect(announced).toHaveLength(12)
     expect(announced.every((e) => e.eventType === 'ProductCreated' && (e.payload as { tenantId: string }).tenantId === tenantId)).toBe(true)
 
     const list = await request(app).get('/api/v1/products?limit=100').set('tenant_id', tenantId)
     expect(list.body.page.total).toBe(12)
-
-    // TenantDeleted: all of them go (and only this tenant's).
-    const otherProducts = (await db.$client.query('SELECT count(*)::int AS n FROM products WHERE tenant_id <> $1', [tenantId])).rows[0].n
-    await handleTenantDeleted(db, { ...envelope, eventId: randomUUID(), eventType: 'TenantDeleted', aggregateVersion: 2, payload: { tenantId, name: 'Seed Co', deletedAt: new Date().toISOString() } })
-    expect((await request(app).get('/api/v1/products?limit=100').set('tenant_id', tenantId)).body.page.total).toBe(0)
-    expect((await db.$client.query('SELECT count(*)::int AS n FROM products WHERE tenant_id <> $1', [tenantId])).rows[0].n).toBe(otherProducts)
   })
 })

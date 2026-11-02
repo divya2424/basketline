@@ -14,7 +14,7 @@ import { DEFAULT_TIME_RANGE, formatRangeLabel, toPeriod } from './timeRange.js'
 import './analytics.css'
 
 export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) {
-  // Campaigns come from the catalog (active campaigns from the API) unless passed in.
+  // Campaigns come from the catalog (GET /ad/campaigns) unless passed in.
   const catalog = useCatalog()
   const { user } = useAuth()
   // A seller manager reports on their own seller's campaigns only (the API refuses the others).

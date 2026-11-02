@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, isNull, max, sql, type SQL } from 'drizzle-orm'
-import type { CampaignStatus } from '@basketline/contracts'
+import type { CampaignStatus } from '@retailer-sim/shared'
 import type { DbOrTx } from '../db/client.ts'
 import { campaignProducts, campaigns, products } from '../db/schema.ts'
 
@@ -135,13 +135,6 @@ export async function insertCampaignIfAbsent(
 ): Promise<CampaignRow | null> {
   const [inserted] = await db.insert(campaigns).values(campaign).onConflictDoNothing({ target: campaigns.id }).returning()
   return inserted ?? null
-}
-
-/** Every campaign of a deleted tenant, its product associations, and this service's copy of its products. */
-export async function deleteTenantCampaigns(db: DbOrTx, tenantId: string): Promise<void> {
-  await db.delete(campaignProducts).where(eq(campaignProducts.tenantId, tenantId))
-  await db.delete(campaigns).where(eq(campaigns.tenantId, tenantId))
-  await db.delete(products).where(eq(products.tenantId, tenantId))
 }
 
 export async function listAllCampaigns(db: DbOrTx): Promise<Campaign[]> {

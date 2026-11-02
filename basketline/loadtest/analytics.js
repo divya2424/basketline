@@ -5,7 +5,8 @@
 // Events go to the load-test tenant (0ad7e570-0000-4000-8000-000000000001, the tenant of the
 // "loadtest" campaign manager) and carry properties.loadtest_run = RUN_ID, so
 // freshness.sql can measure them and they can be deleted afterwards. Visitors
-// send them, each with its own visitor token, on the seeded active campaigns.
+// send them, each with its own visitor token, on the active campaigns and the
+// products `pnpm seed` sent (the sample catalog's product_001…product_010).
 import http from 'k6/http'
 import { check } from 'k6'
 
@@ -23,6 +24,8 @@ const BATCHES_PER_VISITOR = 25
 const METRICS = ['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers', 'sessions']
 const RANGE_DAYS = [7, 30, 90, 365]
 const DAY = 24 * 60 * 60 * 1000
+
+const PRODUCTS = Array.from({ length: 10 }, (_, i) => `product_${String(i + 1).padStart(3, '0')}`)
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)]
 
@@ -75,14 +78,11 @@ export function setup() {
   if (res.json('user.tenantId') !== TENANT) throw new Error(`${USERNAME} must belong to tenant ${TENANT}`)
   // Metric events are only accepted for the load-test tenant's active campaigns.
   const campaigns = http
-    .get(`${BASE_URL}/campaigns?status=active&limit=20`, { headers: { Authorization: `Bearer ${res.json('accessToken')}` } })
+    .get(`${BASE_URL}/ad/campaigns`, { headers: { Authorization: `Bearer ${res.json('accessToken')}` } })
     .json('items')
-  const withProducts = campaigns.filter((campaign) => campaign.productIds.length > 0)
-  if (withProducts.length === 0) throw new Error(`no active campaigns with products: run \`npm run seed\` as ${USERNAME} first`)
-  return {
-    token: res.json('accessToken'),
-    campaigns: withProducts.map(({ id, productIds }) => ({ id, productIds })),
-  }
+    .filter((campaign) => campaign.status === 'active')
+  if (campaigns.length === 0) throw new Error('no active campaigns: send the sample catalog with `pnpm seed` first (README)')
+  return { token: res.json('accessToken'), campaigns: campaigns.map(({ id }) => id) }
 }
 
 // Per VU: the current visitor's token and ID, and how many batches it has sent.
@@ -109,14 +109,13 @@ function event(eventName, campaignId, productId) {
 
 /** One browser batch: 6 impressions, 2 clicks, and an add_to_cart of the first click's product (Flink credits it to that click). */
 function batch(campaigns) {
-  const campaign = pick(campaigns)
-  const campaignId = campaign.id
-  const productId = pick(campaign.productIds)
+  const campaignId = pick(campaigns)
+  const productId = pick(PRODUCTS)
   const click = event('click', campaignId, productId)
   return [
     ...Array.from({ length: 6 }, () => event('impression', campaignId)),
     click,
-    event('click', campaignId, pick(campaign.productIds)),
+    event('click', campaignId, pick(PRODUCTS)),
     event('add_to_cart', null, productId),
   ]
 }
@@ -134,7 +133,7 @@ export function ingest(data) {
 export function dashboard(data) {
   const from = new Date(Math.floor(Date.now() / DAY) * DAY - (pick(RANGE_DAYS) - 1) * DAY).toISOString()
   // The tenant comes from the token: the load-test manager reads only the load-test tenant.
-  const res = http.get(`${BASE_URL}/ad/${pick(data.campaigns).id}/${pick(METRICS)}?from=${from}`, {
+  const res = http.get(`${BASE_URL}/ad/${pick(data.campaigns)}/${pick(METRICS)}?from=${from}`, {
     headers: { Authorization: `Bearer ${data.token}` },
   })
   check(res, { 'metric read': (r) => r.status === 200 })

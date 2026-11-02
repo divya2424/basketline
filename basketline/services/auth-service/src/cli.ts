@@ -3,10 +3,9 @@
  * publishes the resulting events to Kafka.
  *
  *   node src/cli.ts create-account --name 'Acme Store' [--tier free|pro|enterprise] [--tenant <uuid>]
- *   node src/cli.ts seed-tenant    --tenant <uuid>   (seed products and campaigns for a tenant onboarded before seeding existed; safe to repeat)
  *   node src/cli.ts create-user --username maya --password '...' --role campaign-manager --tenant <uuid>
  *   node src/cli.ts create-user --username sam --password '...' --role seller-manager --seller <uuid> --tenant <uuid>
- *   node src/cli.ts set-role    --username maya --role standard-user --tenant <uuid>
+ *   node src/cli.ts set-role    --username sam --role campaign-manager --tenant <uuid>
  *   node src/cli.ts disable     --username maya --tenant <uuid>
  *   node src/cli.ts create-api-key --tenant <uuid> --name 'Production web'   (prints the key once)
  *   node src/cli.ts list-api-keys  --tenant <uuid>
@@ -22,8 +21,6 @@ import { closeDb, createBusFromEnv, createEventPublisher, createLogger, isUuid, 
 import { createAuthDb, migrateAuthDb, withTenant } from './db/client.ts'
 import { accountTier } from './db/schema.ts'
 import { findAccount, insertAccount } from './repositories/account.repository.ts'
-import { findUserByUsername } from './repositories/user.repository.ts'
-import { ONBOARDING_USERNAME, tenantOnboardedEvent } from './services/account.service.ts'
 import { createShopperService } from './services/shopper.service.ts'
 import { changeRole, createUser, disableUser, PRODUCER } from './services/user-admin.service.ts'
 
@@ -81,23 +78,6 @@ if (command === 'create-account') {
   } finally {
     await closeDb(db)
   }
-} else if (command === 'seed-tenant') {
-  if (!isUuid(values.tenant)) throw new Error('--tenant must be the UUID of the tenant (account) to seed')
-  const tenantId = values.tenant.toLowerCase()
-  const bus = await createBusFromEnv('auth-cli', logger, [TOPICS.tenants])
-  try {
-    await migrateAuthDb(db)
-    const account = await findAccount(db, tenantId)
-    if (!account) throw new Error(`No account for tenant ${tenantId}`)
-    const onboarding = await withTenant(db, tenantId, (tx) => findUserByUsername(tx, tenantId, ONBOARDING_USERNAME))
-    if (!onboarding) throw new Error(`Tenant ${tenantId} has no "${ONBOARDING_USERNAME}" user to own the seeded data`)
-    const seed = tenantOnboardedEvent(account, onboarding.id)
-    await createEventPublisher(bus, PRODUCER, logger, { failOnError: true })([seed])
-    console.log(JSON.stringify({ tenantId, name: account.name, seeded: seed.payload }))
-  } finally {
-    await bus.close()
-    await closeDb(db)
-  }
 } else {
   const role = values.role as Role | undefined
   const username = values.username
@@ -114,6 +94,7 @@ if (command === 'create-account') {
       switch (command) {
         case 'create-user':
           if (!values.password) throw new Error('--password is required')
+          if (!role) throw new Error(`--role is required: ${ROLES.join(' or ')}`)
           return createUser(tx, { username, password: values.password, role, tenantId, sellerId: values.seller }, null)
         case 'set-role':
           if (!role) throw new Error('--role is required')
@@ -121,7 +102,7 @@ if (command === 'create-account') {
         case 'disable':
           return disableUser(tx, tenantId, username, null)
         default:
-          throw new Error('Usage: cli.ts <create-account|seed-tenant|create-user|set-role|disable> … (see the top of src/cli.ts)')
+          throw new Error('Usage: cli.ts <create-account|create-user|set-role|disable|create-api-key|list-api-keys|revoke-api-key> … (see the top of src/cli.ts)')
       }
     })
     await createEventPublisher(bus, PRODUCER, logger)(events)

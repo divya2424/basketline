@@ -108,13 +108,6 @@ export function createShopperService({ db, privateKey, bus, logger }: { db: Db; 
       await checkApiKey(tenantId, authorization)
       return signIntegrationToken(privateKey, tenantId)
     },
-
-    /**
-     * For the mimic retailer services only (they act as every tenant's backend):
-     * an integration token without an API key, behind a secret shared inside the
-     * cluster. A real retailer uses its API key.
-     */
-    internalIntegrationToken: (tenantId: string) => signIntegrationToken(privateKey, tenantId),
   }
 }
 

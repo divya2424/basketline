@@ -69,13 +69,6 @@ export async function insertProductIfAbsent(
   return inserted ?? null
 }
 
-/** Every product of a deleted tenant. */
-export async function deleteTenantProducts(db: DbOrTx, tenantId: string): Promise<number> {
-  const deleted = await db.delete(products).where(eq(products.tenantId, tenantId)).returning({ id: products.id })
-  await db.delete(sellers).where(eq(sellers.tenantId, tenantId))
-  return deleted.length
-}
-
 export type Seller = typeof sellers.$inferSelect
 
 export function listSellers(db: DbOrTx, tenantId: string): Promise<Seller[]> {

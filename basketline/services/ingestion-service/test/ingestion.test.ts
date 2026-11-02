@@ -177,7 +177,7 @@ describe('ingestion: publish to the topic for each event type', () => {
   })
 
   it('takes the tenant, user and client type from the token', async () => {
-    const { header, sub, tid } = await tokenFor(keys, 'standard-user', { client: 'mobile' })
+    const { header, sub, tid } = await tokenFor(keys, 'campaign-manager', { client: 'mobile' })
     const before = bus.published.length
     await send([{ eventName: 'home_view' }], header)
     expect(bus.published[before]!.envelope.payload).toMatchObject({ userId: sub, userType: 'registered', tenantId: tid, clientType: 'mobile' })
@@ -190,7 +190,7 @@ describe('ingestion: publish to the topic for each event type', () => {
   })
 
   it("rejects the whole batch when the tenant, user or user type sent don't match the token", async () => {
-    const user = await tokenFor(keys, 'standard-user', { tid: TENANT })
+    const user = await tokenFor(keys, 'campaign-manager', { tid: TENANT })
     const before = bus.published.length
     const mismatches = [
       send([{ eventName: 'home_view' }], visitor, app, { tenantId: OTHER_TENANT, userId: visitorId, userType: 'visitor' }),

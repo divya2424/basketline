@@ -1,8 +1,8 @@
 /**
- * Kafka event contracts, shared by all services.
+ * Basketline's own Kafka events (users, sessions, tenants).
  *
  * Every message value is an EventEnvelope. The message key is aggregateId, so
- * all events for one product/campaign/user land on the same partition and are
+ * all events for one user or tenant land on the same partition and are
  * consumed in order. Consumers still compare aggregateVersion before applying
  * an event, which makes replays and re-deliveries harmless.
  */
@@ -12,66 +12,16 @@ export const TOPICS = {
   users: 'auth.user.v1',
   sessions: 'auth.session.v1',
   tenants: 'auth.tenant.v1',
-  products: 'product.v1',
-  campaigns: 'campaign.v1',
 } as const
 
 // The envelope every message carries is defined with the event bus.
 export type { EventEnvelope } from '@divya2424/basketline-kafka'
 
-export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed'
-
-export interface ProductState {
-  productId: string
-  /** The tenant (UUID) that owns the product; it never changes. */
-  tenantId: string
-  /** The seller (UUID) who publishes it; it never changes. */
-  sellerId: string
-  name: string
-  price: number
-  image: string | null
-  category: string | null
-  isActive: boolean
-  createdAt: string
-  updatedAt: string
-  /** The users (UUIDs) who created and last changed the product. */
-  createdBy: string
-  updatedBy: string
-}
-
-export interface CampaignState {
-  campaignId: string
-  /** The tenant (UUID) that owns the campaign; it never changes. */
-  tenantId: string
-  /** The seller (UUID) who runs it; its products are this seller's. Null: a campaign from before sellers. */
-  sellerId: string | null
-  title: string
-  type: string
-  status: CampaignStatus
-  startTime: string | null
-  endTime: string | null
-  archived: boolean
-  updatedAt: string
-}
-
-/**
- * A newly onboarded tenant and the demo data to seed it with. The IDs are drawn
- * once by auth-service, so product-service and campaign-service create exactly
- * these rows, and applying the event again changes nothing.
- */
+/** A newly onboarded tenant: its tier sizes its ingestion budget. */
 export interface TenantOnboardedPayload {
   tenantId: string
   name: string
   tier: string
-  /** The tenant's onboarding user, recorded as the seeded rows' creator. */
-  onboardedBy: string
-  seed: {
-    productIds: string[]
-    /** The tenant's sellers and the products each publishes (every product has one). */
-    sellers: { sellerId: string; name: string; productIds: string[] }[]
-    /** Each campaign is one seller's, with that seller's products. */
-    campaigns: { campaignId: string; sellerId: string; productIds: string[] }[]
-  }
 }
 
 /**
@@ -105,13 +55,6 @@ export interface EventPayloads {
   TenantOnboarded: TenantOnboardedPayload
   TenantDeleted: TenantDeletedPayload
   TenantOriginsChanged: TenantOriginsChangedPayload
-  ProductCreated: ProductState
-  ProductUpdated: ProductState
-  ProductDeactivated: { productId: string; tenantId: string; deactivatedAt: string; deactivatedBy: string }
-  CampaignCreated: CampaignState
-  CampaignUpdated: CampaignState
-  CampaignProductAssociated: { campaignId: string; productId: string; position: number | null }
-  CampaignProductRemoved: { campaignId: string; productId: string }
 }
 
 export type EventType = keyof EventPayloads
@@ -125,12 +68,5 @@ export const EVENTS: Record<EventType, { topic: string; version: number }> = {
   TenantOnboarded: { topic: TOPICS.tenants, version: 1 },
   TenantDeleted: { topic: TOPICS.tenants, version: 1 },
   TenantOriginsChanged: { topic: TOPICS.tenants, version: 1 },
-  ProductCreated: { topic: TOPICS.products, version: 1 },
-  ProductUpdated: { topic: TOPICS.products, version: 1 },
-  ProductDeactivated: { topic: TOPICS.products, version: 1 },
-  CampaignCreated: { topic: TOPICS.campaigns, version: 1 },
-  CampaignUpdated: { topic: TOPICS.campaigns, version: 1 },
-  CampaignProductAssociated: { topic: TOPICS.campaigns, version: 1 },
-  CampaignProductRemoved: { topic: TOPICS.campaigns, version: 1 },
 }
 

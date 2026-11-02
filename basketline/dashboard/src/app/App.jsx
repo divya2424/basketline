@@ -11,7 +11,7 @@ import { ROLES } from '../features/auth/authService.js'
 import { CatalogProvider } from '../features/catalog/CatalogContext.jsx'
 import { OnboardingPage } from '../features/onboarding/OnboardingPage.jsx'
 
-// The dashboard isn't needed for the first paint of the onboarding page.
+// The dashboard isn't needed for the first paint of the tenants page.
 const AnalyticsPage = lazy(() => import('../features/analytics/AnalyticsPage.jsx').then((m) => ({ default: m.AnalyticsPage })))
 
 const pageFallback = (
@@ -33,7 +33,7 @@ export function App({ authProps, catalogProps, onboardingProps }) {
           <main id="main" className="site-main">
             <Suspense fallback={pageFallback}>
               <Routes>
-                {/* The platform starts at onboarding; a tenant's dashboard opens after signing in to it. */}
+                {/* The platform starts at the tenants page; a tenant's dashboard opens after signing in to it. */}
                 <Route path="/" element={<OnboardingPage {...onboardingProps} />} />
                 <Route path="/onboarding" element={<Navigate to="/" replace />} />
                 <Route
@@ -62,7 +62,7 @@ function NotFound() {
     <div className="container page empty-state">
       <h1>Page not found</h1>
       <Link className="btn btn--primary" to="/">
-        Back to onboarding
+        Back to the tenants
       </Link>
     </div>
   )

@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import type { CampaignStatus } from '@basketline/contracts'
+import type { CampaignStatus } from '@retailer-sim/shared'
 import { badRequest, page, readPagination, tenantHeader } from '@basketline/platform'
 import type { Campaign } from '../repositories/campaign.repository.ts'
 import type { CampaignService } from '../services/campaign.service.ts'
@@ -14,7 +14,7 @@ function toCampaignResponse({ version: _version, archivedAt, ...campaign }: Camp
  * else the storefront's tenant_id header for anonymous visitors.
  */
 function readTenant(req: Request): string {
-  const tenantId = req.auth?.tid ?? tenantHeader(req)
+  const tenantId = req.retailer?.tid ?? tenantHeader(req)
   if (!tenantId) throw badRequest('TENANT_REQUIRED', 'Sign in or send a tenant_id header (UUID)')
   return tenantId
 }
@@ -26,7 +26,7 @@ type WithProductId = Request<{ campaignId: string; productId: string }>
 export function createCampaignController(service: CampaignService) {
   return {
     async create(req: Request, res: Response) {
-      const campaign = await service.create(req.auth!.tid, req.auth!.sub, req.body)
+      const campaign = await service.create(req.retailer!.tid, req.retailer!.sub, req.body)
       res.status(201).location(`/api/v1/campaigns/${campaign.id}`).json(toCampaignResponse(campaign))
     },
 
@@ -36,7 +36,7 @@ export function createCampaignController(service: CampaignService) {
         tenantId: readTenant(req),
         status: req.query.status as CampaignStatus | undefined,
         // Only campaign managers can see archived campaigns.
-        includeArchived: req.query.includeArchived === 'true' && req.auth?.role === 'campaign-manager',
+        includeArchived: req.query.includeArchived === 'true' && req.retailer?.role === 'staff',
         limit,
         offset,
       })
@@ -48,15 +48,15 @@ export function createCampaignController(service: CampaignService) {
     },
 
     async update(req: WithCampaignId, res: Response) {
-      res.json(toCampaignResponse(await service.update(req.auth!.tid, req.auth!.sub, req.params.campaignId, req.body)))
+      res.json(toCampaignResponse(await service.update(req.retailer!.tid, req.retailer!.sub, req.params.campaignId, req.body)))
     },
 
     async archive(req: WithCampaignId, res: Response) {
-      res.json(toCampaignResponse(await service.archive(req.auth!.tid, req.auth!.sub, req.params.campaignId)))
+      res.json(toCampaignResponse(await service.archive(req.retailer!.tid, req.retailer!.sub, req.params.campaignId)))
     },
 
     async addProducts(req: WithCampaignId, res: Response) {
-      const campaign = await service.addProducts(req.auth!.tid, req.auth!.sub, req.params.campaignId, req.body.productIds)
+      const campaign = await service.addProducts(req.retailer!.tid, req.retailer!.sub, req.params.campaignId, req.body.productIds)
       res.status(201).json(toCampaignResponse(campaign))
     },
 
@@ -67,7 +67,7 @@ export function createCampaignController(service: CampaignService) {
     },
 
     async removeProduct(req: WithProductId, res: Response) {
-      await service.removeProduct(req.auth!.tid, req.auth!.sub, req.params.campaignId, req.params.productId)
+      await service.removeProduct(req.retailer!.tid, req.retailer!.sub, req.params.campaignId, req.params.productId)
       res.status(204).end()
     },
   }

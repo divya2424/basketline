@@ -26,8 +26,6 @@ config:
   KAFKA_BROKERS: kafka:19092
   # The other services' Services, by release name.
   AUTH_SERVICE_URL: http://auth-service:4001
-  PRODUCT_SERVICE_URL: http://product-service:4002
-  CAMPAIGN_SERVICE_URL: http://campaign-service:4003
   INGESTION_SERVICE_URL: http://ingestion-service:4004
   INSIGHTS_SERVICE_URL: http://insights-service:4005
   CORS_ORIGINS: http://localhost:5173

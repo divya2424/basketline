@@ -20,7 +20,18 @@ export function event<T extends EventType>(
   return { eventType, aggregateId, aggregateVersion, payload }
 }
 
-export type PublishEvents = (events: NewEvent[]) => Promise<void>
+/** Any event a publisher can send: Basketline's (NewEvent), or another registry's. */
+export interface OutgoingEvent {
+  eventType: string
+  aggregateId: string
+  aggregateVersion: number
+  payload: unknown
+}
+
+export type PublishEvents = (events: OutgoingEvent[]) => Promise<void>
+
+/** Each event type's topic and schema version. */
+export type EventRegistry = Record<string, { topic: string; version: number }>
 
 /**
  * Returns a function that publishes events to Kafka. Call it only AFTER the
@@ -29,13 +40,20 @@ export type PublishEvents = (events: NewEvent[]) => Promise<void>
  * There is no outbox: if Kafka is unreachable the events are logged and
  * dropped (the request still succeeds because the data is saved), and other
  * services' projections stay stale until that record changes again. With
- * failOnError (for CLIs) the error is rethrown instead.
+ * failOnError (for CLIs) the error is rethrown instead. registry: the event
+ * types' topics (default Basketline's; the simulated retailer has its own).
  */
-export function createEventPublisher(bus: EventBus, producer: string, logger: Logger, { failOnError = false } = {}): PublishEvents {
+export function createEventPublisher(
+  bus: EventBus,
+  producer: string,
+  logger: Logger,
+  { failOnError = false, registry = EVENTS as EventRegistry }: { failOnError?: boolean; registry?: EventRegistry } = {},
+): PublishEvents {
   return async (events) => {
     if (events.length === 0) return
     const messages = events.map((newEvent) => {
-      const definition = EVENTS[newEvent.eventType]
+      const definition = registry[newEvent.eventType]
+      if (!definition) throw new Error(`Unknown event type ${newEvent.eventType}`)
       const envelope: EventEnvelope = {
         eventId: randomUUID(),
         eventType: newEvent.eventType,

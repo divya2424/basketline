@@ -1,0 +1,54 @@
+image:
+  repository: retailer-sim/retailer-auth-service
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicaCount: 2
+port: 4006
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  KAFKA_BROKERS: kafka:19092
+  # Replicas of the topics this service creates; use 3 on a 3-broker cluster.
+  KAFKA_REPLICATION: "1"
+  # Basketline's public API (its gateway): onboarding and shopper tokens.
+  BASKETLINE_API_URL: http://gateway:8080/api/v1
+
+# The chart stores these in a Secret. Or set existingSecret to a Secret you manage with the same keys.
+secrets:
+  DATABASE_URL: ""
+  # Seals the stores' Basketline API keys (32 bytes, base64).
+  RETAILER_SECRETS_KEY: ""
+existingSecret: ""
+
+# The retailer's own token keys, not Basketline's.
+jwt:
+  secretName: retailer-jwt
+  # It signs the retailer's tokens.
+  privateKey: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+runAsUser: 1000
+readOnlyRootFilesystem: true
+# More than SHUTDOWN_DRAIN_MS (5 s) + SHUTDOWN_TIMEOUT_MS (25 s).
+terminationGracePeriodSeconds: 35
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

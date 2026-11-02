@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { badRequest, event, notFound, writeAudit, type NewEvent, type PublishEvents, type ReferenceUpdate, type RetailerIntegration } from '@basketline/platform'
+import { badRequest, notFound, writeAudit, type PublishEvents } from '@basketline/platform'
+import { retailerEvent, type BasketlineSender, type RetailerEvent } from '@retailer-sim/shared'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   findProductById,
@@ -13,8 +14,8 @@ import {
 } from '../repositories/product.repository.ts'
 import type { CreateProductInput, UpdateProductInput } from '../validators/product.validator.ts'
 
-export function stateEvent(product: Product, eventType: 'ProductCreated' | 'ProductUpdated'): NewEvent {
-  return event(eventType, product.id, product.version, {
+export function stateEvent(product: Product, eventType: 'ProductCreated' | 'ProductUpdated'): RetailerEvent {
+  return retailerEvent(eventType, product.id, product.version, {
     productId: product.id,
     tenantId: product.tenantId,
     sellerId: product.sellerId,
@@ -30,22 +31,19 @@ export function stateEvent(product: Product, eventType: 'ProductCreated' | 'Prod
   })
 }
 
-/** The product as Basketline's catalog API takes it (product_upserted): full state, ordered by updatedAt. */
-export function productUpdate(product: Product): ReferenceUpdate {
-  return {
-    eventName: 'product_upserted',
-    updatedAt: product.updatedAt.toISOString(),
-    data: { productId: product.id, sellerId: product.sellerId, name: product.name, category: product.category, price: product.price, isActive: product.isActive },
-  }
+/** The product as Basketline's SDK takes it: full state, ordered by updatedAt. */
+export function basketlineProduct(product: Product) {
+  const { id: productId, sellerId, name, category, price, isActive, updatedAt } = product
+  return { productId, sellerId, name, category, price, isActive, updatedAt }
 }
 
 /**
  * Business rules for products. Events are published after each transaction commits,
- * and the product's state is sent to Basketline (retailer.ts), as a retailer's backend does.
+ * and the product's state is sent to Basketline with the store's API key, as a retailer's backend does.
  * Every method works within one tenant: another tenant's product is not found.
  */
-export function createProductService({ db, publish, retailer }: { db: Db; publish: PublishEvents; retailer?: RetailerIntegration }) {
-  const sendToBasketline = (product: Product) => retailer?.send(product.tenantId, 'catalog', [productUpdate(product)])
+export function createProductService({ db, publish, basketline }: { db: Db; publish: PublishEvents; basketline?: BasketlineSender }) {
+  const sendToBasketline = (product: Product) => basketline?.send(product.tenantId, (server) => server.catalog.upsertProduct(basketlineProduct(product)))
 
   async function requireForUpdate(tx: DbOrTx, tenantId: string, id: string) {
     const product = await findProductById(tx, tenantId, id, { forUpdate: true })
@@ -123,7 +121,7 @@ export function createProductService({ db, publish, retailer }: { db: Db; publis
       })
       if (changed) {
         await publish([
-          event('ProductDeactivated', product.id, product.version, {
+          retailerEvent('ProductDeactivated', product.id, product.version, {
             productId: product.id,
             tenantId: product.tenantId,
             deactivatedAt: product.updatedAt.toISOString(),

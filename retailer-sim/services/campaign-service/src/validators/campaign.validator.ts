@@ -1,4 +1,4 @@
-import type { CampaignStatus } from '@basketline/contracts'
+import type { CampaignStatus } from '@retailer-sim/shared'
 import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
 
 export const STATUSES: readonly CampaignStatus[] = ['draft', 'active', 'paused', 'completed']

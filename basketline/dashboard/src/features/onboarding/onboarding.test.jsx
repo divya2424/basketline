@@ -10,7 +10,6 @@ import { OnboardingPage } from './OnboardingPage.jsx'
 
 const ACME = { tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Acme Store', tier: 'pro', createdAt: '2026-10-28T10:00:00.000Z' }
 const DEFAULT = { tenantId: DEFAULT_TENANT_ID, name: 'Default storefront', tier: 'free', createdAt: '2026-10-01T10:00:00.000Z' }
-const NEW_TENANT = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
 let api
 let accounts
@@ -21,12 +20,6 @@ function startApi({ noOnboardingUser } = {}) {
   accounts = [ACME, DEFAULT]
   api = mockFetch(({ path, method, headers, body }) => {
     if (path === '/accounts' && method === 'GET') return jsonResponse(200, { items: accounts })
-    if (path === '/accounts' && method === 'POST') {
-      const account = { tenantId: NEW_TENANT, name: body.name, tier: body.tier, createdAt: '2026-10-29T10:00:00.000Z' }
-      accounts = [account, ...accounts]
-      const users = [{ username: 'onboarding', role: 'campaign-manager' }, ...(body.dummyUsers ? [{ username: 'user01', role: 'standard-user' }] : [])]
-      return jsonResponse(201, { account, users, password: 'test', apiKey: { key: 'bl_sk_FirstKeySECRET', prefix: 'bl_sk_FirstK', name: 'Default' } })
-    }
     if (path === '/auth/login') {
       const tenant = headers.get('tenant_id')
       if (body.password !== 'test' || (body.username === 'onboarding' && tenant === noOnboardingUser)) {
@@ -126,36 +119,11 @@ describe("a tenant's details", () => {
   })
 })
 
-describe('onboarding a tenant', () => {
-  it('posts the name, tier and demo-users choice, then shows the generated tenant ID and lists the tenant', async () => {
-    const user = userEvent.setup()
-    renderPage()
-    await user.type(screen.getByLabelText('Tenant name'), '  Globex ')
-    await user.selectOptions(screen.getByLabelText('Tier'), 'enterprise')
-    await user.click(screen.getByRole('button', { name: 'Onboard tenant' }))
-
-    expect(await screen.findByTestId('created-tenant-id')).toHaveTextContent(NEW_TENANT)
-    const post = api.requests.find((request) => request.method === 'POST' && request.path === '/accounts')
-    expect(post.body).toEqual({ name: 'Globex', tier: 'enterprise', dummyUsers: true })
-    expect(screen.getByText(/onboarding, user01/)).toBeInTheDocument()
-    // The vendor's first API key, shown once, and the SDK setup for this tenant.
-    expect(screen.getByTestId('api-key-secret')).toHaveTextContent('bl_sk_FirstKeySECRET')
-    expect(screen.getByLabelText('SDK setup code')).toHaveTextContent(`tenantId: '${NEW_TENANT}'`)
-    expect(await row('Globex')).toBeDefined()
-  })
-
-  it('asks for a name before sending anything', async () => {
-    const user = userEvent.setup()
-    renderPage()
-    await user.click(screen.getByRole('button', { name: 'Onboard tenant' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter the tenant’s name.')
-    expect(api.requests.some((request) => request.method === 'POST')).toBe(false)
-  })
-})
-
 describe('the tenant list', () => {
-  it('lists every tenant with its tier and ID', async () => {
+  it('lists every tenant with its tier and ID, and sends onboarding to the retailer', async () => {
     renderPage()
+    expect(screen.getByRole('link', { name: 'Stores' })).toHaveAttribute('href', 'http://localhost:5174/stores')
+    expect(screen.queryByRole('form')).not.toBeInTheDocument()
     const acme = await row('Acme Store')
     expect(within(acme).getByText('Pro')).toBeInTheDocument()
     expect(within(acme).getByText(ACME.tenantId)).toBeInTheDocument()

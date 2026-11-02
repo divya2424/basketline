@@ -36,6 +36,13 @@
       "when": 1793401859028,
       "tag": "0004_sellers",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793649401435,
+      "tag": "0005_stores",
+      "breakpoints": true
     }
   ]
 }

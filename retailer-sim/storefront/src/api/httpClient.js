@@ -1,8 +1,8 @@
 import axios from 'axios'
 import { getRequestContext } from './requestContext.js'
 
-/** e.g. http://localhost:8080/api/v1 (the API gateway). */
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+/** The store's own services (catalog, campaigns, sign-in); /api/v1 on this origin, which the dev server proxies to them. */
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/+$/, '')
 
 // Header names requested by the backend. Note: nginx drops headers containing
 // underscores unless `underscores_in_headers on;` is set, and cross-origin

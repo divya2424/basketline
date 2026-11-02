@@ -1,6 +1,6 @@
 import { badRequest } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
-import { findCampaignSeller, findSellerCampaigns } from '../repositories/campaign.repository.ts'
+import { findCampaignSeller, findSellerCampaigns, listCampaigns } from '../repositories/campaign.repository.ts'
 import { countDaily, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
 
 /** API metric names (kept from the frontend contract). */
@@ -72,6 +72,9 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
 
     /** The tenant's campaigns of one seller. */
     sellerCampaigns: (tenantId: string, sellerId: string) => findSellerCampaigns(clickhouse, tenantId, sellerId),
+
+    /** The tenant's campaigns, for the dashboard (one seller's when given). */
+    campaigns: (tenantId: string, sellerId?: string) => listCampaigns(clickhouse, tenantId, sellerId),
   }
 }
 

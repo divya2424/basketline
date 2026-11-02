@@ -4,8 +4,6 @@ import type { Logger } from '@basketline/platform'
 
 export interface ServiceUrls {
   auth: string
-  product: string
-  campaign: string
   /** The write path: events from the SDK, reference data from retailers' backends. */
   ingestion: string
   /** The read path: the insights API. */
@@ -36,8 +34,6 @@ export function proxyRoutes(urls: ServiceUrls, logger: Logger): RequestHandler[]
 
   return [
     proxy(['/api/v1/auth', '/api/v1/accounts'], urls.auth),
-    proxy(['/api/v1/products', '/api/v1/sellers'], urls.product),
-    proxy(['/api/v1/campaigns'], urls.campaign),
     proxy(['/api/v1/analytics', '/api/v1/retail'], urls.ingestion),
     proxy(['/api/v1/ad'], urls.insights),
   ]

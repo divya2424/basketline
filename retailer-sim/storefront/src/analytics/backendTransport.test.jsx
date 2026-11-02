@@ -3,12 +3,15 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createEvent, localCollector, setTransport } from './analytics.js'
 import { createBackendTransport, toBackendEvents } from './backendTransport.js'
-import { setRequestTenant, setRequestUser } from '../api/requestContext.js'
+import { getRequestContext, setRequestTenant, setRequestUser } from '../api/requestContext.js'
 import { createTeeTransport } from './eventTransport.js'
 import { renderApp } from '../test/utils.jsx'
+import { jsonResponse, mockFetch } from '../test/mockFetch.js'
 
 const CAMPAIGN = '11111111-aaaa-4aaa-8aaa-111111111111'
 const PRODUCT = '22222222-bbbb-4bbb-8bbb-222222222222'
+const inMinutes = (minutes) => new Date(Date.now() + minutes * 60_000).toISOString()
+const customer = (shopper) => ({ userId: 'user_1001', accessToken: 'store-token', shopper })
 
 const frontendEvent = (eventName, properties, featureName = 'product_card') =>
   createEvent({ featureName, pageName: 'home', eventName, properties })
@@ -88,14 +91,14 @@ function recordingSdk() {
 }
 
 describe('createBackendTransport', () => {
-  it('sends through one SDK client per store, following sign-in and sign-out', () => {
+  it('sends through one SDK client per store, following a customer’s sign-in and sign-out', () => {
     const { clients, createClient } = recordingSdk()
-    const transport = createBackendTransport({ apiUrl: 'http://api.test', createClient })
+    const transport = createBackendTransport({ apiUrl: 'http://api.test', createClient, getToken: () => getRequestContext().shopper?.token ?? 'token-1' })
     const homeView = () => frontendEvent('home_view', {}, 'home')
     setRequestTenant('2b6f3e10-0000-4000-8000-000000000011')
     setRequestUser(null)
     transport.send(homeView())
-    setRequestUser({ userId: 'user_1001', accessToken: 'token-1' })
+    setRequestUser(customer({ userId: 'shopper_1', token: 'token-1', expiresAt: inMinutes(30) }))
     transport.send(homeView())
     transport.send(homeView())
     transport.send(frontendEvent('login_click', {}, 'header'))
@@ -107,12 +110,39 @@ describe('createBackendTransport', () => {
     transport.send(homeView())
 
     expect(clients.map((c) => c.tenantId)).toEqual(['2b6f3e10-0000-4000-8000-000000000011', '2b6f3e10-0000-4000-8000-000000000012'])
-    // Identified once with the user's own access token, reset on sign-out.
-    expect(clients[0].identities).toEqual([{ userId: 'user_1001', token: 'token-1' }, 'reset'])
+    // Identified once as Basketline's shopper, with the shopper token, reset on sign-out.
+    expect(clients[0].identities).toEqual([{ userId: 'shopper_1', token: 'token-1' }, 'reset'])
     expect(clients[0].tracked).toHaveLength(5)
     // Sign-in activity goes through identity(), the rest through track().
     expect(clients[0].tracked.filter((e) => e.identity).map((e) => e.eventName)).toEqual(['login_click'])
     expect(clients[1].tracked).toHaveLength(1)
+  })
+
+  it('sends a signed-in staff member’s events as the visitor', () => {
+    const { clients, createClient } = recordingSdk()
+    const transport = createBackendTransport({ apiUrl: 'http://api.test', createClient })
+    setRequestUser({ userId: 'staff_1', accessToken: 'store-token', shopper: null })
+    transport.send(frontendEvent('home_view', {}, 'home'))
+    expect(clients[0].identities).toEqual([])
+  })
+
+  it('renews the shopper token at the store’s backend when it is about to expire', async () => {
+    const { clients, createClient } = recordingSdk()
+    const api = mockFetch(() => jsonResponse(200, { userId: 'shopper_1', shopperToken: 'token-2', expiresIn: 1800 }))
+    try {
+      setRequestUser(customer({ userId: 'shopper_1', token: 'token-1', expiresAt: inMinutes(30) }))
+      createBackendTransport({ apiUrl: 'http://api.test', createClient }).send(frontendEvent('home_view', {}, 'home'))
+      await expect(clients[0].getToken()).resolves.toBe('token-1')
+      expect(api.requests).toHaveLength(0)
+
+      setRequestUser(customer({ userId: 'shopper_1', token: 'token-1', expiresAt: inMinutes(0.5) }))
+      await expect(clients[0].getToken()).resolves.toBe('token-2')
+      expect(api.requests).toMatchObject([{ path: '/auth/shopper-token', method: 'POST', body: { clientType: 'web' } }])
+      expect(api.requests[0].headers.get('authorization')).toBe('Bearer store-token')
+      expect(getRequestContext().shopper).toMatchObject({ userId: 'shopper_1', token: 'token-2' })
+    } finally {
+      api.restore()
+    }
   })
 })
 

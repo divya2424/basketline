@@ -1,4 +1,5 @@
-import type { EventEnvelope, EventPayloads } from '@basketline/contracts'
+import type { EventEnvelope } from '@basketline/contracts'
+import type { RetailerEventPayloads } from '@retailer-sim/shared'
 import type { DbOrTx } from '../db/client.ts'
 import { markProductInactive, upsertProductState } from '../repositories/product.repository.ts'
 
@@ -9,10 +10,10 @@ export async function handleProductEvent(db: DbOrTx, envelope: EventEnvelope): P
   switch (envelope.eventType) {
     case 'ProductCreated':
     case 'ProductUpdated':
-      await upsertProductState(db, envelope.payload as EventPayloads['ProductCreated'], envelope.aggregateVersion)
+      await upsertProductState(db, envelope.payload as RetailerEventPayloads['ProductCreated'], envelope.aggregateVersion)
       return
     case 'ProductDeactivated': {
-      const { productId, tenantId, deactivatedAt, deactivatedBy } = envelope.payload as EventPayloads['ProductDeactivated']
+      const { productId, tenantId, deactivatedAt, deactivatedBy } = envelope.payload as RetailerEventPayloads['ProductDeactivated']
       await markProductInactive(db, productId, tenantId, envelope.aggregateVersion, deactivatedAt, deactivatedBy ?? null)
       return
     }

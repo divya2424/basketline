@@ -86,8 +86,6 @@ services:
       <<: *service-env
       PORT: 4001
       DATABASE_URL: postgres://identity_svc:identity_svc_dev@postgres:5432/identity_db
-      # Integration tokens for the simulated retailer's services (/internal/integration-token).
-      INTERNAL_INTEGRATION_SECRET: basketline_internal_dev
       JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
@@ -218,13 +216,10 @@ services:
       PORT: 8080
       DATABASE_URL: postgres://gateway_svc:gateway_svc_dev@postgres:5432/gateway_db
       AUTH_SERVICE_URL: http://auth-service:4001
-      # The simulated retailer's services (../retailer-sim/docker-compose.yml), on this project's network.
-      PRODUCT_SERVICE_URL: http://product-service:4002
-      CAMPAIGN_SERVICE_URL: http://campaign-service:4003
       INGESTION_SERVICE_URL: http://ingestion-service:4004
       INSIGHTS_SERVICE_URL: http://insights-service:4005
-      # The dashboard (dashboard/) and the simulated retailer's storefront (../retailer-sim/storefront).
-      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+      # The dashboard (dashboard/). Retailers' sites call only the SDK's routes, open to any origin.
+      CORS_ORIGINS: http://localhost:5173
       # Per client IP. Raised only for load tests (loadtest/README.md).
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
       EVENTS_RATE_LIMIT_PER_MINUTE: ${EVENTS_RATE_LIMIT_PER_MINUTE:-120}

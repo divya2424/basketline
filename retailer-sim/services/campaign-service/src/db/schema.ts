@@ -1,6 +1,13 @@
+/** The stores connected to Basketline (StoreConnected): the API key this service sends their campaigns with, sealed. */
+export const stores = pgTable('stores', {
+  tenantId: uuid('tenant_id').primaryKey(),
+  sealedApiKey: text('sealed_api_key').notNull(),
+  connectedAt: timestamptz('connected_at').notNull().defaultNow(),
+})
+
 /**
  * campaign_db tables — the source of truth for the schema. After a change run
- * `pnpm --filter @basketline/campaign-service db:generate`; migrations apply on startup.
+ * `pnpm --filter @retailer-sim/campaign-service db:generate`; migrations apply on startup.
  */
 import { relations, sql } from 'drizzle-orm'
 import { bigint, boolean, check, index, integer, numeric, pgEnum, pgTable, text, unique, uuid, varchar } from 'drizzle-orm/pg-core'

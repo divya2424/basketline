@@ -7,11 +7,8 @@ import { createTestDatabase, createTestKeys, tokenFor, type TestKeys } from '@ba
 import { buildAuthApp } from '../src/app.ts'
 import { createAuthDb, migrateAuthDb, withTenant, type Db } from '../src/db/client.ts'
 import { insertAccount } from '../src/repositories/account.repository.ts'
-import { seedPlan } from '../src/services/account.service.ts'
 import { createShopperService } from '../src/services/shopper.service.ts'
 import { changeRole, createUser, disableUser } from '../src/services/user-admin.service.ts'
-
-const INTERNAL_SECRET = 'internal-test-secret'
 
 const logger = createLogger('auth-test')
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
@@ -33,7 +30,7 @@ beforeAll(async () => {
   await insertAccount(db, { tenantId: OTHER_TENANT, name: 'Other storefront', tier: 'pro' })
   keys = await createTestKeys()
   bus = createMemoryEventBus(logger)
-  app = buildAuthApp({ db, bus, logger, privateKey: keys.privateKey, publicKey: keys.publicKey, loginRateLimit: 5, internalSecret: INTERNAL_SECRET })
+  app = buildAuthApp({ db, bus, logger, privateKey: keys.privateKey, publicKey: keys.publicKey, loginRateLimit: 5 })
 })
 
 afterAll(async () => {
@@ -44,14 +41,10 @@ afterAll(async () => {
 let counter = 0
 const uniqueName = () => `user${Date.now().toString(36)}${counter++}`
 
-/** POST /register from the storefront of `tenant` (its tenant_id header). */
-const registerRequest = (body: object, tenant: string = TENANT, target = app) =>
-  request(target).post('/api/v1/auth/register').set('tenant_id', tenant).send(body)
-
-async function register(username = uniqueName()) {
-  const res = await registerRequest({ username, password: PASSWORD })
-  expect(res.status).toBe(201)
-  return { username, user: res.body.user as { id: string; role: string; tenantId: string } }
+/** A user, as an operator creates one (the auth CLI): there's no self-registration. A campaign manager. */
+async function addUser(username = uniqueName(), tenant: string = TENANT, password = PASSWORD) {
+  const { user } = await withTenant(db, tenant, (tx) => createUser(tx, { username, password, role: 'campaign-manager', tenantId: tenant }, null))
+  return { username, user: { id: user.id, role: user.role, tenantId: user.tenantId } }
 }
 
 const login = (username: string, clientType = 'web', password = PASSWORD, tenant = TENANT) =>
@@ -85,57 +78,38 @@ function publishedEvents(type?: string) {
     .filter((envelope) => !type || envelope.eventType === type)
 }
 
-describe('registration', () => {
-  it('creates a standard user, hashes the password with Argon2id and emits UserCreated', async () => {
-    const { username, user } = await register()
-    expect(user).toMatchObject({ role: 'standard-user', tenantId: TENANT })
+describe('users', () => {
+  it('stores an Argon2id hash, never the password; nobody can sign themselves up', async () => {
+    const { user } = await addUser()
     const { rows } = await queryAsTenant('SELECT password_hash FROM users WHERE id = $1', [user.id])
     expect(rows[0].password_hash).toMatch(/^\$argon2id\$/)
     expect(rows[0].password_hash).not.toContain(PASSWORD)
-    const created = publishedEvents('UserCreated').find((event) => event.payload.userId === user.id)
-    expect(created?.payload).toMatchObject({ username, role: 'standard-user', isActive: true })
+    // Shoppers belong to the retailer: Basketline has no registration.
+    const signUp = await request(app).post('/api/v1/auth/register').set('tenant_id', TENANT).send({ username: uniqueName(), password: PASSWORD })
+    expect(signUp.status).toBe(404)
   })
 
-  it('rejects attempts to self-assign a role', async () => {
-    const res = await registerRequest({ username: uniqueName(), password: PASSWORD, role: 'campaign-manager' })
-    expect(res.status).toBe(400)
-    expect(res.body.error.code).toBe('VALIDATION_FAILED')
+  it('rejects duplicate usernames case-insensitively', async () => {
+    const { username } = await addUser()
+    await expect(addUser(username.toUpperCase())).rejects.toMatchObject({ code: 'USERNAME_TAKEN' })
   })
 
-  it('rejects duplicate usernames case-insensitively and weak passwords', async () => {
-    const { username } = await register()
-    const dup = await registerRequest({ username: username.toUpperCase(), password: PASSWORD })
-    expect(dup.status).toBe(409)
-    expect(dup.body.error.code).toBe('USERNAME_TAKEN')
-    const weak = await registerRequest({ username: uniqueName(), password: 'short' })
-    expect(weak.status).toBe(400)
-  })
-
-  it('keeps usernames per tenant: the same name can sign up and sign in separately in each', async () => {
-    const { username, user } = await register()
-    const other = OTHER_TENANT
-    const theirs = await registerRequest({ username, password: 'another long password' }, other)
-    expect(theirs.status).toBe(201)
-    expect((await login(username, 'web', PASSWORD, other)).status).toBe(401)
-    expect((await login(username, 'web', 'another long password', other)).body.user).toMatchObject({ id: theirs.body.user.id, tenantId: other })
+  it('keeps usernames per tenant: the same name signs in separately in each', async () => {
+    const { username, user } = await addUser()
+    const theirs = await addUser(username, OTHER_TENANT, 'another long password')
+    expect((await login(username, 'web', PASSWORD, OTHER_TENANT)).status).toBe(401)
+    expect((await login(username, 'web', 'another long password', OTHER_TENANT)).body.user).toMatchObject({ id: theirs.user.id, tenantId: OTHER_TENANT })
     expect((await login(username)).body.user.id).toBe(user.id)
     expect((await request(app).post('/api/v1/auth/login').send({ username, password: PASSWORD, clientType: 'web' })).body.error.code).toBe('TENANT_REQUIRED')
   })
 
-  it('requires the storefront tenant as a UUID', async () => {
+  it('requires the tenant as a UUID, and one that has an account', async () => {
     for (const tenant of ['', 'tenant_ecommerce']) {
-      const res = await registerRequest({ username: uniqueName(), password: PASSWORD }, tenant)
+      const res = await request(app).post('/api/v1/auth/visitor').set('tenant_id', tenant)
       expect(res.status).toBe(400)
       expect(res.body.error.code).toBe('TENANT_REQUIRED')
     }
-  })
-
-  it('rejects tenants that have no account', async () => {
-    const unknown = randomUUID()
-    const res = await registerRequest({ username: uniqueName(), password: PASSWORD }, unknown)
-    expect(res.status).toBe(404)
-    expect(res.body.error.code).toBe('TENANT_NOT_FOUND')
-    const visitor = await request(app).post('/api/v1/auth/visitor').set('tenant_id', unknown)
+    const visitor = await request(app).post('/api/v1/auth/visitor').set('tenant_id', randomUUID())
     expect(visitor.status).toBe(404)
     expect(visitor.body.error.code).toBe('TENANT_NOT_FOUND')
   })
@@ -143,7 +117,7 @@ describe('registration', () => {
 
 describe('tenant isolation (row-level security)', () => {
   it('shows users and user_login rows only to their own tenant, and none without a tenant', async () => {
-    const { username, user } = await register()
+    const { username, user } = await addUser()
     await login(username)
     const count = async (table: string, tenant?: string) => {
       const text = `SELECT count(*)::int AS n FROM ${table} WHERE ${table === 'users' ? 'id' : 'user_id'} = $1`
@@ -159,7 +133,7 @@ describe('tenant isolation (row-level security)', () => {
 
   it("rejects writing a row into another tenant from inside a tenant's transaction", async () => {
     const insert = queryAsTenant(
-      "INSERT INTO users (id, username, password_hash, tenant_id) VALUES ($1, 'intruder', 'x', $2)",
+      "INSERT INTO users (id, username, password_hash, role, tenant_id) VALUES ($1, 'intruder', 'x', 'campaign-manager', $2)",
       [randomUUID(), OTHER_TENANT],
       TENANT,
     )
@@ -167,9 +141,9 @@ describe('tenant isolation (row-level security)', () => {
   })
 
   it("rejects a token whose tenant isn't the user's", async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const { body } = await login(username)
-    const crossTenant = await tokenFor(keys, 'standard-user', { sub: body.user.id, sid: body.session.id, tid: OTHER_TENANT })
+    const crossTenant = await tokenFor(keys, 'campaign-manager', { sub: body.user.id, sid: body.session.id, tid: OTHER_TENANT })
     const me = await request(app).get('/api/v1/auth/me').set('Authorization', crossTenant.header)
     expect(me.status).toBe(401)
   })
@@ -199,30 +173,6 @@ describe('visitor tokens', () => {
     const invalid = await visitor({ userId: 'not-a-uuid' })
     expect(invalid.status).toBe(400)
     expect(invalid.body.error.code).toBe('VALIDATION_FAILED')
-  })
-})
-
-describe('register with a visitor token', () => {
-  it("keeps the visitor's UUID as the user's ID, only with a visitor token for this tenant", async () => {
-    const userId = randomUUID()
-    const visitor = await request(app).post('/api/v1/auth/visitor').set('tenant_id', TENANT).send({ userId })
-    const adopted = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken: visitor.body.visitorToken })
-    expect(adopted.status).toBe(201)
-    expect(adopted.body.user.id).toBe(userId)
-
-    // The UUID is a user now: registering again with the same token gets a random ID.
-    const again = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken: visitor.body.visitorToken })
-    expect(again.status).toBe(201)
-    expect(again.body.user.id).not.toBe(userId)
-
-    // Another tenant's visitor token, or a token that isn't one, gets a random ID.
-    const foreignId = randomUUID()
-    const foreign = await request(app).post('/api/v1/auth/visitor').set('tenant_id', OTHER_TENANT).send({ userId: foreignId })
-    for (const visitorToken of [foreign.body.visitorToken, 'not-a-token']) {
-      const other = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken })
-      expect(other.status).toBe(201)
-      expect(other.body.user.id).not.toBe(foreignId)
-    }
   })
 })
 
@@ -256,7 +206,7 @@ describe('vendor API keys and shopper tokens', () => {
     expect(other.body.userId).not.toBe(visitor)
   })
 
-  it('rejects a missing, unknown, revoked or other tenant\'s key, and never lets a shopper token register a user', async () => {
+  it('rejects a missing, unknown, revoked or other tenant\'s key', async () => {
     const shoppers = createShopperService({ db, privateKey: keys.privateKey })
     const { key, prefix } = await shoppers.createApiKey(TENANT, 'To revoke')
     const others = await shoppers.createApiKey(OTHER_TENANT, 'Other store')
@@ -272,27 +222,21 @@ describe('vendor API keys and shopper tokens', () => {
     expect(await shoppers.revokeApiKey(TENANT, prefix)).toBe(1)
     expect((await shopperToken(key, { customerId: 'c' })).status).toBe(401)
     expect((await shopperToken(others.key, { customerId: '' }, OTHER_TENANT)).status).toBe(400)
-
-    // A shopper token isn't a visitor token: registering with it gets a random ID.
-    const shopper = await shopperToken(others.key, { customerId: 'shopper-1' }, OTHER_TENANT)
-    const res = await registerRequest({ username: uniqueName(), password: PASSWORD, visitorToken: shopper.body.shopperToken }, OTHER_TENANT)
-    expect(res.status).toBe(201)
-    expect(res.body.user.id).not.toBe(shopper.body.userId)
   })
 })
 
 describe('login', () => {
   it('returns the documented response, a 30-minute JWT and a new session row', async () => {
-    const { username, user } = await register()
+    const { username, user } = await addUser()
     const res = await login(username, 'mobile')
     expect(res.status).toBe(200)
-    expect(res.body).toMatchObject({ tokenType: 'Bearer', expiresIn: 1800, user: { id: user.id, username, role: 'standard-user', tenantId: TENANT } })
+    expect(res.body).toMatchObject({ tokenType: 'Bearer', expiresIn: 1800, user: { id: user.id, username, role: 'campaign-manager', tenantId: TENANT } })
     expect(res.body.session).toMatchObject({ clientType: 'mobile', sessionEndTime: null })
 
     const claims = decodeJwt(res.body.accessToken)
     expect(Object.keys(claims)).toEqual(expect.arrayContaining(['sub', 'sid', 'role', 'tid', 'iat', 'exp']))
     expect(claims.exp! - claims.iat!).toBe(1800)
-    expect(claims).toMatchObject({ sub: user.id, sid: res.body.session.id, role: 'standard-user', tid: TENANT, client: 'mobile' })
+    expect(claims).toMatchObject({ sub: user.id, sid: res.body.session.id, role: 'campaign-manager', tid: TENANT, client: 'mobile' })
     expect(new Date(res.body.session.expiresAt).getTime()).toBe(claims.exp! * 1000)
 
     const { rows } = await queryAsTenant('SELECT tenant_id, client_type, session_end_time FROM user_login WHERE id = $1', [res.body.session.id])
@@ -302,7 +246,7 @@ describe('login', () => {
   })
 
   it('creates separate sessions for web and mobile logins', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const web = await login(username, 'web')
     const mobile = await login(username, 'mobile')
     expect(web.body.session.id).not.toBe(mobile.body.session.id)
@@ -313,7 +257,7 @@ describe('login', () => {
   })
 
   it('rejects wrong passwords and unknown users with the same error, and never echoes the password', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const wrong = await login(username, 'web', 'wrong password!!')
     const unknown = await login('nobody-here', 'web')
     for (const res of [wrong, unknown]) {
@@ -324,7 +268,7 @@ describe('login', () => {
   })
 
   it('rate limits repeated attempts for the same username', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const statuses: number[] = []
     for (let i = 0; i < 7; i += 1) statuses.push((await login(username, 'web', 'not the password')).status)
     expect(statuses.slice(0, 5).every((status) => status === 401)).toBe(true)
@@ -332,7 +276,7 @@ describe('login', () => {
   })
 
   it('rejects disabled accounts', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     await withTenant(db, TENANT, (tx) => disableUser(tx, TENANT, username, null))
     const res = await login(username)
     expect(res.status).toBe(403)
@@ -342,7 +286,7 @@ describe('login', () => {
 
 describe('logout and session state', () => {
   it('records the actual logout time, emits SessionRevoked and rejects the token afterwards', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const { body } = await login(username)
     const auth = `Bearer ${body.accessToken}`
     const before = Date.now()
@@ -361,19 +305,19 @@ describe('logout and session state', () => {
   })
 
   it('returns the current user from /me', async () => {
-    const { username, user } = await register()
+    const { username, user } = await addUser()
     const { body } = await login(username)
     const me = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${body.accessToken}`)
     expect(me.status).toBe(200)
-    expect(me.body.user).toMatchObject({ id: user.id, username, role: 'standard-user', isActive: true })
+    expect(me.body.user).toMatchObject({ id: user.id, username, role: 'campaign-manager', isActive: true })
     expect(JSON.stringify(me.body)).not.toMatch(/password|argon2/)
   })
 
   it('rejects expired, foreign-signed and missing tokens', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const { body } = await login(username)
-    const expired = await tokenFor(keys, 'standard-user', { sub: body.user.id, sid: body.session.id, issuedAt: new Date(Date.now() - 31 * 60_000) })
-    const foreign = await tokenFor(await createTestKeys(), 'standard-user', { sub: body.user.id, sid: body.session.id })
+    const expired = await tokenFor(keys, 'campaign-manager', { sub: body.user.id, sid: body.session.id, issuedAt: new Date(Date.now() - 31 * 60_000) })
+    const foreign = await tokenFor(await createTestKeys(), 'campaign-manager', { sub: body.user.id, sid: body.session.id })
     for (const header of [expired.header, foreign.header]) {
       const res = await request(app).get('/api/v1/auth/me').set('Authorization', header)
       expect(res.status).toBe(401)
@@ -382,23 +326,15 @@ describe('logout and session state', () => {
     expect((await request(app).get('/api/v1/auth/me')).status).toBe(401)
   })
 
-  it('invalidates tokens issued before a role change, and emits UserRoleChanged', async () => {
-    const { username, user } = await register()
-    const { body } = await login(username)
-    const { events } = await withTenant(db, TENANT, (tx) => changeRole(tx, TENANT, username, 'campaign-manager', null))
-    const stale = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${body.accessToken}`)
-    expect(stale.body.error.code).toBe('TOKEN_STALE')
-    const fresh = await login(username)
-    expect(fresh.body.user.role).toBe('campaign-manager')
-    expect(events[0]).toMatchObject({
-      eventType: 'UserRoleChanged',
-      aggregateId: user.id,
-      payload: { role: 'campaign-manager', previousRole: 'standard-user' },
-    })
+  it("never changes a seller-manager's role (its seller would be left over), and a same-role change is a no-op", async () => {
+    const { username } = await addUser()
+    const same = await withTenant(db, TENANT, (tx) => changeRole(tx, TENANT, username, 'campaign-manager', null))
+    expect(same.events).toEqual([])
+    await expect(withTenant(db, TENANT, (tx) => changeRole(tx, TENANT, username, 'seller-manager', null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
   })
 
   it('disabling a user ends their open sessions and emits SessionRevoked for each', async () => {
-    const { username } = await register()
+    const { username } = await addUser()
     const a = await login(username, 'web')
     const b = await login(username, 'mobile')
     const { events } = await withTenant(db, TENANT, (tx) => disableUser(tx, TENANT, username, null))
@@ -412,17 +348,19 @@ describe('logout and session state', () => {
 
 describe('event publishing (after commit, no outbox)', () => {
   it('publishes UserCreated to auth.user.v1, keyed by user ID', async () => {
-    const { user } = await register()
+    const res = await request(app).post('/api/v1/accounts').send({ name: 'Published', tier: 'free' })
+    const user = (await request(app).post('/api/v1/auth/login').set('tenant_id', res.body.account.tenantId).send({ username: 'onboarding', password: 'test', clientType: 'web' })).body.user
     const message = bus.published.find((m) => m.envelope.eventType === 'UserCreated' && m.key === user.id)
     expect(message).toMatchObject({ topic: 'auth.user.v1', envelope: { producer: 'auth-service', aggregateVersion: 1, eventVersion: 1 } })
   })
 
   it('publishes nothing when the transaction rolls back', async () => {
-    const { username } = await register()
     const before = bus.published.length
-    const dup = await registerRequest({ username, password: PASSWORD })
-    expect(dup.status).toBe(409)
+    // The onboarding user is created, then the second user fails: the tenant's whole onboarding rolls back.
+    const res = await request(app).post('/api/v1/accounts').send({ name: 'Rolled back', tier: 'free', sellerManagers: [{ username: 'onboarding', sellerId: randomUUID() }] })
+    expect(res.status).toBe(409)
     expect(bus.published.length).toBe(before)
+    expect((await request(app).get('/api/v1/accounts')).body.items.map((a: { name: string }) => a.name)).not.toContain('Rolled back')
   })
 
   it('still succeeds when Kafka is unavailable (the event is logged and dropped)', async () => {
@@ -431,10 +369,9 @@ describe('event publishing (after commit, no outbox)', () => {
       throw new Error('broker down')
     }
     const failingApp = buildAuthApp({ db, bus: failing, logger, privateKey: keys.privateKey, publicKey: keys.publicKey })
-    const username = uniqueName()
-    const res = await registerRequest({ username, password: PASSWORD }, TENANT, failingApp)
+    const res = await request(failingApp).post('/api/v1/accounts').send({ name: 'Kafka down', tier: 'free' })
     expect(res.status).toBe(201)
-    const { rows } = await queryAsTenant('SELECT count(*)::int AS n FROM users WHERE username = $1', [username])
+    const { rows } = await queryAsTenant('SELECT count(*)::int AS n FROM users', [], res.body.account.tenantId)
     expect(rows[0].n).toBe(1)
   })
 })
@@ -445,7 +382,7 @@ describe('tenant onboarding (/accounts)', () => {
     request(app).post('/api/v1/auth/login').set('tenant_id', tenant).send({ username, password: 'test', clientType: 'web' })
 
   it('creates the account with a generated tenant ID and an onboarding campaign manager', async () => {
-    const res = await onboard({ name: '  Acme Store ', tier: 'pro', dummyUsers: false })
+    const res = await onboard({ name: '  Acme Store ', tier: 'pro' })
     expect(res.status).toBe(201)
     expect(res.body).toMatchObject({ account: { name: 'Acme Store', tier: 'pro' }, users: [{ username: 'onboarding', role: 'campaign-manager' }], password: 'test' })
     const tenant = res.body.account.tenantId as string
@@ -458,7 +395,7 @@ describe('tenant onboarding (/accounts)', () => {
   })
 
   it("gives the vendor a first API key, shown once, that its managers can list, add to and revoke", async () => {
-    const res = await onboard({ name: 'Vendor with a key', tier: 'free', dummyUsers: true })
+    const res = await onboard({ name: 'Vendor with a key', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] })
     const tenant = res.body.account.tenantId as string
     const first = res.body.apiKey as { key: string; prefix: string; name: string }
     expect(first).toMatchObject({ name: 'Default', key: expect.stringMatching(/^bl_sk_/) })
@@ -467,7 +404,7 @@ describe('tenant onboarding (/accounts)', () => {
     expect(token.status).toBe(201)
 
     const manager = `Bearer ${(await signIn(tenant, 'onboarding')).body.accessToken}`
-    const shopper = `Bearer ${(await signIn(tenant, 'user01')).body.accessToken}`
+    const sellerManager = `Bearer ${(await signIn(tenant, 'seller01')).body.accessToken}`
     const keys = () => request(app).get('/api/v1/auth/api-keys').set('Authorization', manager)
     // Listed by prefix, never the key itself.
     expect((await keys()).body.items).toEqual([{ prefix: first.prefix, name: 'Default', createdAt: expect.any(String), revokedAt: null }])
@@ -485,9 +422,9 @@ describe('tenant onboarding (/accounts)', () => {
       ['Default', false],
     ])
 
-    // Not for standard users, and a manager sees only their own tenant's keys.
-    expect((await request(app).get('/api/v1/auth/api-keys').set('Authorization', shopper)).status).toBe(403)
-    const other = await onboard({ name: 'Another vendor', tier: 'free', dummyUsers: false })
+    // Not for seller managers, and a manager sees only their own tenant's keys.
+    expect((await request(app).get('/api/v1/auth/api-keys').set('Authorization', sellerManager)).status).toBe(403)
+    const other = await onboard({ name: 'Another vendor', tier: 'free' })
     const otherManager = `Bearer ${(await signIn(other.body.account.tenantId, 'onboarding')).body.accessToken}`
     const otherKeys = await request(app).get('/api/v1/auth/api-keys').set('Authorization', otherManager)
     expect(otherKeys.body.items.map((k: { prefix: string }) => k.prefix)).toEqual([other.body.apiKey.prefix])
@@ -495,10 +432,10 @@ describe('tenant onboarding (/accounts)', () => {
   })
 
   it("lets the tenant's managers set its allowed websites, normalized, and tells the gateway", async () => {
-    const res = await onboard({ name: 'Vendor with a website', tier: 'free', dummyUsers: true })
+    const res = await onboard({ name: 'Vendor with a website', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] })
     const tenant = res.body.account.tenantId as string
     const manager = `Bearer ${(await signIn(tenant, 'onboarding')).body.accessToken}`
-    const shopper = `Bearer ${(await signIn(tenant, 'user01')).body.accessToken}`
+    const sellerManager = `Bearer ${(await signIn(tenant, 'seller01')).body.accessToken}`
     const origins = () => request(app).get('/api/v1/auth/allowed-origins').set('Authorization', manager)
     const set = (body: object, auth = manager) => request(app).put('/api/v1/auth/allowed-origins').set('Authorization', auth).send(body)
     // None at first: any website may send the tenant's events.
@@ -517,13 +454,13 @@ describe('tenant onboarding (/accounts)', () => {
     expect(bad.status).toBe(400)
     expect(bad.body.error.details.errors).toHaveLength(4)
     expect((await set({ origins: Array.from({ length: 21 }, (_, i) => `https://shop${i}.example`) })).status).toBe(400)
-    expect((await set({ origins: [] }, shopper)).status).toBe(403)
+    expect((await set({ origins: [] }, sellerManager)).status).toBe(403)
   })
 
   it('deletes a tenant and all of its identity data when its name is typed again, then tells the other services', async () => {
-    const res = await onboard({ name: 'To Delete', tier: 'free', dummyUsers: true })
+    const res = await onboard({ name: 'To Delete', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] })
     const tenant = res.body.account.tenantId as string
-    const kept = await onboard({ name: 'To Keep', tier: 'free', dummyUsers: false })
+    const kept = await onboard({ name: 'To Keep', tier: 'free' })
     expect((await signIn(tenant, 'onboarding')).status).toBe(200)
     await request(app).post('/api/v1/auth/shopper-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${res.body.apiKey.key}`).send({ customerId: 'c-1' })
     const remove = (body: object, id = tenant) => request(app).delete(`/api/v1/accounts/${id}`).send(body)
@@ -549,37 +486,33 @@ describe('tenant onboarding (/accounts)', () => {
     expect((await signIn(kept.body.account.tenantId, 'onboarding')).status).toBe(200)
   })
 
-  it('adds user01–user10 as standard users and seller01 as the first seller\'s manager when asked, all signing in with "test"', async () => {
-    const res = await onboard({ name: 'With demo users', tier: 'free', dummyUsers: true })
+  it('adds the seller managers the retailer names, for its sellers, all signing in with "test"', async () => {
+    const [north, south] = [randomUUID(), randomUUID()]
+    const res = await onboard({ name: 'With sellers', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: north }, { username: 'seller02', sellerId: south.toUpperCase() }] })
     expect(res.status).toBe(201)
     const tenant = res.body.account.tenantId as string
-    expect(res.body.users.map((u: { username: string }) => u.username)).toEqual([
-      'onboarding',
-      ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`),
-      'seller01',
+    expect(res.body.users).toEqual([
+      { username: 'onboarding', role: 'campaign-manager' },
+      { username: 'seller01', role: 'seller-manager' },
+      { username: 'seller02', role: 'seller-manager' },
     ])
-    expect(res.body.users.slice(1, 11).every((u: { role: string }) => u.role === 'standard-user')).toBe(true)
-    const login = await signIn(tenant, 'user10')
-    expect(login.body.user).toMatchObject({ username: 'user10', role: 'standard-user', tenantId: tenant })
-    // The seller-manager's token carries its seller: the first seeded one.
-    const message = bus.published.find((m) => m.envelope.eventType === 'TenantOnboarded' && m.key === tenant)!
-    const firstSeller = (message.envelope.payload as { seed: { sellers: { sellerId: string }[] } }).seed.sellers[0]!.sellerId
-    const seller = await signIn(tenant, 'seller01')
-    expect(seller.body.user).toMatchObject({ role: 'seller-manager', sellerId: firstSeller })
-    expect(decodeJwt(seller.body.accessToken)).toMatchObject({ role: 'seller-manager', sel: firstSeller })
+    // Each token carries its seller.
+    const seller = await signIn(tenant, 'seller02')
+    expect(seller.body.user).toMatchObject({ role: 'seller-manager', sellerId: south })
+    expect(decodeJwt(seller.body.accessToken)).toMatchObject({ role: 'seller-manager', sel: south })
     // The users belong to the new tenant only.
-    expect((await signIn(TENANT, 'user10')).status).toBe(401)
+    expect((await signIn(TENANT, 'seller01')).status).toBe(401)
     const { rows } = await queryAsTenant('SELECT count(*)::int AS n FROM users', [], tenant)
-    expect(rows[0].n).toBe(12)
+    expect(rows[0].n).toBe(3)
   })
 
   it('creates a seller-manager only with its seller, and no other role with one', async () => {
     await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'no-seller', password: 'x', role: 'seller-manager', tenantId: TENANT }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
-    await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'odd', password: 'x', role: 'standard-user', tenantId: TENANT, sellerId: randomUUID() }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
+    await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'odd', password: 'x', role: 'campaign-manager', tenantId: TENANT, sellerId: randomUUID() }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
   })
 
-  it("exchanges the tenant's API key for an integration token, and mints one for the mimic services only with the secret", async () => {
-    const res = await onboard({ name: 'Integrated', tier: 'free', dummyUsers: false })
+  it("exchanges the tenant's API key for an integration token, with no internal shortcut", async () => {
+    const res = await onboard({ name: 'Integrated', tier: 'free' })
     const tenant = res.body.account.tenantId as string
     const exchange = (key: string) => request(app).post('/api/v1/auth/integration-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${key}`)
     const ok = await exchange(res.body.apiKey.key)
@@ -589,36 +522,21 @@ describe('tenant onboarding (/accounts)', () => {
     expect(decodeJwt(ok.body.integrationToken).aud).toBe('basketline-integration')
     expect((await exchange('bl_sk_wrong')).status).toBe(401)
 
-    const internal = (secret: string) => request(app).post('/internal/integration-token').set('x-internal-secret', secret).send({ tenantId: tenant })
-    expect((await internal('wrong')).status).toBe(401)
-    expect(await verifyIntegrationToken((await internal(INTERNAL_SECRET)).body.integrationToken, keys.publicKey)).toMatchObject({ tid: tenant })
+    // The simulated retailer's old internal endpoint is gone: every retailer uses its API key.
+    expect((await request(app).post('/internal/integration-token').send({ tenantId: tenant })).status).toBe(404)
   })
 
-  it('publishes TenantOnboarded with a random seed plan: 10–15 products, campaigns of 2 and 3 of them', async () => {
-    const res = await onboard({ name: 'Seeded', tier: 'free', dummyUsers: false })
+  it('publishes TenantOnboarded with the tier, for the ingestion budget; seeding is the retailer\'s', async () => {
+    const res = await onboard({ name: 'Onboarded', tier: 'pro' })
     const tenant = res.body.account.tenantId as string
     const message = bus.published.find((m) => m.envelope.eventType === 'TenantOnboarded' && m.key === tenant)!
     expect(message.topic).toBe('auth.tenant.v1')
-    const payload = message.envelope.payload as { name: string; tier: string; onboardedBy: string; seed: { productIds: string[]; campaigns: { productIds: string[] }[] } }
-    const onboardingUser = (await signIn(tenant, 'onboarding')).body.user.id
-    expect(payload).toMatchObject({ tenantId: tenant, name: 'Seeded', tier: 'free', onboardedBy: onboardingUser })
-
-    const { productIds, campaigns, sellers } = (payload as unknown as { seed: { productIds: string[]; campaigns: { sellerId: string; productIds: string[] }[]; sellers: { sellerId: string; productIds: string[] }[] } }).seed
-    // Every product is one seller's, and each campaign's products are its seller's.
-    expect(sellers.flatMap((s) => s.productIds).sort()).toEqual([...productIds].sort())
-    for (const campaign of campaigns) expect(sellers.find((s) => s.sellerId === campaign.sellerId)!.productIds).toEqual(expect.arrayContaining(campaign.productIds))
-    expect(productIds.length).toBeGreaterThanOrEqual(10)
-    expect(productIds.length).toBeLessThanOrEqual(15)
-    expect(new Set(productIds).size).toBe(productIds.length)
-    expect(campaigns.map((c) => c.productIds.length)).toEqual([2, 3])
-    const inCampaigns = campaigns.flatMap((c) => c.productIds)
-    expect(new Set(inCampaigns).size).toBe(5)
-    expect(inCampaigns.every((id) => productIds.includes(id))).toBe(true)
-    expect(res.body.seed).toEqual({ products: productIds.length, campaigns: 2 })
+    expect(message.envelope.payload).toEqual({ tenantId: tenant, name: 'Onboarded', tier: 'pro' })
+    expect(res.body).not.toHaveProperty('seed')
   })
 
   it('lists the onboarded accounts, newest first', async () => {
-    const { body } = await onboard({ name: 'Newest', tier: 'enterprise', dummyUsers: false })
+    const { body } = await onboard({ name: 'Newest', tier: 'enterprise' })
     const list = await request(app).get('/api/v1/accounts')
     expect(list.status).toBe(200)
     expect(list.body.items[0]).toEqual({ tenantId: body.account.tenantId, name: 'Newest', tier: 'enterprise', createdAt: body.account.createdAt })
@@ -627,26 +545,16 @@ describe('tenant onboarding (/accounts)', () => {
 
   it('validates the request, and never takes a tenant ID from the client', async () => {
     for (const body of [
-      { name: '', tier: 'free', dummyUsers: false },
-      { name: 'x', tier: 'gold', dummyUsers: false },
-      { name: 'x', tier: 'free', dummyUsers: 'yes' },
-      { name: 'x', tier: 'free', dummyUsers: false, tenantId: randomUUID() },
+      { name: '', tier: 'free' },
+      { name: 'x', tier: 'gold' },
+      { name: 'x', tier: 'free', dummyUsers: true },
+      { name: 'x', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: 'not-a-uuid' }] },
+      { name: 'x', tier: 'free', sellerManagers: 'seller01' },
+      { name: 'x', tier: 'free', tenantId: randomUUID() },
     ]) {
       const res = await onboard(body)
       expect(res.status, JSON.stringify(body)).toBe(400)
       expect(res.body.error.code).toBe('VALIDATION_FAILED')
     }
-  })
-})
-
-describe('seed plan', () => {
-  it('is the same every time for a tenant (so seeding again creates nothing twice), and differs between tenants', () => {
-    const tenant = randomUUID()
-    expect(seedPlan(tenant)).toEqual(seedPlan(tenant))
-    expect(seedPlan(randomUUID()).productIds).not.toEqual(seedPlan(tenant).productIds)
-    const counts = new Set(Array.from({ length: 200 }, () => seedPlan(randomUUID()).productIds.length))
-    expect([...counts].every((n) => n >= 10 && n <= 15)).toBe(true)
-    expect(counts.size).toBeGreaterThan(1)
-    expect(seedPlan(tenant).productIds.every((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))).toBe(true)
   })
 })

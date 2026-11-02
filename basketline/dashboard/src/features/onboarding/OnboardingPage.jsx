@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
@@ -6,12 +6,9 @@ import { useToast } from '../../components/common/Toast.jsx'
 import { DEFAULT_TENANT_ID, getRequestContext, switchTenant } from '../../api/requestContext.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { LoginModal } from '../auth/LoginModal.jsx'
-import { DEMO_PASSWORD, listAccounts, onboardTenant, ONBOARDING_USERNAME, TIERS } from './onboardingService.js'
+import { DEMO_PASSWORD, listAccounts, ONBOARDING_USERNAME, TIERS } from './onboardingService.js'
 import { TenantDetails } from './TenantDetails.jsx'
 import './onboarding.css'
-import { KeyReveal } from '../integration/KeyReveal.jsx'
-import { SdkSnippet } from '../integration/SdkSnippet.jsx'
-import '../integration/integration.css'
 
 const tierLabel = (id) => TIERS.find((tier) => tier.id === id)?.label ?? id
 const dateFormat = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
@@ -24,10 +21,10 @@ const STOREFRONT_URL = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:
 export const storefrontUrl = (account) => `${STOREFRONT_URL}/store?${new URLSearchParams({ tenant: account.tenantId, name: account.name })}`
 
 /**
- * Onboards tenants (a name and a tier; the server generates the tenant ID) and
- * lists every tenant. Each one's dashboard opens as its "onboarding" user or
- * after signing in as any of its users; its store opens in the storefront.
- * This is the platform's home page (/).
+ * Lists every tenant. Retailers onboard with Basketline's API (POST /accounts);
+ * the simulated retailer does it from its storefront's Stores page. Each
+ * tenant's dashboard opens as its "onboarding" user or after signing in as any
+ * of its users; its store opens in the storefront. This is the platform's home page (/).
  */
 // fullReload: false navigates within the app instead (tests, where the catalog is fixed).
 export function OnboardingPage({ navigateTo, fullReload = true }) {
@@ -37,7 +34,6 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
   const showToast = useToast()
   const [accounts, setAccounts] = useState({ status: 'loading', items: [], error: null })
   const [attempt, setAttempt] = useState(0)
-  const [created, setCreated] = useState(null)
   const [opening, setOpening] = useState(null)
   const [loginTarget, setLoginTarget] = useState(null) // { account, previousTenant }
   const [expanded, setExpanded] = useState(null) // the tenant whose details are open
@@ -85,7 +81,6 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
       if (user) await logout()
       switchTenant(DEFAULT_TENANT_ID)
     }
-    if (created?.account.tenantId === account.tenantId) setCreated(null)
     showToast(`${account.name} and all of its data were deleted.`)
     reload()
   }
@@ -100,24 +95,15 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
   return (
     <div className="container page onboarding">
       <div className="onboarding__header">
-        <h1>Onboard a tenant</h1>
+        <h1 id="tenants-heading">Tenants</h1>
         <p className="muted">
-          Every user created here has the password <code>{DEMO_PASSWORD}</code>. Each tenant gets an <code>{ONBOARDING_USERNAME}</code>{' '}
-          user, a campaign manager.
+          Retailers onboard with Basketline’s API (<code>POST /accounts</code>), keeping the API key it returns. The simulated retailer does
+          it from its storefront’s <a href={`${STOREFRONT_URL}/stores`}>Stores</a> page. Each tenant has an <code>{ONBOARDING_USERNAME}</code>{' '}
+          user, a campaign manager, and a seller manager for each seller the retailer named, all with the password <code>{DEMO_PASSWORD}</code>.
         </p>
       </div>
 
-      <OnboardingForm
-        onCreated={(result) => {
-          setCreated(result)
-          reload()
-        }}
-      />
-
-      {created ? <CreatedSummary result={created} /> : null}
-
       <section className="onboarding__section" aria-labelledby="tenants-heading">
-        <h2 id="tenants-heading">Tenants</h2>
         {accounts.status === 'loading' ? (
           <p className="muted" role="status">
             <Spinner size="sm" /> Loading tenants…
@@ -180,99 +166,5 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
         <LoginModal title={`Sign in to ${loginTarget.account.name}`} onClose={cancelLogin} onSignedIn={() => goTo('/analytics')} />
       ) : null}
     </div>
-  )
-}
-
-function OnboardingForm({ onCreated }) {
-  const id = useId()
-  const [name, setName] = useState('')
-  const [tier, setTier] = useState('free')
-  const [dummyUsers, setDummyUsers] = useState(true)
-  const [error, setError] = useState(null)
-  const [pending, setPending] = useState(false)
-
-  const handleSubmit = async (event) => {
-    event.preventDefault()
-    if (!name.trim()) {
-      setError('Enter the tenant’s name.')
-      return
-    }
-    setPending(true)
-    setError(null)
-    try {
-      const result = await onboardTenant({ name: name.trim(), tier, dummyUsers })
-      setName('')
-      onCreated(result)
-    } catch (onboardError) {
-      setError(onboardError.message || 'Onboarding failed. Try again.')
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <form className="onboarding-form" onSubmit={handleSubmit} noValidate aria-busy={pending} aria-label="Onboard a tenant">
-      <div className="form-field">
-        <label htmlFor={`${id}-name`}>Tenant name</label>
-        <input id={`${id}-name`} value={name} maxLength={200} onChange={(event) => setName(event.target.value)} disabled={pending} />
-      </div>
-      <div className="form-field">
-        <label htmlFor={`${id}-tier`}>Tier</label>
-        <select id={`${id}-tier`} value={tier} onChange={(event) => setTier(event.target.value)} disabled={pending}>
-          {TIERS.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <label className="onboarding-form__check">
-        <input type="checkbox" checked={dummyUsers} onChange={(event) => setDummyUsers(event.target.checked)} disabled={pending} />
-        Create 10 demo users (user01–user10)
-      </label>
-      <p className="muted onboarding-form__hint">The tenant ID is generated for you.</p>
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      <Button type="submit" disabled={pending}>
-        {pending ? (
-          <>
-            <Spinner size="sm" className="spinner--on-primary" />
-            Onboarding…
-          </>
-        ) : (
-          'Onboard tenant'
-        )}
-      </Button>
-    </form>
-  )
-}
-
-function CreatedSummary({ result }) {
-  const { account, users, password, apiKey, seed } = result
-  return (
-    <section className="onboarding-created" role="status" aria-labelledby="created-heading">
-      <h2 id="created-heading">{account.name} is onboarded</h2>
-      <p>
-        Tenant ID: <code data-testid="created-tenant-id">{account.tenantId}</code>
-      </p>
-      <p>
-        Users (password <code>{password}</code>): {users.map((created) => created.username).join(', ')}
-      </p>
-      {seed ? (
-        <p>
-          Seeding {seed.products} products and {seed.campaigns} active campaigns: they appear in the store within a few seconds.
-        </p>
-      ) : null}
-      {apiKey ? (
-        <div className="onboarding-created__integration">
-          <h3>Integrate {account.name}’s site</h3>
-          <KeyReveal apiKey={apiKey} />
-          <SdkSnippet tenantId={account.tenantId} />
-        </div>
-      ) : null}
-    </section>
   )
 }

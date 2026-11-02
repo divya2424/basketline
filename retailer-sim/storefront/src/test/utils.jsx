@@ -12,12 +12,12 @@ export const SAMPLE_CATALOG = { products, campaigns }
 /** Renders the whole store under StrictMode, like production, at `route`; by default signed in as a shopper. */
 export function renderApp(
   route = '/store',
-  { cartProps = { persist: false }, authProps = { persist: false, initialUser: SHOPPER }, catalogProps = { initialCatalog: SAMPLE_CATALOG } } = {},
+  { cartProps = { persist: false }, authProps = { persist: false, initialUser: SHOPPER }, catalogProps = { initialCatalog: SAMPLE_CATALOG }, storesProps } = {},
 ) {
   return render(
     <StrictMode>
       <MemoryRouter initialEntries={[route]}>
-        <App cartProps={cartProps} authProps={authProps} catalogProps={catalogProps} />
+        <App cartProps={cartProps} authProps={authProps} catalogProps={catalogProps} storesProps={storesProps} />
       </MemoryRouter>
     </StrictMode>,
   )
@@ -33,7 +33,9 @@ export const SHOPPER = {
   userId: '22222222-2222-4222-8222-222222222222',
   username: 'sam',
   displayName: 'sam',
-  role: 'standard-user',
+  role: 'customer',
   accessToken: 'shopper-token',
   expiresAt: inHalfAnHour(),
+  // The customer's Basketline identity, from the store's backend.
+  shopper: { userId: '44444444-4444-4444-8444-444444444444', token: 'basketline-shopper-token', expiresAt: inHalfAnHour() },
 }

@@ -13,7 +13,7 @@ function toProductResponse({ version: _version, ...product }: Product) {
  * else the storefront's tenant_id header for anonymous visitors.
  */
 function readTenant(req: Request): string {
-  const tenantId = req.auth?.tid ?? tenantHeader(req)
+  const tenantId = req.retailer?.tid ?? tenantHeader(req)
   if (!tenantId) throw badRequest('TENANT_REQUIRED', 'Sign in or send a tenant_id header (UUID)')
   return tenantId
 }
@@ -24,7 +24,7 @@ type WithProductId = Request<{ productId: string }>
 export function createProductController(service: ProductService) {
   return {
     async create(req: Request, res: Response) {
-      const product = await service.create(req.auth!.tid, req.auth!.sub, req.body)
+      const product = await service.create(req.retailer!.tid, req.retailer!.sub, req.body)
       res.status(201).location(`/api/v1/products/${product.id}`).json(toProductResponse(product))
     },
 
@@ -39,7 +39,7 @@ export function createProductController(service: ProductService) {
         tenantId: readTenant(req),
         category: typeof req.query.category === 'string' ? req.query.category : undefined,
         // Only campaign managers can see deactivated products.
-        includeInactive: req.query.includeInactive === 'true' && req.auth?.role === 'campaign-manager',
+        includeInactive: req.query.includeInactive === 'true' && req.retailer?.role === 'staff',
         limit,
         offset,
       })
@@ -51,11 +51,11 @@ export function createProductController(service: ProductService) {
     },
 
     async update(req: WithProductId, res: Response) {
-      res.json(toProductResponse(await service.update(req.auth!.tid, req.auth!.sub, req.params.productId, req.body)))
+      res.json(toProductResponse(await service.update(req.retailer!.tid, req.retailer!.sub, req.params.productId, req.body)))
     },
 
     async deactivate(req: WithProductId, res: Response) {
-      res.json(toProductResponse(await service.deactivate(req.auth!.tid, req.auth!.sub, req.params.productId)))
+      res.json(toProductResponse(await service.deactivate(req.retailer!.tid, req.retailer!.sub, req.params.productId)))
     },
   }
 }

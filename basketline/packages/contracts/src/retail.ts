@@ -10,7 +10,8 @@
  * (compacted), keyed by the entity's ID.
  */
 import { createHash } from 'node:crypto'
-import type { CampaignStatus } from './events.ts'
+
+export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed'
 
 export const CATALOG_TOPIC = 'retail.catalog-events.v1'
 export const CAMPAIGN_TOPIC = 'retail.campaign-events.v1'

@@ -12,7 +12,7 @@ Basketline is the analytics path. The repository also simulates a retailer, so t
 
 | | Services | Role |
 |---|---|---|
-| **Retailer systems** (simulated, in `retailer-sim/`) | product-service, campaign-service; the storefront | The retailer's catalog, sellers and campaigns. They send them to Basketline's retail API (`/retail/catalog`, `/retail/campaigns`) with an integration token, as any retailer's backend would (the SDK's `/server` entry). |
+| **Retailer systems** (simulated, in `retailer-sim/`) | retailer-auth-service, product-service, campaign-service; the storefront | The retailer's logins, catalog, sellers and campaigns. It onboards at Basketline (`POST /accounts`) and keeps the API key, sends its catalog and campaigns to the retail API (`/retail/catalog`, `/retail/campaigns`) with integration tokens (the SDK's `/server` entry), and gets shopper tokens for its signed-in customers, as any retailer's backend would. |
 | **Platform edge** | gateway, auth-service (identity and access) | Routing, per-IP limits, CORS; API keys, visitor, shopper and integration tokens, dashboard users. |
 | **Ingestion** | ingestion-service | Validates every event, refuses bots, stamps the product's seller, holds each tenant to its budget, publishes to Kafka. |
 | **Stream** | Kafka | `retail.interactions.v1` and `retail.identity-events.v1` (14 days), `retail.catalog-events.v1` and `retail.campaign-events.v1` (compacted), the watermark heartbeat. Shared by every tenant. |

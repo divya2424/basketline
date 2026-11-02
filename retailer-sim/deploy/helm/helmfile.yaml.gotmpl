@@ -13,7 +13,7 @@ helmDefaults:
   createNamespace: true
 
 releases:
-{{- range list "product-service" "campaign-service" }}
+{{- range list "retailer-auth-service" "product-service" "campaign-service" }}
   - name: {{ . }}
     namespace: basketline
     chart: ./charts/{{ . }}

@@ -1,5 +1,5 @@
-// SAMPLE DATA, like productData.js: seeded into the backend by `npm run seed`
-// (product_00x IDs are matched by product name) and used as test fixtures.
+// SAMPLE DATA, like productData.js: sent to a tenant by `pnpm seed` in basketline/
+// (with these IDs as the retailer's own) and used as test fixtures.
 // Campaigns reference products by ID only; product records live in productData.js.
 // A campaign can feature any number of products, the same product may appear in
 // several campaigns, and products don't have to belong to any campaign

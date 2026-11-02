@@ -9,13 +9,13 @@ import { forbidden, isUuid, notFound, unauthorized, verifyAccessToken, verifyEve
 import type { AccessService } from '../services/access.service.ts'
 
 /** 'events': an access token, or an events-only token: a visitor's, or a vendor's shopper's. */
-type Access = 'public' | 'optional' | 'authenticated' | 'campaign-manager' | 'metrics-reader' | 'events' | 'integration'
+type Access = 'public' | 'authenticated' | 'campaign-manager' | 'metrics-reader' | 'events' | 'integration'
 
 /** Who may call what. Returns null for paths the gateway doesn't expose. */
 export function accessFor(method: string, path: string): Access | null {
   const read = method === 'GET' || method === 'HEAD'
-  // shopper-token and integration-token: a vendor's backend, with its API key (auth-service checks it).
-  if (['/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token', '/api/v1/auth/integration-token'].includes(path)) {
+  // shopper-token and integration-token: a retailer's backend, with its API key (auth-service checks it).
+  if (['/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token', '/api/v1/auth/integration-token'].includes(path)) {
     return method === 'POST' ? 'public' : null
   }
   // A tenant's API keys and allowed websites: its campaign managers only.
@@ -31,11 +31,7 @@ export function accessFor(method: string, path: string): Access | null {
   if (path.startsWith('/api/v1/ad/')) return read ? 'metrics-reader' : null
   // Reference data and server-side identity from a retailer's backend, with an integration token.
   if (path.startsWith('/api/v1/retail/')) return method === 'POST' ? 'integration' : null
-  // The tenant's sellers: public, like the catalog.
-  if (path === '/api/v1/sellers') return read ? 'optional' : null
   if (path.startsWith('/api/v1/analytics/')) return read ? 'authenticated' : null
-  // Catalog reads are public so visitors can browse the store; writes need a campaign manager.
-  if (/^\/api\/v1\/(products|campaigns)(\/|$)/.test(path)) return read ? 'optional' : 'campaign-manager'
   return null
 }
 

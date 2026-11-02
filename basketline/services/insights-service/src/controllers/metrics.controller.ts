@@ -29,6 +29,12 @@ export function createMetricsController(service: MetricsService) {
   }
 
   return {
+    /** GET /ad/campaigns — the tenant's campaigns to report on: a seller-manager's seller's only. */
+    async campaigns(req: Request, res: Response) {
+      const sellerId = req.auth!.role === 'seller-manager' ? req.auth!.sel : undefined
+      res.json({ items: await service.campaigns(req.auth!.tid, sellerId) })
+    },
+
     /** GET /ad/:campaignId/:metric — response shape preserved from the frontend contract. */
     async metric(req: WithCampaignId, res: Response) {
       const metric = metricOf(req)

@@ -1,19 +1,15 @@
 import { randomUUID } from 'node:crypto'
-import type { CampaignStatus } from '@basketline/contracts'
 import {
   badRequest,
   conflict,
-  event,
   isUniqueViolation,
   notFound,
   retryLater,
   unprocessable,
   writeAudit,
-  type NewEvent,
   type PublishEvents,
-  type ReferenceUpdate,
-  type RetailerIntegration,
 } from '@basketline/platform'
+import { retailerEvent, type BasketlineSender, type CampaignStatus, type RetailerEvent } from '@retailer-sim/shared'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   deleteAssociation,
@@ -90,8 +86,8 @@ async function requireCampaign(db: DbOrTx, tenantId: string, id: string): Promis
   return campaign
 }
 
-export function stateEvent(campaign: Omit<Campaign, 'productIds'>, eventType: 'CampaignCreated' | 'CampaignUpdated'): NewEvent {
-  return event(eventType, campaign.id, campaign.version, {
+export function stateEvent(campaign: Omit<Campaign, 'productIds'>, eventType: 'CampaignCreated' | 'CampaignUpdated'): RetailerEvent {
+  return retailerEvent(eventType, campaign.id, campaign.version, {
     campaignId: campaign.id,
     tenantId: campaign.tenantId,
     sellerId: campaign.sellerId,
@@ -106,9 +102,9 @@ export function stateEvent(campaign: Omit<Campaign, 'productIds'>, eventType: 'C
 }
 
 /** Inserts the associations and returns their events. Already associated → 409. */
-async function addAssociations(tx: DbOrTx, tenantId: string, actorId: string, campaignId: string, productIds: string[], version: number): Promise<NewEvent[]> {
+async function addAssociations(tx: DbOrTx, tenantId: string, actorId: string, campaignId: string, productIds: string[], version: number): Promise<RetailerEvent[]> {
   let position = await nextPosition(tx, campaignId)
-  const events: NewEvent[] = []
+  const events: RetailerEvent[] = []
   for (const productId of productIds) {
     try {
       await insertAssociation(tx, { id: randomUUID(), tenantId, campaignId, productId, position, createdBy: actorId })
@@ -118,7 +114,7 @@ async function addAssociations(tx: DbOrTx, tenantId: string, actorId: string, ca
       }
       throw error
     }
-    events.push(event('CampaignProductAssociated', campaignId, version, { campaignId, productId, position }))
+    events.push(retailerEvent('CampaignProductAssociated', campaignId, version, { campaignId, productId, position }))
     position += 1
   }
   return events
@@ -127,34 +123,31 @@ async function addAssociations(tx: DbOrTx, tenantId: string, actorId: string, ca
 const audit = (tx: DbOrTx, actorId: string, action: string, campaignId: string, details?: object) =>
   writeAudit(tx, { actorId, action, subjectType: 'campaign', subjectId: campaignId, details })
 
-/** The campaign as Basketline's campaign API takes it (campaign_upserted): full state with its products, ordered by updatedAt. */
-export function campaignUpdate(campaign: Campaign): ReferenceUpdate | null {
+/** The campaign as Basketline's SDK takes it: full state with its products, ordered by updatedAt. */
+export function basketlineCampaign(campaign: Campaign) {
   // A campaign from before sellers can't be sent until it has one.
   if (!campaign.sellerId) return null
   return {
-    eventName: 'campaign_upserted',
-    updatedAt: campaign.updatedAt.toISOString(),
-    data: {
-      campaignId: campaign.id,
-      sellerId: campaign.sellerId,
-      title: campaign.title,
-      status: campaign.status,
-      startTime: campaign.startTime?.toISOString() ?? null,
-      endTime: campaign.endTime?.toISOString() ?? null,
-      archived: campaign.archivedAt !== null,
-      productIds: campaign.productIds,
-    },
+    campaignId: campaign.id,
+    sellerId: campaign.sellerId,
+    title: campaign.title,
+    status: campaign.status,
+    startTime: campaign.startTime?.toISOString() ?? null,
+    endTime: campaign.endTime?.toISOString() ?? null,
+    archived: campaign.archivedAt !== null,
+    productIds: campaign.productIds,
+    updatedAt: campaign.updatedAt,
   }
 }
 
 /**
  * Business rules for campaigns. Events are published after each transaction commits,
- * and the campaign's full state goes to Basketline (retailer.ts), as a retailer's backend does.
+ * and the campaign's full state goes to Basketline with the store's API key, as a retailer's backend does.
  */
-export function createCampaignService({ db, publish, retailer }: { db: Db; publish: PublishEvents; retailer?: RetailerIntegration }) {
+export function createCampaignService({ db, publish, basketline }: { db: Db; publish: PublishEvents; basketline?: BasketlineSender }) {
   const sendToBasketline = async (campaign: Campaign) => {
-    const update = campaignUpdate(campaign)
-    if (update) await retailer?.send(campaign.tenantId, 'campaigns', [update])
+    const update = basketlineCampaign(campaign)
+    if (update) await basketline?.send(campaign.tenantId, (server) => server.campaigns.upsert(update))
   }
   return {
     /** The campaign and all its product associations are saved in one transaction. */
@@ -260,7 +253,7 @@ export function createCampaignService({ db, publish, retailer }: { db: Db; publi
         if (!(await deleteAssociation(tx, id, productId))) throw notFound('ASSOCIATION_NOT_FOUND', 'Product is not in this campaign')
         const { version } = await updateCampaign(tx, id, actorId)
         await audit(tx, actorId, 'campaign.product_removed', id, { productId })
-        return [event('CampaignProductRemoved', id, version, { campaignId: id, productId })]
+        return [retailerEvent('CampaignProductRemoved', id, version, { campaignId: id, productId })]
       })
       await publish(events)
       await sendToBasketline(await requireCampaign(db, tenantId, id))

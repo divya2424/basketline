@@ -1,0 +1,10 @@
+apiVersion: v2
+name: retailer-auth-service
+description: The simulated retailer's retailer-auth-service. Its customers' and staff's logins, its stores' Basketline API keys.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: basketline-lib
+    version: 0.1.0
+    repository: file://../../../../../basketline/deploy/helm/charts/basketline-lib

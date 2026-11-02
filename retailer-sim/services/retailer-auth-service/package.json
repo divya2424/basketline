@@ -1,0 +1,16 @@
+{
+  "name": "@retailer-sim/retailer-auth-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.ts",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@basketline/contracts": "workspace:*",
+    "@basketline/platform": "workspace:*",
+    "@retailer-sim/shared": "workspace:*",
+    "drizzle-orm": "^0.45.4"
+  }
+}

@@ -16,6 +16,7 @@
 import { createBasketline, IDENTITY_EVENTS } from '@divya2424/basketline-sdk'
 import { randomEventId } from './analytics.js'
 import { getRequestContext } from '../api/requestContext.js'
+import { renewShopperToken } from '../features/auth/authService.js'
 
 /** The event as the backend stores it: campaignId/productId as columns, the rest as properties. */
 function activity(event) {
@@ -63,27 +64,33 @@ export function toBackendEvents(event) {
 }
 
 /**
- * Sends the storefront's events through the Basketline SDK, as any
- * vendor's site does: one client per store, which batches the events and sends
- * them with the right identity. Signed in, the user's access token (Basketline
- * users' tokens are accepted for events); signed out, this browser's visitor.
- * Sign-in and sign-out are picked up from the request context on each event:
- * the SDK then sends login and logout. Sign-in activity (login_click, …) goes
- * through identity(), everything else through track().
+ * Sends the storefront's events through the Basketline SDK, as any retailer's
+ * site does: one client per store, which batches the events and sends them with
+ * the right identity. A signed-in customer: their shopper token, which the
+ * store's backend got from Basketline with its API key; anyone else (visitors,
+ * staff): this browser's visitor. Sign-in and sign-out are picked up from the
+ * request context on each event: the SDK then sends login and logout. Sign-in
+ * activity (login_click, …) goes through identity(), everything else through track().
  */
-export function createBackendTransport({ apiUrl = import.meta.env.VITE_API_BASE_URL, createClient = createBasketline } = {}) {
-  const clients = new Map() // tenantId → { sdk, userId, token }
+
+/** The customer's shopper token, renewed by the store's backend when it is (nearly) expired. */
+async function shopperToken() {
+  const { shopper } = getRequestContext()
+  if (shopper && Date.parse(shopper.expiresAt) - Date.now() > 60_000) return shopper.token
+  return (await renewShopperToken()).token
+}
+export function createBackendTransport({ apiUrl = import.meta.env.VITE_BASKETLINE_API_URL, createClient = createBasketline, getToken = shopperToken } = {}) {
+  const clients = new Map() // tenantId → { sdk, userId }
 
   function clientFor(tenantId) {
     if (!clients.has(tenantId)) clients.set(tenantId, { sdk: createClient({ apiUrl, tenantId }), userId: null })
     const client = clients.get(tenantId)
-    const { userId, accessToken } = getRequestContext()
-    if (accessToken) client.token = accessToken
-    if (accessToken && client.userId !== userId) {
-      // After sign-out the context has no token, but the logout event is still the user's: their last one.
-      client.sdk.identify({ userId, getToken: () => getRequestContext().accessToken ?? client.token })
-      client.userId = userId
-    } else if (!accessToken && client.userId) {
+    const { shopper } = getRequestContext()
+    if (shopper && client.userId !== shopper.userId) {
+      // Basketline's ID for the customer. After sign-out, the SDK sends the logout with the token it already has.
+      client.sdk.identify({ userId: shopper.userId, getToken })
+      client.userId = shopper.userId
+    } else if (!shopper && client.userId) {
       client.sdk.reset()
       client.userId = null
     }

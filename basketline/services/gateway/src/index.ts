@@ -34,8 +34,6 @@ const { app, access } = buildGateway({
   publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')),
   services: {
     auth: requireEnv('AUTH_SERVICE_URL'),
-    product: requireEnv('PRODUCT_SERVICE_URL'),
-    campaign: requireEnv('CAMPAIGN_SERVICE_URL'),
     ingestion: requireEnv('INGESTION_SERVICE_URL'),
     insights: requireEnv('INSIGHTS_SERVICE_URL'),
   },

@@ -1,13 +1,13 @@
 /**
  * The signed-in session lives in sessionStorage (cleared when the tab closes):
- * profile, role (and a seller manager's seller), access token and its expiry, and the tenant the token belongs
- * to. Never the password.
+ * profile, role, the store's token and its expiry, a customer's Basketline
+ * shopper token, and the tenant the token belongs to. Never the password.
  * Note: script running on the page can read sessionStorage, so the app must
  * stay free of XSS; an httpOnly cookie would avoid that but needs backend support.
  */
 import { getRequestContext } from '../../api/requestContext.js'
 
-const SESSION_KEY = 'basketline:session:v3'
+const SESSION_KEY = 'retailer:session:v1'
 
 export function loadSession() {
   try {
@@ -29,9 +29,9 @@ export function loadSession() {
 export function saveSession(session) {
   try {
     if (session) {
-      const { userId, username, displayName, role, sellerId = null, accessToken, expiresAt } = session
+      const { userId, username, displayName, role, accessToken, expiresAt, shopper = null } = session
       const { tenantId } = getRequestContext()
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, displayName, role, sellerId, accessToken, expiresAt, tenantId }))
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, displayName, role, accessToken, expiresAt, shopper, tenantId }))
     } else {
       sessionStorage.removeItem(SESSION_KEY)
     }

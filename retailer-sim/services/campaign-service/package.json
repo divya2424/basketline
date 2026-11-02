@@ -1,5 +1,5 @@
 {
-  "name": "@basketline/campaign-service",
+  "name": "@retailer-sim/campaign-service",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,7 @@
   "dependencies": {
     "@basketline/contracts": "workspace:*",
     "@basketline/platform": "workspace:*",
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "@retailer-sim/shared": "workspace:*"
   }
 }

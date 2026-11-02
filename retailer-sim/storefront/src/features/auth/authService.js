@@ -1,8 +1,11 @@
 /**
- * Sign-in against the auth service (through the API gateway). The returned
- * session holds the JWT, which the API client sends with every request.
+ * Sign-in against the store's own auth service (the retailer's, not Basketline's).
+ * The session holds the store's token, which the API client sends to the store's
+ * services, and for a customer their Basketline shopper token, which the
+ * Basketline SDK sends their events with.
  */
 import { apiRequest } from '../../api/httpClient.js'
+import { getRequestContext, setShopper } from '../../api/requestContext.js'
 
 export class AuthError extends Error {
   constructor(message) {
@@ -13,36 +16,50 @@ export class AuthError extends Error {
 
 const LOGIN_MESSAGES = {
   401: 'Invalid username or password.',
-  403: 'This account is disabled.',
+  404: 'This store isn’t set up yet.',
   429: 'Too many sign-in attempts. Try again in a few minutes.',
 }
 
-/** Returns { userId, username, displayName, role, sellerId, accessToken, expiresAt }; sellerId is a seller manager's seller, else null. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The Basketline SDK's visitor ID for this store (bl.visitorId, kept in localStorage): signed in, the customer stays that person. */
+function visitorId(tenantId) {
+  try {
+    const id = localStorage.getItem(`basketline:anonymous-id:${tenantId}`)
+    return UUID.test(id ?? '') ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** { userId, shopperToken, expiresIn } from the store's backend → the session's shopper. */
+const toShopper = (basketline) =>
+  basketline ? { userId: basketline.userId, token: basketline.shopperToken, expiresAt: new Date(Date.now() + basketline.expiresIn * 1000).toISOString() } : null
+
+/** Returns { userId, username, displayName, role, accessToken, expiresAt, shopper }; shopper: a customer's Basketline identity, else null. */
 export async function authenticate(username, password) {
   try {
     const result = await apiRequest('/auth/login', {
       method: 'POST',
-      body: { username: username.trim(), password, clientType: 'web' },
+      body: { username: username.trim(), password, clientType: 'web', visitorId: visitorId(getRequestContext().tenantId) },
     })
     return {
       userId: result.user.id,
       username: result.user.username,
       displayName: result.user.username,
       role: result.user.role,
-      sellerId: result.user.sellerId ?? null,
       accessToken: result.accessToken,
       expiresAt: result.session.expiresAt,
+      shopper: toShopper(result.basketline),
     }
   } catch (error) {
     throw new AuthError(LOGIN_MESSAGES[error.status] ?? error.message ?? 'Sign-in failed. Try again.')
   }
 }
 
-/** Ends the session on the server (records the logout time). Never throws. */
-export async function endSession() {
-  try {
-    await apiRequest('/auth/logout', { method: 'POST' })
-  } catch {
-    // Already expired or revoked, or offline: the local sign-out still happens.
-  }
+/** A fresh shopper token from the store's backend, for the SDK; the session keeps it. */
+export async function renewShopperToken() {
+  const shopper = toShopper(await apiRequest('/auth/shopper-token', { method: 'POST', body: { clientType: 'web' } }))
+  setShopper(shopper)
+  return shopper
 }

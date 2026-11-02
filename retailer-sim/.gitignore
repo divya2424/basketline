@@ -1,4 +1,5 @@
 node_modules/
+keys/
 *.log
 # Built by `helm dependency build` from basketline-lib.
 deploy/helm/charts/*/charts/

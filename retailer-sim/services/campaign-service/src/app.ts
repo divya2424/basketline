@@ -1,18 +1,6 @@
 import type { CryptoKey } from 'jose'
-import {
-  authenticate,
-  createBaseApp,
-  createEventPublisher,
-  createHealth,
-  errorHandler,
-  notFoundHandler,
-  optionalAuth,
-  pingDb,
-  type EventBus,
-  type Health,
-  type Logger,
-  type RetailerIntegration,
-} from '@basketline/platform'
+import { createBaseApp, createEventPublisher, createHealth, errorHandler, notFoundHandler, pingDb, type EventBus, type Health, type Logger } from '@basketline/platform'
+import { RETAILER_EVENTS, retailerAuth, type BasketlineSender } from '@retailer-sim/shared'
 import type { Db } from './db/client.ts'
 import { createCampaignController } from './controllers/campaign.controller.ts'
 import { campaignRoutes } from './routes/campaign.routes.ts'
@@ -22,22 +10,23 @@ export interface CampaignAppDeps {
   db: Db
   bus: EventBus
   logger: Logger
+  /** The retailer's token key (retailer-auth-service signs with it). */
   publicKey: CryptoKey
-  /** Sends each campaign's state to Basketline (platform retailer.ts); none in tests. */
-  retailer?: RetailerIntegration
+  /** Sends each campaign's state to Basketline with the store's API key; none in tests. */
+  basketline?: BasketlineSender
   /** Probe state from index.ts; tests get one that's already started. */
   health?: Health
 }
 
 /** Builds the Express app: service → controller → routes. */
-export function buildCampaignApp({ db, bus, logger, publicKey, retailer, health = createHealth({ started: true }) }: CampaignAppDeps) {
+export function buildCampaignApp({ db, bus, logger, publicKey, basketline, health = createHealth({ started: true }) }: CampaignAppDeps) {
   health.addCheck('database', () => pingDb(db))
   const app = createBaseApp({ name: 'campaign-service', logger, health })
 
-  const service = createCampaignService({ db, publish: createEventPublisher(bus, 'campaign-service', logger), retailer })
+  const service = createCampaignService({ db, publish: createEventPublisher(bus, 'campaign-service', logger, { registry: RETAILER_EVENTS }), basketline })
   const controller = createCampaignController(service)
 
-  app.use('/api/v1/campaigns', campaignRoutes(controller, { authenticate: authenticate(publicKey), optionalAuth: optionalAuth(publicKey) }))
+  app.use('/api/v1/campaigns', campaignRoutes(controller, { authenticate: retailerAuth(publicKey), optionalAuth: retailerAuth(publicKey, { optional: true }) }))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

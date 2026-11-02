@@ -8,6 +8,7 @@ import { HomePage } from '../pages/HomePage.jsx'
 import { Spinner } from '../components/common/Spinner.jsx'
 import { AuthProvider } from '../features/auth/AuthContext.jsx'
 import { CatalogProvider } from '../features/catalog/CatalogContext.jsx'
+import { StoresPage } from '../features/stores/StoresPage.jsx'
 
 // The product page and cart aren't needed for the first paint of the store.
 const CartPage = lazy(() => import('../features/cart/CartPage.jsx').then((m) => ({ default: m.CartPage })))
@@ -20,7 +21,7 @@ const pageFallback = (
   </div>
 )
 
-export function App({ cartProps, authProps, catalogProps }) {
+export function App({ cartProps, authProps, catalogProps, storesProps }) {
   return (
     <AuthProvider {...authProps}>
       <CatalogProvider {...catalogProps}>
@@ -38,6 +39,7 @@ export function App({ cartProps, authProps, catalogProps }) {
                   <Route path="/store" element={<HomePage />} />
                   <Route path="/store/products/:productId" element={<ProductDetailPage />} />
                   <Route path="/cart" element={<CartPage />} />
+                  <Route path="/stores" element={<StoresPage {...storesProps} />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>

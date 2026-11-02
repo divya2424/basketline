@@ -1,10 +1,7 @@
 import { apiRequest } from '../../api/httpClient.js'
 
-/** Products and active campaigns, read from the public catalog endpoints. */
+/** The tenant's campaigns to report on ({ id, title, sellerId, status }), as Basketline knows them from the retailer's campaign events. */
 export async function fetchCatalog({ signal } = {}) {
-  const [products, campaigns] = await Promise.all([
-    apiRequest('/products?limit=100', { signal }),
-    apiRequest('/campaigns?status=active&limit=100', { signal }),
-  ])
-  return { products: products.items, campaigns: campaigns.items }
+  const { items } = await apiRequest('/ad/campaigns', { signal })
+  return { campaigns: items }
 }

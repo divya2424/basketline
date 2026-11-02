@@ -348,6 +348,15 @@ importers:
 
   retailer-sim: {}
 
+  retailer-sim/packages/shared:
+    dependencies:
+      '@basketline/platform':
+        specifier: workspace:*
+        version: link:../../../basketline/packages/platform
+      '@divya2424/basketline-sdk':
+        specifier: ^0.3.0
+        version: 0.3.0
+
   retailer-sim/services/campaign-service:
     dependencies:
       '@basketline/contracts':
@@ -356,6 +365,9 @@ importers:
       '@basketline/platform':
         specifier: workspace:*
         version: link:../../../basketline/packages/platform
+      '@retailer-sim/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
@@ -368,6 +380,24 @@ importers:
       '@basketline/platform':
         specifier: workspace:*
         version: link:../../../basketline/packages/platform
+      '@retailer-sim/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
+
+  retailer-sim/services/retailer-auth-service:
+    dependencies:
+      '@basketline/contracts':
+        specifier: workspace:*
+        version: link:../../../basketline/packages/contracts
+      '@basketline/platform':
+        specifier: workspace:*
+        version: link:../../../basketline/packages/platform
+      '@retailer-sim/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)

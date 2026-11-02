@@ -154,21 +154,20 @@ describe('permissions', () => {
   })
 
   it("limits a tenant's API keys to its campaign managers", async () => {
-    const sellerManager = (await tokenFor(keys, 'seller-manager', { sel: randomUUID() })).header
+    const visitor = (await visitorTokenFor(keys)).header
     const manager = (await tokenFor(keys, 'campaign-manager')).header
-    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', sellerManager)).status).toBe(403)
-    expect((await request(gateway).delete('/api/v1/auth/api-keys/bl_sk_abc').set('Authorization', sellerManager)).status).toBe(403)
+    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', visitor)).status).toBe(401)
+    expect((await request(gateway).delete('/api/v1/auth/api-keys/bl_sk_abc').set('Authorization', visitor)).status).toBe(401)
     expect((await request(gateway).get('/api/v1/auth/api-keys')).status).toBe(401)
     expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', manager)).body).toEqual({ from: 'auth', url: '/api/v1/auth/api-keys' })
   })
 
-  it('limits campaign metrics to campaign and seller managers, never events-only tokens', async () => {
+  it('limits campaign metrics to campaign managers, never events-only tokens', async () => {
     const path = '/api/v1/ad/abc/clicks'
     const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
     expect((await request(gateway).get(path)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', (await visitorTokenFor(keys)).header)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', `Bearer ${shopper.token}`)).status).toBe(401)
-    expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'seller-manager', { sel: randomUUID() })).header)).status).toBe(200)
     expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
   })
 
@@ -257,7 +256,7 @@ describe('revocation (from auth events, no calls to the auth service)', () => {
     // Managers read and set the list; the gateway only routes it.
     const manager = await tokenFor(keys, 'campaign-manager', { tid: tenant })
     expect((await request(gateway).put('/api/v1/auth/allowed-origins').set('Authorization', manager.header).send({ origins: [] })).body).toEqual({ from: 'auth', url: '/api/v1/auth/allowed-origins' })
-    expect((await request(gateway).get('/api/v1/auth/allowed-origins').set('Authorization', (await tokenFor(keys, 'seller-manager', { tid: tenant, sel: randomUUID() })).header)).status).toBe(403)
+    expect((await request(gateway).get('/api/v1/auth/allowed-origins').set('Authorization', (await visitorTokenFor(keys, tenant)).header)).status).toBe(401)
   })
 
   it('rejects all tokens of a disabled user', async () => {
@@ -268,8 +267,8 @@ describe('revocation (from auth events, no calls to the auth service)', () => {
 
   it('rejects tokens issued before a role change, but accepts new ones', async () => {
     const userId = randomUUID()
-    const old = await tokenFor(keys, 'seller-manager', { sub: userId, sel: randomUUID(), issuedAt: new Date(Date.now() - 60_000) })
-    await apply(authEvent('UserRoleChanged', userId, 2, { role: 'campaign-manager', previousRole: 'seller-manager', changedAt: new Date(Date.now() - 30_000).toISOString() }))
+    const old = await tokenFor(keys, 'campaign-manager', { sub: userId, issuedAt: new Date(Date.now() - 60_000) })
+    await apply(authEvent('UserRoleChanged', userId, 2, { role: 'campaign-manager', previousRole: 'campaign-manager', changedAt: new Date(Date.now() - 30_000).toISOString() }))
     expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', old.header)).body.error.code).toBe('TOKEN_STALE')
     const fresh = await tokenFor(keys, 'campaign-manager', { sub: userId })
     expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', fresh.header)).status).toBe(200)

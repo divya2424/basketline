@@ -1,7 +1,7 @@
 /**
  * Tenant API (auth-service, through the gateway; no sign-in needed). Retailers
  * onboard with POST /accounts; every tenant gets an "onboarding" campaign
- * manager and the seller managers the retailer named, all with the password "test".
+ * manager, with the password "test".
  */
 import { API_BASE_URL, ApiError, apiRequest } from '../../api/httpClient.js'
 

@@ -206,23 +206,15 @@
   gap: 14px;
 }
 
-.metric-card__customers,
-.metric-card__fact {
+.metric-card__customers {
   margin: -6px 0 0;
   font-size: 0.9rem;
   color: var(--color-text-muted);
 }
 
-.metric-card__customers strong,
-.metric-card__fact strong {
+.metric-card__customers strong {
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
-}
-
-.metric-card__note {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
 }
 
 .metric-card__error {
@@ -298,37 +290,6 @@
 .split__segment--both { background: var(--chart-both); }
 .split__segment--registered { background: var(--chart-registered); }
 .split__segment--visitor { background: var(--chart-visitor); }
-
-.progress-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.progress-stat__text {
-  margin: 0;
-  font-size: 0.9rem;
-  color: var(--color-text-muted);
-}
-
-.progress-stat__text strong {
-  color: var(--color-text);
-  font-variant-numeric: tabular-nums;
-}
-
-.progress-stat__track {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--chart-track);
-  overflow: hidden;
-}
-
-.progress-stat__fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--step-3);
-}
 
 /* The conversion between two funnel steps: an arrow with the rate on it. */
 .funnel-rate {
@@ -513,11 +474,6 @@
 
 .comparison-table td {
   font-weight: 600;
-}
-
-.comparison-table__title {
-  display: block;
-  font-weight: 700;
 }
 
 .comparison-table__id,

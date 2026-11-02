@@ -22,7 +22,7 @@ declare global {
       auth?: AccessTokenClaims
       /** Set by authenticateEvents. */
       sender?: EventSender
-      /** Set by authenticateIntegration: the retailer's backend, for its tenant. */
+      /** Set by authenticateIntegration: the store's backend, for its tenant. */
       integration?: IntegrationTokenClaims
     }
   }
@@ -131,7 +131,7 @@ export function authenticateEvents(publicKey: CryptoKey): RequestHandler {
   }
 }
 
-/** Requires an integration token (a retailer's backend, from its API key) and sets req.integration. */
+/** Requires an integration token (a store's backend, from its API key) and sets req.integration. */
 export function authenticateIntegration(publicKey: CryptoKey): RequestHandler {
   return async (req, _res, next) => {
     const token = bearerToken(req)

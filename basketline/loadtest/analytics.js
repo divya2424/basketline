@@ -5,8 +5,10 @@
 // Events go to the load-test tenant (0ad7e570-0000-4000-8000-000000000001, the tenant of the
 // "loadtest" campaign manager) and carry properties.loadtest_run = RUN_ID, so
 // freshness.sql can measure them and they can be deleted afterwards. Visitors
-// send them, each with its own visitor token, on the active campaigns and the
-// products `pnpm seed` sent (the sample catalog's product_001…product_010).
+// send them, each with its own visitor token, on the campaigns and products
+// `pnpm seed` sent (the sample catalog's campaign_001…004 and product_001…010).
+// The dashboard reads the campaigns /ad/campaigns lists, those with counts: none
+// on a tenant's first run.
 import http from 'k6/http'
 import { check } from 'k6'
 
@@ -21,11 +23,12 @@ const PASSWORD = __ENV.LOADTEST_PASSWORD || 'load test password'
 // ingestion-service allows 300 events per sender per minute: a visitor sends this
 // many batches of 10, then becomes a new visitor.
 const BATCHES_PER_VISITOR = 25
-const METRICS = ['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers', 'sessions']
+const METRICS = ['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers']
 const RANGE_DAYS = [7, 30, 90, 365]
 const DAY = 24 * 60 * 60 * 1000
 
 const PRODUCTS = Array.from({ length: 10 }, (_, i) => `product_${String(i + 1).padStart(3, '0')}`)
+const CAMPAIGNS = Array.from({ length: 4 }, (_, i) => `campaign_${String(i + 1).padStart(3, '0')}`)
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)]
 
@@ -76,13 +79,9 @@ export function setup() {
   )
   if (res.status !== 200) throw new Error(`login failed: ${res.status} ${res.body}`)
   if (res.json('user.tenantId') !== TENANT) throw new Error(`${USERNAME} must belong to tenant ${TENANT}`)
-  // Metric events are only accepted for the load-test tenant's active campaigns.
-  const campaigns = http
-    .get(`${BASE_URL}/ad/campaigns`, { headers: { Authorization: `Bearer ${res.json('accessToken')}` } })
-    .json('items')
-    .filter((campaign) => campaign.status === 'active')
-  if (campaigns.length === 0) throw new Error('no active campaigns: send the sample catalog with `pnpm seed` first (README)')
-  return { token: res.json('accessToken'), campaigns: campaigns.map(({ id }) => id) }
+  // One item per campaign and store; the dashboard reads each campaign across its stores.
+  const items = http.get(`${BASE_URL}/ad/campaigns`, { headers: { Authorization: `Bearer ${res.json('accessToken')}` } }).json('items')
+  return { token: res.json('accessToken'), readCampaigns: [...new Set(items.map(({ id }) => id))] }
 }
 
 // Per VU: the current visitor's token and ID, and how many batches it has sent.
@@ -108,8 +107,8 @@ function event(eventName, campaignId, productId) {
 }
 
 /** One browser batch: 6 impressions, 2 clicks, and an add_to_cart of the first click's product (Flink credits it to that click). */
-function batch(campaigns) {
-  const campaignId = pick(campaigns)
+function batch() {
+  const campaignId = pick(CAMPAIGNS)
   const productId = pick(PRODUCTS)
   const click = event('click', campaignId, productId)
   return [
@@ -120,10 +119,10 @@ function batch(campaigns) {
   ]
 }
 
-export function ingest(data) {
+export function ingest() {
   const { header, userId } = currentVisitor()
   // The identity the visitor token was issued for; a mismatch is rejected.
-  const body = { tenantId: TENANT, userId, userType: 'visitor', events: batch(data.campaigns) }
+  const body = { tenantId: TENANT, userId, userType: 'visitor', events: batch() }
   const res = http.post(`${BASE_URL}/analytics/events`, JSON.stringify(body), {
     headers: { 'Content-Type': 'application/json', Authorization: header },
   })
@@ -131,9 +130,10 @@ export function ingest(data) {
 }
 
 export function dashboard(data) {
+  if (data.readCampaigns.length === 0) return
   const from = new Date(Math.floor(Date.now() / DAY) * DAY - (pick(RANGE_DAYS) - 1) * DAY).toISOString()
   // The tenant comes from the token: the load-test manager reads only the load-test tenant.
-  const res = http.get(`${BASE_URL}/ad/${pick(data.campaigns)}/${pick(METRICS)}?from=${from}`, {
+  const res = http.get(`${BASE_URL}/ad/${pick(data.readCampaigns)}/${pick(METRICS)}?from=${from}`, {
     headers: { Authorization: `Bearer ${data.token}` },
   })
   check(res, { 'metric read': (r) => r.status === 200 })

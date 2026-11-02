@@ -1,12 +1,11 @@
 /**
- * Onboarding: creates a tenant (account) with an "onboarding" campaign manager,
- * any seller managers the retailer names for its sellers, all with the password
- * "test", and the tenant's first API key. The retailer's backend calls it, keeps
- * the key, and sends its catalog and campaigns to the retail API itself.
+ * Onboarding: creates a tenant (account) with an "onboarding" campaign manager
+ * (password "test") and the tenant's first API key. The store's backend calls
+ * it, keeps the key, and sends its catalog and campaigns to the retail API itself.
  * Open to anyone (see the README's warning): for demos, not production tenants.
  */
 import { randomUUID } from 'node:crypto'
-import { CAMPAIGN_MANAGER, SELLER_MANAGER, type Role, type TenantDeletedPayload, type TenantOnboardedPayload, type TenantOriginsChangedPayload } from '@basketline/contracts'
+import { CAMPAIGN_MANAGER, type TenantDeletedPayload, type TenantOnboardedPayload, type TenantOriginsChangedPayload } from '@basketline/contracts'
 import { badRequest, event, notFound, type NewEvent, type PublishEvents } from '@basketline/platform'
 import { withTenant, type Db } from '../db/client.ts'
 import { newApiKey } from './shopper.service.ts'
@@ -29,31 +28,22 @@ export function createAccountService({ db, publish }: { db: Db; publish: Publish
       return listAccounts(db)
     },
 
-    /** The account and its users are saved in one transaction; their events are published after it commits. */
+    /** The account and its user are saved in one transaction; their events are published after it commits. */
     async onboard(input: OnboardInput) {
       const tenantId = randomUUID()
       const { account, users, events, apiKey } = await withTenant(db, tenantId, async (tx) => {
         const account = await insertAccount(tx, { tenantId, name: input.name.trim(), tier: input.tier })
-        const wanted: { username: string; role: Role; sellerId?: string }[] = [
-          { username: ONBOARDING_USERNAME, role: CAMPAIGN_MANAGER },
-          // Each sees only its seller's campaigns, once the retailer has sent that seller.
-          ...(input.sellerManagers ?? []).map(({ username, sellerId }) => ({ username, role: SELLER_MANAGER, sellerId })),
-        ]
-        const users = []
-        const events: NewEvent[] = []
-        for (const { username, role, sellerId } of wanted) {
-          const created = await createUser(tx, { username, password: DEMO_PASSWORD, role, tenantId, sellerId }, null)
-          users.push({ id: created.user.id, username: created.user.username, role: created.user.role })
-          events.push(...created.events)
-        }
-        // The retailer's first API key, for its backend: integration and shopper tokens.
+        const created = await createUser(tx, { username: ONBOARDING_USERNAME, password: DEMO_PASSWORD, role: CAMPAIGN_MANAGER, tenantId }, null)
+        const users = [{ username: created.user.username, role: created.user.role }]
+        const events: NewEvent[] = created.events
+        // The tenant's first API key, for its stores' backend: integration and shopper tokens.
         const apiKey = await newApiKey(tx, tenantId, 'Default')
         return { account, users, events, apiKey }
       })
       await publish([...events, tenantOnboardedEvent(account)])
       return {
         account,
-        users: users.map(({ username, role }) => ({ username, role })),
+        users,
         password: DEMO_PASSWORD,
         // Shown once: only its hash is kept.
         apiKey: { key: apiKey.key, prefix: apiKey.prefix, name: apiKey.name },

@@ -1,7 +1,7 @@
 import { isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
 
 export interface VisitorInput {
-  /** The client's UUID for the visitor; it stays the person's ID when the retailer vouches for them (shopper-token). */
+  /** The client's UUID for the visitor; it stays the person's ID when the store vouches for them (shopper-token). */
   userId?: string
   clientType?: 'web' | 'mobile'
 }

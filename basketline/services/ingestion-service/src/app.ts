@@ -19,6 +19,7 @@ import { createReferenceService } from './services/reference.service.ts'
 
 export interface IngestionAppDeps {
   bus: EventBus
+  /** For the readiness probe: the consumers (index.ts) apply deletions there. */
   clickhouse: ClickHouse
   logger: Logger
   publicKey: CryptoKey
@@ -31,7 +32,7 @@ export interface IngestionAppDeps {
 }
 
 /**
- * The write path: events from retailers' sites and apps (the SDK) and reference
+ * The write path: events from stores' sites and apps (the SDK) and reference
  * data from their backends (the retail API), validated and published to Kafka.
  * Builds the Express app: services → controllers → routes.
  */
@@ -47,7 +48,7 @@ export function buildIngestionApp({
   health.addCheck('clickhouse', () => pingClickHouse(clickhouse))
   const app = createBaseApp({ name: 'ingestion-service', logger, health })
 
-  const ingestion = createIngestionController(createIngestionService({ bus, clickhouse, logger, maxEventsPerMinute, tenantEventsPerMinute }))
+  const ingestion = createIngestionController(createIngestionService({ bus, logger, maxEventsPerMinute, tenantEventsPerMinute }))
 
   app.use('/api/v1/analytics', analyticsRoutes(ingestion, authenticateEvents(publicKey)))
   app.use('/api/v1/retail', referenceRoutes(createReferenceController(createReferenceService({ bus, logger })), authenticateIntegration(publicKey)))

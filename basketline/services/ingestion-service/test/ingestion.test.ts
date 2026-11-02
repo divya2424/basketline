@@ -2,13 +2,12 @@ import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { decodeJwt } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CATALOG_TOPIC, externalId, IDENTITY_TOPIC, INTERACTIONS_TOPIC } from '@basketline/contracts'
-import { createLogger, createMemoryEventBus, signIntegrationToken, signShopperToken, type EventBus, type MemoryEventBus } from '@basketline/platform'
+import { CAMPAIGN_PRODUCTS_TOPIC, CAMPAIGN_TOPIC, CATALOG_TOPIC, externalId, IDENTITY_TOPIC, INTERACTIONS_TOPIC, NO_STORE } from '@basketline/contracts'
+import { createLogger, createMemoryEventBus, signIntegrationToken, signShopperToken, signVisitorToken, type EventBus, type MemoryEventBus } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 import { createTestClickHouse, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildIngestionApp } from '../src/app.ts'
 import { handleIdentityEvent } from '../src/events/identity.consumer.ts'
-import { handleReferenceEvent } from '../src/events/reference.consumer.ts'
 import { handleTenantEvent } from '../src/events/tenant.consumer.ts'
 
 const HOUR = 3_600_000
@@ -75,46 +74,13 @@ const send = (events: TestEvent[], auth = visitor, target = app, identity: objec
     .set('Authorization', auth)
     .send({ ...identity, events: events.map(toWire) })
 
-const SELLER = randomUUID()
-
-/** Applies a reference event (retail.catalog-events.v1 / retail.campaign-events.v1), as the Kafka consumer does; version orders them. */
-function referenceEvent(eventType: string, aggregateId: string, version: number, payload: object) {
-  return handleReferenceEvent(clickhouse, {
-    eventId: randomUUID(),
-    eventType,
-    eventVersion: 1,
-    occurredAt: new Date().toISOString(),
-    producer: 'ingestion-service',
-    aggregateId,
-    aggregateVersion: version,
-    payload: { tenantId: TENANT, updatedAt: new Date().toISOString(), ...payload },
-  })
-}
-
-/** A campaign_upserted, by default an active campaign of SELLER with no products. */
-function campaignEvent(campaignId: string, version: number, state: { status?: string; archived?: boolean; tenantId?: string; sellerId?: string; productIds?: string[] } = {}) {
-  return referenceEvent('campaign_upserted', campaignId, version, {
-    campaignId, sellerId: SELLER, title: 'Sale', status: 'active', startTime: null, endTime: null, archived: false, productIds: [], ...state,
-  })
-}
-
-async function activeCampaign() {
-  const campaignId = randomUUID()
-  await campaignEvent(campaignId, 1)
-  return campaignId
-}
-
 describe('ingestion: publish to the topic for each event type', () => {
-  it("rejects a declared bot's batch as invalid traffic, publishes none of it, and counts it", async () => {
-    const counted = async () =>
-      Number((await (await clickhouse.query({ query: `SELECT sum(events) AS n FROM invalid_traffic_daily WHERE tenant_id = '${TENANT}' AND reason = 'bot_user_agent'`, format: 'JSONEachRow' })).json<{ n: string }>())[0]?.n ?? 0)
-    const before = { published: bus.published.length, counted: await counted() }
+  it("rejects a declared bot's batch as invalid traffic, and publishes none of it", async () => {
+    const before = bus.published.length
     const googlebot = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
     const res = await send([{ eventName: 'home_view' }, { eventName: 'cart_view' }]).set('User-Agent', googlebot)
     expect(res.body).toMatchObject({ accepted: 0, rejected: 2, results: [{ reason: 'INVALID_TRAFFIC' }, { reason: 'INVALID_TRAFFIC' }] })
-    expect(bus.published.length).toBe(before.published)
-    // Counted asynchronously (ClickHouse batches the inserts).
-    await expect.poll(counted, { timeout: 10_000 }).toBe(before.counted + 2)
+    expect(bus.published.length).toBe(before)
 
     // A browser is not a bot.
     const chrome = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
@@ -123,8 +89,7 @@ describe('ingestion: publish to the topic for each event type', () => {
 
   it('publishes IDs in lowercase, whatever case the client sent them in', async () => {
     const before = bus.published.length
-    const campaignId = await activeCampaign()
-    const [eventId, productId] = [randomUUID(), randomUUID()]
+    const [eventId, campaignId, productId] = [randomUUID(), randomUUID(), randomUUID()]
     const res = await send([{ eventId: eventId.toUpperCase(), campaignId: campaignId.toUpperCase(), productId: productId.toUpperCase(), eventName: 'click' }])
     expect(res.body).toMatchObject({ accepted: 1 })
     const [message] = bus.published.slice(before)
@@ -134,9 +99,7 @@ describe('ingestion: publish to the topic for each event type', () => {
 
   it('publishes every accepted event to the interactions topic with the full payload', async () => {
     const before = bus.published.length
-    const campaignId = await activeCampaign()
-    const productId = randomUUID()
-    const clickId = randomUUID()
+    const [campaignId, productId, clickId] = [randomUUID(), randomUUID(), randomUUID()]
     const res = await send([
       { campaignId, eventName: 'impression', properties: { position: 1 } },
       { eventId: clickId, campaignId, productId, eventName: 'click', pageName: 'home', featureName: 'product_card' },
@@ -161,8 +124,8 @@ describe('ingestion: publish to the topic for each event type', () => {
       eventName: 'click',
       campaignId,
       productId,
-      // The catalog hasn't sent this product: no seller yet.
-      sellerId: null,
+      // The batch named no store.
+      storeId: NO_STORE,
       userId: visitorId,
       userType: 'visitor',
       clientType: 'web',
@@ -233,40 +196,21 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect((await send([event], foreign)).status).toBe(401)
   })
 
-  it("accepts metric events only for an active, unarchived campaign of the sender's tenant", async () => {
-    const active = await activeCampaign()
-    const [paused, archived, laterActive, otherTenants, noTenant] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()]
-    await campaignEvent(paused, 1)
-    await campaignEvent(paused, 2, { status: 'paused' })
-    await campaignEvent(archived, 1)
-    await campaignEvent(archived, 2, { archived: true })
-    // Versions decide, not arrival order: the older event arrives last.
-    await campaignEvent(laterActive, 2)
-    await campaignEvent(laterActive, 1, { status: 'draft' })
-    await campaignEvent(otherTenants, 1, { tenantId: OTHER_TENANT })
-    // noTenant: a campaign the retailer never sent is not active either.
-    const res = await send([
-      { campaignId: active, eventName: 'impression' },
-      { campaignId: paused, eventName: 'impression' },
-      { campaignId: archived, eventName: 'click' },
-      { campaignId: randomUUID(), eventName: 'click' },
-      { campaignId: laterActive, eventName: 'click' },
-      { campaignId: otherTenants, eventName: 'impression' },
-      { campaignId: noTenant, eventName: 'impression' },
-      // Storefront activity is stored whatever the campaign.
-      { campaignId: randomUUID(), eventName: 'campaign_navigation' },
-    ])
-    expect(res.body.results.map((r: { reason?: string }) => r.reason ?? 'accepted')).toEqual([
-      'accepted',
-      'CAMPAIGN_NOT_ACTIVE',
-      'CAMPAIGN_NOT_ACTIVE',
-      'CAMPAIGN_NOT_ACTIVE',
-      'accepted',
-      'CAMPAIGN_NOT_ACTIVE',
-      'CAMPAIGN_NOT_ACTIVE',
-      'accepted',
-    ])
-    expect((await send([{ campaignId: otherTenants, eventName: 'impression' }], (await visitorTokenFor(keys, OTHER_TENANT)).header)).body.accepted).toBe(1)
+  it("accepts metric events for any campaign: Basketline keeps no campaign records to check them against", async () => {
+    const res = await send([{ campaignId: randomUUID(), eventName: 'impression' }, { campaignId: 'never-sent', eventName: 'click' }])
+    expect(res.body).toMatchObject({ accepted: 2, rejected: 0 })
+  })
+
+  it("publishes the batch's store with each event: the store's own ID mapped to a UUID, a UUID as is", async () => {
+    const before = bus.published.length
+    const uuid = randomUUID()
+    const sendFrom = (storeId: unknown) => request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ ...identityOf(visitor), storeId, events: [toWire({ eventName: 'home_view' })] })
+    expect((await sendFrom('web')).body).toMatchObject({ accepted: 1 })
+    expect((await sendFrom(uuid.toUpperCase())).body).toMatchObject({ accepted: 1 })
+    expect(bus.published.slice(before).map((m) => (m.envelope.payload as { storeId: string }).storeId)).toEqual([externalId(TENANT, 'store', 'web'), uuid])
+    const bad = await sendFrom('not a store id!')
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.details.errors).toEqual([expect.stringContaining('storeId')])
   })
 
   it('caps the events one sender can send per minute', async () => {
@@ -285,17 +229,8 @@ describe('ingestion: publish to the topic for each event type', () => {
     const budgeted = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, tenantEventsPerMinute: { free: 3, pro: 6, enterprise: 100 } })
     const busy = randomUUID()
     const pro = randomUUID()
-    // The tier comes with TenantOnboarded (auth.tenant.v1); a tenant without one counts as free.
-    await handleTenantEvent(clickhouse, {
-      eventId: randomUUID(),
-      eventType: 'TenantOnboarded',
-      eventVersion: 1,
-      occurredAt: new Date().toISOString(),
-      producer: 'auth-service',
-      aggregateId: pro,
-      aggregateVersion: 1,
-      payload: { tenantId: pro, name: 'Pro Store', tier: 'pro', onboardedBy: randomUUID(), seed: { productIds: [], sellers: [], campaigns: [] } },
-    })
+    // The tier is in the visitor or shopper token; a token without one counts as free.
+    const proVisitor = `Bearer ${(await signVisitorToken(keys.privateKey, { tenantId: pro, tier: 'pro' })).token}`
     const two = [{ eventName: 'home_view' }, { eventName: 'home_view' }] as const
 
     expect((await send([...two], (await visitorTokenFor(keys, busy)).header, budgeted)).status).toBe(200)
@@ -306,7 +241,7 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(Number(over.headers['retry-after'])).toBeGreaterThan(0)
 
     expect((await send([{ eventName: 'home_view' }], (await visitorTokenFor(keys, OTHER_TENANT)).header, budgeted)).status).toBe(200)
-    expect((await send([...two, ...two], (await visitorTokenFor(keys, pro)).header, budgeted)).status).toBe(200)
+    expect((await send([...two, ...two], proVisitor, budgeted)).status).toBe(200)
   })
 
   it('rejects malformed batches, and events outside the time window without publishing them', async () => {
@@ -333,13 +268,15 @@ describe('ingestion: publish to the topic for each event type', () => {
 
     const before = bus.published.length
     const res = await send([
-      { eventName: 'home_view', timestamp: ago(6 * 24 * HOUR) },
+      // Older than 2 days: ClickHouse's staging (3 days) might no longer hold its day.
+      { eventName: 'home_view', timestamp: ago(49 * HOUR) },
       { eventName: 'home_view', timestamp: new Date(Date.now() + HOUR).toISOString() },
+      { eventName: 'home_view', timestamp: ago(47 * HOUR) },
       { eventName: 'home_view' },
     ])
-    expect(res.body).toMatchObject({ accepted: 1, rejected: 2 })
-    expect(res.body.results.map((r: { reason?: string }) => r.reason)).toEqual(['TIMESTAMP_OUT_OF_RANGE', 'TIMESTAMP_OUT_OF_RANGE', undefined])
-    expect(bus.published.length - before).toBe(1)
+    expect(res.body).toMatchObject({ accepted: 2, rejected: 2 })
+    expect(res.body.results.map((r: { reason?: string }) => r.reason)).toEqual(['TIMESTAMP_OUT_OF_RANGE', 'TIMESTAMP_OUT_OF_RANGE', undefined, undefined])
+    expect(bus.published.length - before).toBe(2)
   })
 
   it('answers 503 when Kafka is unavailable, so the client knows nothing was recorded', async () => {
@@ -355,7 +292,7 @@ describe('ingestion: publish to the topic for each event type', () => {
 interface Row {
   event_id?: string
   event_name: string
-  campaign_id?: string | null
+  campaign_id?: string
   product_id?: string | null
   user_id?: string | null
   user_type?: 'visitor' | 'registered'
@@ -372,10 +309,12 @@ async function insert(rows: Row[]) {
     values: rows.map((row) => ({
       event_id: randomUUID(),
       tenant_id: TENANT,
+      store_id: NO_STORE,
+      campaign_id: randomUUID(),
       user_type: 'visitor',
+      client_type: 'web',
       event_time: ago(60_000),
       received_at: new Date().toISOString(),
-      properties: '{}',
       ...row,
     })),
   })
@@ -408,9 +347,11 @@ async function insertAttributed(rows: AttributedBasket[]) {
       return {
         basket_event_id: randomUUID(),
         tenant_id: TENANT,
+        store_id: NO_STORE,
         product_id: randomUUID(),
         user_id: randomUUID(),
         user_type: 'visitor',
+        client_type: 'web',
         event_time,
         click_time: event_time,
         ...row,
@@ -419,34 +360,6 @@ async function insertAttributed(rows: AttributedBasket[]) {
   })
 }
 
-
-async function insertSession(session: { campaigns: string[]; clicked?: string[]; added?: string[]; minutes: number; start?: string; session_id?: string }) {
-  const start = session.start ?? ago(10 * HOUR)
-  await clickhouse.insert({
-    table: 'sessions',
-    format: 'JSONEachRow',
-    clickhouse_settings: { date_time_input_format: 'best_effort' },
-    values: [
-      {
-        session_id: session.session_id ?? randomUUID(),
-        tenant_id: TENANT,
-        user_id: randomUUID(),
-        user_type: 'visitor',
-        session_start: start,
-        last_event_time: new Date(new Date(start).getTime() + session.minutes * 60_000).toISOString(),
-        events: 3,
-        impressions: 1,
-        clicks: 1,
-        add_to_carts: 1,
-        web: true,
-        mobile: false,
-        campaigns: session.campaigns,
-        clicked: session.clicked ?? [],
-        added: session.added ?? [],
-      },
-    ],
-  })
-}
 
 describe('a deleted tenant (TenantDeleted)', () => {
   it("deletes all of its analytics, keeps other tenants', and records it so Kafka replays can't bring it back", async () => {
@@ -458,12 +371,10 @@ describe('a deleted tenant (TenantDeleted)', () => {
       { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID() },
     ])
     await insertAttributed([{ click_event_id: randomUUID(), campaign_id: campaignId, tenant_id: gone }])
-    await insertSession({ campaigns: [campaignId], minutes: 5 })
-    await clickhouse.command({ query: `INSERT INTO sessions (session_id, tenant_id, user_id, user_type, session_start, last_event_time, events, impressions, clicks, add_to_carts, web, mobile, campaigns, clicked, added) VALUES (generateUUIDv4(), '${gone}', generateUUIDv4(), 'visitor', now64(3), now64(3), 1, 1, 0, 0, 1, 0, ['${campaignId}'], [], [])` })
 
     const count = async (table: string, tenant: string) =>
       Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM ${table} WHERE tenant_id = {t:UUID}`, query_params: { t: tenant }, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
-    const tables = ['events', 'attributed_baskets', 'sessions', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation', 'daily_campaign_sessions_aggregation']
+    const tables = ['events', 'attributed_baskets', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation']
     for (const table of tables) expect(await count(table, gone), table).toBeGreaterThan(0)
     const othersBefore = await Promise.all(tables.map((table) => count(table, TENANT)))
 
@@ -473,30 +384,25 @@ describe('a deleted tenant (TenantDeleted)', () => {
 
     for (const table of tables) expect(await count(table, gone), table).toBe(0)
     expect(await Promise.all(tables.map((table) => count(table, TENANT)))).toEqual(othersBefore)
-    const recorded = await (await clickhouse.query({ query: 'SELECT name, archive_purged_at FROM deleted_tenants FINAL WHERE tenant_id = {t:UUID}', query_params: { t: gone }, format: 'JSONEachRow' })).json()
-    expect(recorded).toEqual([{ name: 'Gone Store', archive_purged_at: null }])
+    // The data lake purge (airflow/dags/tenant_purge.py) is still to come.
+    const recorded = await (await clickhouse.query({ query: 'SELECT name, lake_purged_at FROM deleted_tenants FINAL WHERE tenant_id = {t:UUID}', query_params: { t: gone }, format: 'JSONEachRow' })).json()
+    expect(recorded).toEqual([{ name: 'Gone Store', lake_purged_at: null }])
   })
 })
 
-describe('sellers, retailer IDs and the four event types', () => {
+describe("a store's own IDs, its reference data and the event types", () => {
   const integration = async (tenantId = TENANT) => `Bearer ${(await signIntegrationToken(keys.privateKey, tenantId)).token}`
   const retail = (path: string, events: object[], auth: string) => request(app).post(`/api/v1/retail/${path}`).set('Authorization', auth).send({ events })
-  const productEvent = (productId: string, sellerId: string) =>
-    referenceEvent('product_upserted', productId, 1, { productId, sellerId, name: 'Product', category: null, price: null, isActive: true })
 
-  it("stamps each event with its product's seller from the catalog, and maps a retailer's own IDs", async () => {
-    const [sellerId, productId] = [randomUUID(), randomUUID()]
-    await productEvent(productId, sellerId)
-    // The retailer's own campaign code, registered through its campaign feed.
+  it("maps a store's own campaign and product IDs to UUIDs", async () => {
     const code = `SPRING-${randomUUID().slice(0, 8)}`
-    await campaignEvent(externalId(TENANT, 'campaign', code), 1, { sellerId })
     const before = bus.published.length
-    const res = await send([{ campaignId: code, productId, eventName: 'click' }, { productId: randomUUID(), eventName: 'product_click' }])
-    expect(res.body).toMatchObject({ accepted: 2 })
-    const [click, unknown] = bus.published.slice(before).map((m) => m.envelope.payload as Record<string, unknown>)
-    expect(click).toMatchObject({ eventType: 'interaction', campaignId: externalId(TENANT, 'campaign', code), productId, sellerId })
-    // A product the catalog hasn't sent: accepted, with no seller yet.
-    expect(unknown!.sellerId).toBeNull()
+    expect((await send([{ campaignId: code, productId: 'SKU-9', eventName: 'click' }])).body).toMatchObject({ accepted: 1 })
+    expect(bus.published[before]!.envelope.payload).toMatchObject({
+      eventType: 'interaction',
+      campaignId: externalId(TENANT, 'campaign', code),
+      productId: externalId(TENANT, 'product', 'SKU-9'),
+    })
   })
 
   it('sends login activity to the identity topic, and refuses server-only identity events from a client', async () => {
@@ -508,8 +414,8 @@ describe('sellers, retailer IDs and the four event types', () => {
     expect((await send([{ eventName: 'user_deleted' as never }])).status).toBe(400)
   })
 
-  it("takes reference data only with an integration token, mapping the retailer's IDs and its first-party seller", async () => {
-    const product = [{ eventName: 'product_upserted', data: { productId: 'SKU-1', name: 'Trail shoe' } }]
+  it("takes reference data only with an integration token, mapping the store's IDs and its first-party seller", async () => {
+    const product = [{ eventName: 'product_upserted', data: { productId: 'SKU-1', storeId: 'web', name: 'Trail shoe' } }]
     expect((await retail('catalog', product, visitor)).status).toBe(401)
     expect((await retail('catalog', product, reader)).status).toBe(401)
     expect((await retail('campaigns', [{ eventName: 'campaign_upserted', data: { campaignId: 'C-1', title: 'x', status: 'active', productIds: [] } }], await integration())).status).toBe(400)
@@ -521,23 +427,35 @@ describe('sellers, retailer IDs and the four event types', () => {
     expect(published.every((m) => m.topic === CATALOG_TOPIC)).toBe(true)
     expect(published.map((m) => [m.envelope.eventType, m.envelope.payload])).toEqual([
       ['seller_upserted', expect.objectContaining({ sellerId: firstParty, tenantId: TENANT })],
-      ['product_upserted', expect.objectContaining({ productId: externalId(TENANT, 'product', 'SKU-1'), sellerId: firstParty, name: 'Trail shoe', isActive: true })],
+      ['product_upserted', expect.objectContaining({ productId: externalId(TENANT, 'product', 'SKU-1'), storeId: externalId(TENANT, 'store', 'web'), sellerId: firstParty, name: 'Trail shoe', isActive: true })],
     ])
   })
 
-  it("flags a campaign that includes another seller's product, and keeps it", async () => {
-    const [ours, theirs, campaignId] = [randomUUID(), randomUUID(), randomUUID()]
-    const sellerId = randomUUID()
-    await productEvent(ours, sellerId)
-    await productEvent(theirs, randomUUID())
-    await campaignEvent(campaignId, 1, { sellerId, productIds: [ours, theirs] })
-    const result = await clickhouse.query({ query: `SELECT issues FROM campaigns FINAL WHERE campaign_id = '${campaignId}'`, format: 'JSONEachRow' })
-    expect(await result.json()).toEqual([{ issues: [`product ${theirs} belongs to another seller`] }])
+  it("sends a store's campaigns, and the products it adds to them, to their own topics", async () => {
+    const before = bus.published.length
+    const res = await retail('campaigns', [
+      { eventName: 'campaign_upserted', data: { campaignId: 'C-7', storeId: 'web', sellerId: 'S-1', title: 'Spring', status: 'active', productIds: ['SKU-1'] } },
+      { eventName: 'campaign_product_added', data: { campaignId: 'C-7', productId: 'SKU-1', storeId: 'web', productName: 'Trail shoe', productPrice: 89.5, category: 'shoes' } },
+      { eventName: 'campaign_product_removed', data: { campaignId: 'C-7', productId: 'SKU-2' } },
+    ], await integration())
+    expect(res.status).toBe(202)
+    const [campaign, product, sku2] = [externalId(TENANT, 'campaign', 'C-7'), externalId(TENANT, 'product', 'SKU-1'), externalId(TENANT, 'product', 'SKU-2')]
+    const store = externalId(TENANT, 'store', 'web')
+    expect(bus.published.slice(before).map((m) => [m.topic, m.key, m.envelope.eventType, m.envelope.payload])).toEqual([
+      [CAMPAIGN_TOPIC, campaign, 'campaign_upserted', expect.objectContaining({ campaignId: campaign, storeId: store, tenantId: TENANT, title: 'Spring', productIds: [product] })],
+      [CAMPAIGN_PRODUCTS_TOPIC, `${campaign}:${product}`, 'campaign_product_added', {
+        campaignId: campaign, productId: product, storeId: store, sellerId: null, productName: 'Trail shoe', productPrice: 89.5, category: 'shoes', tenantId: TENANT, updatedAt: expect.any(String),
+      }],
+      [CAMPAIGN_PRODUCTS_TOPIC, `${campaign}:${sku2}`, 'campaign_product_removed', { campaignId: campaign, productId: sku2, tenantId: TENANT, updatedAt: expect.any(String) }],
+    ])
+    // A product needs its name.
+    const unnamed = await retail('campaigns', [{ eventName: 'campaign_product_added', data: { campaignId: 'C-7', productId: 'SKU-1' } }], await integration())
+    expect(unnamed.status).toBe(400)
   })
 
-  it("erases a shopper's rows on user_deleted, and records it for the archive", async () => {
+  it("erases a shopper's staged rows on user_deleted, and records it", async () => {
     const [gone, kept] = [randomUUID(), randomUUID()]
-    await insert([{ event_name: 'home_view', user_id: gone }, { event_name: 'home_view', user_id: kept }])
+    await insert([{ event_name: 'impression', user_id: gone }, { event_name: 'impression', user_id: kept }])
     const now = new Date().toISOString()
     await handleIdentityEvent(clickhouse, {
       eventId: randomUUID(), eventType: 'AnalyticsEventRecorded', eventVersion: 1, occurredAt: now, producer: 'ingestion-service', aggregateId: gone, aggregateVersion: 1,

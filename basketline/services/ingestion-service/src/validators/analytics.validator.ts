@@ -1,5 +1,5 @@
 import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
-import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, isRetailerId, METRIC_EVENT_NAMES, USER_TYPES, type AnalyticsEventName, type UserType } from '@basketline/contracts'
+import { ANALYTICS_EVENT_NAMES as EVENT_NAMES, isStoreRecordId, METRIC_EVENT_NAMES, USER_TYPES, type AnalyticsEventName, type UserType } from '@basketline/contracts'
 
 export const MAX_EVENTS_PER_REQUEST = 100
 
@@ -33,9 +33,9 @@ function validateEvent(event: unknown, at: string): string[] {
   const { campaignId, productId } = (event.properties ?? {}) as Record<string, unknown>
   // The campaign metrics need a campaign; other activity may or may not have one.
   const campaignRequired = isOneOf(event.eventName, METRIC_EVENT_NAMES)
-  // A UUID, or the retailer's own ID (mapped by ingestion: retail.ts externalId).
-  if ((campaignRequired || campaignId != null) && !isRetailerId(campaignId)) errors.push(`${at}.properties.campaignId must be a campaign ID (a UUID or your own ID)`)
-  if (productId != null && !isRetailerId(productId)) errors.push(`${at}.properties.productId must be a product ID (a UUID or your own ID)`)
+  // A UUID, or the store's own ID (mapped by ingestion: retail.ts externalId).
+  if ((campaignRequired || campaignId != null) && !isStoreRecordId(campaignId)) errors.push(`${at}.properties.campaignId must be a campaign ID (a UUID or your own ID)`)
+  if (productId != null && !isStoreRecordId(productId)) errors.push(`${at}.properties.productId must be a product ID (a UUID or your own ID)`)
   return errors
 }
 
@@ -47,11 +47,13 @@ export interface IngestIdentity {
   userType: UserType
 }
 
-const BODY_FIELDS = ['tenantId', 'userId', 'userType', 'events']
+const BODY_FIELDS = ['tenantId', 'storeId', 'userId', 'userType', 'events']
 
 export function validateIngest(body: unknown): string[] {
-  if (!isPlainObject(body) || !Array.isArray(body.events)) return ['body must be { "tenantId", "userId", "userType", "events": [...] }']
+  if (!isPlainObject(body) || !Array.isArray(body.events)) return ['body must be { "tenantId", "storeId"?, "userId", "userType", "events": [...] }']
   const errors = unknownKeys(body, BODY_FIELDS).map((key) => `unknown field "${key}"`)
+  // Which of the tenant's stores the batch comes from: its own ID or a UUID (mapped by ingestion).
+  if (body.storeId !== undefined && !isStoreRecordId(body.storeId)) errors.push('storeId must be a store ID (a UUID or your own ID)')
   if (!isUuid(body.tenantId)) errors.push('tenantId must be a UUID')
   if (!isUuid(body.userId)) errors.push('userId must be a UUID')
   if (!isOneOf(body.userType, USER_TYPES)) errors.push(`userType must be one of ${USER_TYPES.join(', ')}`)

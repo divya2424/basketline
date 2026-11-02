@@ -1,7 +1,6 @@
-import { formatDuration } from '../../utils/format.js'
 import { METRICS, METRIC_LABELS } from './analyticsService.js'
 import { calculateClickToBasketRate, calculateCtr } from './metricMath.js'
-import { EventTotal, FunnelRate, MetricCard, ProgressStat, SplitBar } from './MetricCard.jsx'
+import { EventTotal, FunnelRate, MetricCard, SplitBar } from './MetricCard.jsx'
 import { useCampaignMetrics } from './useCampaignMetrics.js'
 
 // The funnel cards count customers, as the API's spec defines these metrics; the
@@ -11,7 +10,6 @@ const HINTS = {
   clicks: 'Customers who clicked the ad',
   clickToBasket: 'Customers who added a product to their cart within 7 days of clicking it in the ad',
   uniqueCustomers: 'People who saw or clicked the ad, each counted once',
-  sessions: 'Visits that saw the ad; a visit ends after 6 hours without activity',
 }
 
 /** Web and mobile, as a split bar (unique customers: web only, both, mobile only). */
@@ -50,11 +48,11 @@ function userTypes(state) {
 /**
  * One campaign's metrics as a funnel (impressions → clicks → click-to-basket,
  * with the conversion rate between each step) and its audience (unique
- * customers, sessions).
+ * customers), in one store (storeId) or all.
  */
-export function CampaignMetricsPanel({ api, campaignId, campaignTitle, period }) {
-  const { metrics, retry } = useCampaignMetrics(api, campaignId, period)
-  const { clicks, impressions, clickToBasket, uniqueCustomers, sessions } = metrics
+export function CampaignMetricsPanel({ api, campaignId, storeId, period }) {
+  const { metrics, retry } = useCampaignMetrics(api, campaignId, period, storeId)
+  const { clicks, impressions, clickToBasket, uniqueCustomers } = metrics
   const pendingCount = METRICS.filter((metric) => metrics[metric].status === 'loading').length
   const card = (metric, children, tone, value) => (
     <MetricCard label={METRIC_LABELS[metric]} hint={HINTS[metric]} state={metrics[metric]} value={value} onRetry={() => retry(metric)} tone={tone}>
@@ -85,7 +83,7 @@ export function CampaignMetricsPanel({ api, campaignId, campaignTitle, period })
           {pendingCount > 0 ? (
             <p className="loading-chip" data-testid="metrics-loading">
               <span className="loading-chip__dot" aria-hidden="true" />
-              Loading metrics for {campaignTitle ?? campaignId}… ({METRICS.length - pendingCount} of {METRICS.length} loaded)
+              Loading metrics for {campaignId}… ({METRICS.length - pendingCount} of {METRICS.length} loaded)
             </p>
           ) : null}
         </div>
@@ -120,18 +118,6 @@ export function CampaignMetricsPanel({ api, campaignId, campaignTitle, period })
             {platform(uniqueCustomers, 'Where they came from')}
             {userTypes(uniqueCustomers)}
           </>,
-        )}
-        {card(
-          'sessions',
-          sessions.sessionStats ? (
-            <>
-              <ProgressStat label="Converted" value={sessions.sessionStats.converted} of={sessions.value} />
-              <p className="metric-card__fact">
-                Average visit <strong>{formatDuration(sessions.sessionStats.averageDurationMs)}</strong>
-              </p>
-              <p className="metric-card__note">Updated about 7 hours after a visit ends</p>
-            </>
-          ) : null,
         )}
       </div>
     </div>

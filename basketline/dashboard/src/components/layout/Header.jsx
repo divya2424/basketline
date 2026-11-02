@@ -32,7 +32,7 @@ export function Header() {
   }
 
   const tenantName = getRequestContext().tenantName || 'Basketline'
-  const seesAnalytics = user.role === ROLES.CAMPAIGN_MANAGER || user.role === ROLES.SELLER_MANAGER
+  const seesAnalytics = user.role === ROLES.CAMPAIGN_MANAGER
   const signOut = async () => {
     await logout()
     navigate('/')

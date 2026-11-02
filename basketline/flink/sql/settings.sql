@@ -15,6 +15,3 @@ SET 'execution.checkpointing.dir' = 'file://__CHECKPOINT_DIR__';
 -- manager still restores from checkpoint storage.
 SET 'execution.checkpointing.local-backup.enabled' = 'true';
 SET 'execution.state-recovery.from-local' = 'true';
--- A topic partition without new events stops holding back the watermark after a
--- minute, so quiet topics don't stall the session windows.
-SET 'table.exec.source.idle-timeout' = '1 min';

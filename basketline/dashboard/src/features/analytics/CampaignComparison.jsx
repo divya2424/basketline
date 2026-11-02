@@ -8,9 +8,10 @@ import { useCampaignMetrics } from './useCampaignMetrics.js'
 /**
  * Side-by-side view of every campaign: each count with the customers behind it,
  * and the two conversion rates. There is no totals row: one shopper can see
- * several campaigns, so customers can't be added across them.
+ * several campaigns, so customers can't be added across them. In one store
+ * (storeId) or all.
  */
-export function CampaignComparison({ api, campaigns, period }) {
+export function CampaignComparison({ api, campaigns, storeId, period }) {
   return (
     <div className="table-wrap">
       <table className="comparison-table">
@@ -22,14 +23,13 @@ export function CampaignComparison({ api, campaigns, period }) {
             <th scope="col">Clicks</th>
             <th scope="col">Click-to-basket</th>
             <th scope="col">Unique customers</th>
-            <th scope="col">Sessions</th>
             <th scope="col">CTR</th>
             <th scope="col">Click-to-basket rate</th>
           </tr>
         </thead>
         <tbody>
           {campaigns.map((campaign) => (
-            <ComparisonRow key={campaign.id} api={api} campaign={campaign} period={period} />
+            <ComparisonRow key={campaign.id} api={api} campaign={campaign} storeId={storeId} period={period} />
           ))}
         </tbody>
       </table>
@@ -41,15 +41,14 @@ export function CampaignComparison({ api, campaigns, period }) {
   )
 }
 
-function ComparisonRow({ api, campaign, period }) {
-  const { metrics, retry } = useCampaignMetrics(api, campaign.id, period)
-  const { clicks, impressions, clickToBasket, uniqueCustomers, sessions } = metrics
+function ComparisonRow({ api, campaign, storeId, period }) {
+  const { metrics, retry } = useCampaignMetrics(api, campaign.id, period, storeId)
+  const { clicks, impressions, clickToBasket, uniqueCustomers } = metrics
   const failed = METRICS.filter((metric) => metrics[metric].status === 'error')
 
   return (
     <tr>
       <th scope="row">
-        <span className="comparison-table__title">{campaign.title}</span>
         <span className="comparison-table__id">{campaign.id}</span>
         {failed.length > 0 ? (
           <Button variant="link" size="sm" onClick={() => failed.forEach(retry)}>
@@ -61,7 +60,6 @@ function ComparisonRow({ api, campaign, period }) {
       <CountCell state={clicks} />
       <CountCell state={clickToBasket} />
       <CountCell state={uniqueCustomers} />
-      <CountCell state={sessions} />
       <RateCell inputs={[clicks, impressions]} value={calculateCtr(clicks.value, impressions.value)} />
       <RateCell inputs={[clickToBasket, clicks]} value={calculateClickToBasketRate(clickToBasket.value, clicks.value)} />
     </tr>

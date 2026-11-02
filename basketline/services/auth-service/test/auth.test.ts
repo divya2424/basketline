@@ -154,7 +154,9 @@ describe('visitor tokens', () => {
     const res = await request(app).post('/api/v1/auth/visitor').set('tenant_id', TENANT)
     expect(res.status).toBe(201)
     expect(res.body).toMatchObject({ tokenType: 'Bearer', expiresIn: 1800 })
-    expect(await verifyVisitorToken(res.body.visitorToken, keys.publicKey)).toMatchObject({ tid: TENANT })
+    // With the tenant's tier, for its ingestion budget.
+    expect(await verifyVisitorToken(res.body.visitorToken, keys.publicKey)).toMatchObject({ tid: TENANT, tier: 'free' })
+    expect(await verifyEventToken(res.body.visitorToken, keys.publicKey)).toMatchObject({ tenantId: TENANT, tier: 'free' })
     // Not an access token: the other APIs reject it.
     const me = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${res.body.visitorToken}`)
     expect(me.status).toBe(401)
@@ -195,7 +197,7 @@ describe('vendor API keys and shopper tokens', () => {
     expect(first.status).toBe(201)
     expect(first.body).toMatchObject({ tokenType: 'Bearer', expiresIn: 1800, userId: visitor })
     // Accepted as a registered sender, for this tenant, by event ingestion only.
-    expect(await verifyEventToken(first.body.shopperToken, keys.publicKey)).toMatchObject({ tenantId: TENANT, userId: visitor, userType: 'registered', clientType: 'web' })
+    expect(await verifyEventToken(first.body.shopperToken, keys.publicKey)).toMatchObject({ tenantId: TENANT, userId: visitor, userType: 'registered', clientType: 'web', tier: 'free' })
     expect(decodeJwt(first.body.shopperToken).aud).toBe('basketline-events')
 
     // Later: the same UUID, whatever visitor ID comes with it.
@@ -237,6 +239,7 @@ describe('login', () => {
     expect(Object.keys(claims)).toEqual(expect.arrayContaining(['sub', 'sid', 'role', 'tid', 'iat', 'exp']))
     expect(claims.exp! - claims.iat!).toBe(1800)
     expect(claims).toMatchObject({ sub: user.id, sid: res.body.session.id, role: 'campaign-manager', tid: TENANT, client: 'mobile' })
+    expect(claims).not.toHaveProperty('sel')
     expect(new Date(res.body.session.expiresAt).getTime()).toBe(claims.exp! * 1000)
 
     const { rows } = await queryAsTenant('SELECT tenant_id, client_type, session_end_time FROM user_login WHERE id = $1', [res.body.session.id])
@@ -326,11 +329,10 @@ describe('logout and session state', () => {
     expect((await request(app).get('/api/v1/auth/me')).status).toBe(401)
   })
 
-  it("never changes a seller-manager's role (its seller would be left over), and a same-role change is a no-op", async () => {
+  it('a same-role change is a no-op', async () => {
     const { username } = await addUser()
     const same = await withTenant(db, TENANT, (tx) => changeRole(tx, TENANT, username, 'campaign-manager', null))
     expect(same.events).toEqual([])
-    await expect(withTenant(db, TENANT, (tx) => changeRole(tx, TENANT, username, 'seller-manager', null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
   })
 
   it('disabling a user ends their open sessions and emits SessionRevoked for each', async () => {
@@ -356,9 +358,17 @@ describe('event publishing (after commit, no outbox)', () => {
 
   it('publishes nothing when the transaction rolls back', async () => {
     const before = bus.published.length
-    // The onboarding user is created, then the second user fails: the tenant's whole onboarding rolls back.
-    const res = await request(app).post('/api/v1/accounts').send({ name: 'Rolled back', tier: 'free', sellerManagers: [{ username: 'onboarding', sellerId: randomUUID() }] })
-    expect(res.status).toBe(409)
+    // The account and its user are saved, then the API key (saved last) fails: the tenant's whole onboarding rolls back.
+    await db.$client.query(`CREATE FUNCTION fail_api_key() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'api key refused'; END $$`)
+    await db.$client.query('CREATE TRIGGER fail_api_key BEFORE INSERT ON api_keys FOR EACH ROW EXECUTE FUNCTION fail_api_key()')
+    let res
+    try {
+      res = await request(app).post('/api/v1/accounts').send({ name: 'Rolled back', tier: 'free' })
+    } finally {
+      await db.$client.query('DROP TRIGGER fail_api_key ON api_keys')
+      await db.$client.query('DROP FUNCTION fail_api_key()')
+    }
+    expect(res.status).toBe(500)
     expect(bus.published.length).toBe(before)
     expect((await request(app).get('/api/v1/accounts')).body.items.map((a: { name: string }) => a.name)).not.toContain('Rolled back')
   })
@@ -395,7 +405,7 @@ describe('tenant onboarding (/accounts)', () => {
   })
 
   it("gives the vendor a first API key, shown once, that its managers can list, add to and revoke", async () => {
-    const res = await onboard({ name: 'Vendor with a key', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] })
+    const res = await onboard({ name: 'Vendor with a key', tier: 'free' })
     const tenant = res.body.account.tenantId as string
     const first = res.body.apiKey as { key: string; prefix: string; name: string }
     expect(first).toMatchObject({ name: 'Default', key: expect.stringMatching(/^bl_sk_/) })
@@ -404,7 +414,6 @@ describe('tenant onboarding (/accounts)', () => {
     expect(token.status).toBe(201)
 
     const manager = `Bearer ${(await signIn(tenant, 'onboarding')).body.accessToken}`
-    const sellerManager = `Bearer ${(await signIn(tenant, 'seller01')).body.accessToken}`
     const keys = () => request(app).get('/api/v1/auth/api-keys').set('Authorization', manager)
     // Listed by prefix, never the key itself.
     expect((await keys()).body.items).toEqual([{ prefix: first.prefix, name: 'Default', createdAt: expect.any(String), revokedAt: null }])
@@ -422,8 +431,8 @@ describe('tenant onboarding (/accounts)', () => {
       ['Default', false],
     ])
 
-    // Not for seller managers, and a manager sees only their own tenant's keys.
-    expect((await request(app).get('/api/v1/auth/api-keys').set('Authorization', sellerManager)).status).toBe(403)
+    // Not without signing in, and a manager sees only their own tenant's keys.
+    expect((await request(app).get('/api/v1/auth/api-keys')).status).toBe(401)
     const other = await onboard({ name: 'Another vendor', tier: 'free' })
     const otherManager = `Bearer ${(await signIn(other.body.account.tenantId, 'onboarding')).body.accessToken}`
     const otherKeys = await request(app).get('/api/v1/auth/api-keys').set('Authorization', otherManager)
@@ -432,10 +441,9 @@ describe('tenant onboarding (/accounts)', () => {
   })
 
   it("lets the tenant's managers set its allowed websites, normalized, and tells the gateway", async () => {
-    const res = await onboard({ name: 'Vendor with a website', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] })
+    const res = await onboard({ name: 'Vendor with a website', tier: 'free' })
     const tenant = res.body.account.tenantId as string
     const manager = `Bearer ${(await signIn(tenant, 'onboarding')).body.accessToken}`
-    const sellerManager = `Bearer ${(await signIn(tenant, 'seller01')).body.accessToken}`
     const origins = () => request(app).get('/api/v1/auth/allowed-origins').set('Authorization', manager)
     const set = (body: object, auth = manager) => request(app).put('/api/v1/auth/allowed-origins').set('Authorization', auth).send(body)
     // None at first: any website may send the tenant's events.
@@ -454,11 +462,13 @@ describe('tenant onboarding (/accounts)', () => {
     expect(bad.status).toBe(400)
     expect(bad.body.error.details.errors).toHaveLength(4)
     expect((await set({ origins: Array.from({ length: 21 }, (_, i) => `https://shop${i}.example`) })).status).toBe(400)
-    expect((await set({ origins: [] }, sellerManager)).status).toBe(403)
+    // Shoppers can't: only the tenant's managers.
+    const shopper = await request(app).post('/api/v1/auth/shopper-token').set('tenant_id', tenant).set('Authorization', `ApiKey ${res.body.apiKey.key}`).send({ customerId: 'c-1' })
+    expect((await set({ origins: [] }, `Bearer ${shopper.body.shopperToken}`)).status).toBe(401)
   })
 
   it('deletes a tenant and all of its identity data when its name is typed again, then tells the other services', async () => {
-    const res = await onboard({ name: 'To Delete', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] })
+    const res = await onboard({ name: 'To Delete', tier: 'free' })
     const tenant = res.body.account.tenantId as string
     const kept = await onboard({ name: 'To Keep', tier: 'free' })
     expect((await signIn(tenant, 'onboarding')).status).toBe(200)
@@ -484,31 +494,6 @@ describe('tenant onboarding (/accounts)', () => {
     expect(event).toMatchObject({ topic: 'auth.tenant.v1', key: tenant, envelope: { payload: { tenantId: tenant, name: 'To Delete' } } })
     // Other tenants are untouched.
     expect((await signIn(kept.body.account.tenantId, 'onboarding')).status).toBe(200)
-  })
-
-  it('adds the seller managers the retailer names, for its sellers, all signing in with "test"', async () => {
-    const [north, south] = [randomUUID(), randomUUID()]
-    const res = await onboard({ name: 'With sellers', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: north }, { username: 'seller02', sellerId: south.toUpperCase() }] })
-    expect(res.status).toBe(201)
-    const tenant = res.body.account.tenantId as string
-    expect(res.body.users).toEqual([
-      { username: 'onboarding', role: 'campaign-manager' },
-      { username: 'seller01', role: 'seller-manager' },
-      { username: 'seller02', role: 'seller-manager' },
-    ])
-    // Each token carries its seller.
-    const seller = await signIn(tenant, 'seller02')
-    expect(seller.body.user).toMatchObject({ role: 'seller-manager', sellerId: south })
-    expect(decodeJwt(seller.body.accessToken)).toMatchObject({ role: 'seller-manager', sel: south })
-    // The users belong to the new tenant only.
-    expect((await signIn(TENANT, 'seller01')).status).toBe(401)
-    const { rows } = await queryAsTenant('SELECT count(*)::int AS n FROM users', [], tenant)
-    expect(rows[0].n).toBe(3)
-  })
-
-  it('creates a seller-manager only with its seller, and no other role with one', async () => {
-    await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'no-seller', password: 'x', role: 'seller-manager', tenantId: TENANT }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
-    await expect(withTenant(db, TENANT, (tx) => createUser(tx, { username: 'odd', password: 'x', role: 'campaign-manager', tenantId: TENANT, sellerId: randomUUID() }, null))).rejects.toMatchObject({ code: 'SELLER_REQUIRED' })
   })
 
   it("exchanges the tenant's API key for an integration token, with no internal shortcut", async () => {
@@ -548,8 +533,7 @@ describe('tenant onboarding (/accounts)', () => {
       { name: '', tier: 'free' },
       { name: 'x', tier: 'gold' },
       { name: 'x', tier: 'free', dummyUsers: true },
-      { name: 'x', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: 'not-a-uuid' }] },
-      { name: 'x', tier: 'free', sellerManagers: 'seller01' },
+      { name: 'x', tier: 'free', sellerManagers: [{ username: 'seller01', sellerId: randomUUID() }] },
       { name: 'x', tier: 'free', tenantId: randomUUID() },
     ]) {
       const res = await onboard(body)

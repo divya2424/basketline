@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { NO_STORE } from '@basketline/contracts'
 import { createLogger, signShopperToken } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 import { createTestClickHouse, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
@@ -38,19 +39,11 @@ afterAll(async () => {
   await db.drop()
 })
 
-/** A campaign in the campaigns copy, as ingestion-service keeps it from the retail API. */
-async function insertCampaign(campaignId: string, sellerId: string, { title = '', archived = false, version = 1, tenantId = TENANT } = {}) {
-  await clickhouse.insert({
-    table: 'campaigns',
-    format: 'JSONEachRow',
-    values: [{ campaign_id: campaignId, tenant_id: tenantId, status: 'active', archived, version, seller_id: sellerId, title }],
-  })
-}
-
 interface Row {
   event_id?: string
   event_name: string
-  campaign_id?: string | null
+  store_id?: string
+  campaign_id?: string
   product_id?: string | null
   user_id?: string | null
   user_type?: 'visitor' | 'registered'
@@ -67,10 +60,12 @@ async function insert(rows: Row[]) {
     values: rows.map((row) => ({
       event_id: randomUUID(),
       tenant_id: TENANT,
+      store_id: NO_STORE,
+      campaign_id: randomUUID(),
       user_type: 'visitor',
+      client_type: 'web',
       event_time: ago(60_000),
       received_at: new Date().toISOString(),
-      properties: '{}',
       ...row,
     })),
   })
@@ -84,6 +79,7 @@ interface AttributedBasket {
   basket_event_id?: string
   click_event_id: string
   campaign_id: string
+  store_id?: string
   client_type?: 'web' | 'mobile'
   product_id?: string
   user_id?: string
@@ -103,9 +99,11 @@ async function insertAttributed(rows: AttributedBasket[]) {
       return {
         basket_event_id: randomUUID(),
         tenant_id: TENANT,
+        store_id: NO_STORE,
         product_id: randomUUID(),
         user_id: randomUUID(),
         user_type: 'visitor',
+        client_type: 'web',
         event_time,
         click_time: event_time,
         ...row,
@@ -188,7 +186,7 @@ describe('the /ad metrics, read from ClickHouse', () => {
     expect((await metric(campaignId, 'clicks', '', otherManager)).body.count).toBe(2)
   })
 
-  it("is only for campaign and seller managers: not shoppers' or visitors' tokens", async () => {
+  it("is only for campaign managers: not shoppers' or visitors' tokens", async () => {
     const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId: randomUUID() })).token}`
     expect((await metric(randomUUID(), 'clicks', '', shopper)).status).toBe(401)
     expect((await metric(randomUUID(), 'clicks', '', visitor)).status).toBe(401)
@@ -382,61 +380,8 @@ describe('daily_campaign_customers_aggregation: unique customers', () => {
       customers_web_click_to_basket: 0,
       customers_registered_click_to_basket: 1,
     })
-    // Unique customers and sessions have no separate customers field.
+    // Unique customers have no separate customers field.
     expect((await metric(campaignId, 'uniqueCustomers')).body).not.toHaveProperty('customers')
-  })
-})
-
-/** Sessions as the Flink job writes them (through Kafka); 03_kafka.sql derives session_id. */
-async function insertSession(session: { campaigns: string[]; clicked?: string[]; added?: string[]; minutes: number; start?: string; session_id?: string }) {
-  const start = session.start ?? ago(10 * HOUR)
-  await clickhouse.insert({
-    table: 'sessions',
-    format: 'JSONEachRow',
-    clickhouse_settings: { date_time_input_format: 'best_effort' },
-    values: [
-      {
-        session_id: session.session_id ?? randomUUID(),
-        tenant_id: TENANT,
-        user_id: randomUUID(),
-        user_type: 'visitor',
-        session_start: start,
-        last_event_time: new Date(new Date(start).getTime() + session.minutes * 60_000).toISOString(),
-        events: 3,
-        impressions: 1,
-        clicks: 1,
-        add_to_carts: 1,
-        web: true,
-        mobile: false,
-        campaigns: session.campaigns,
-        clicked: session.clicked ?? [],
-        added: session.added ?? [],
-      },
-    ],
-  })
-}
-
-describe('daily_campaign_sessions_aggregation: sessions', () => {
-  it('counts the sessions that saw a campaign, those that converted, and their average duration', async () => {
-    const [campaignId, otherCampaign] = [randomUUID(), randomUUID()]
-    const [product, otherProduct] = [randomUUID(), randomUUID()]
-    const repeated = randomUUID()
-    // Converted: clicked the product in this campaign and added it to the cart.
-    await insertSession({ campaigns: [campaignId, otherCampaign], clicked: [`${campaignId}:${product}`], added: [product], minutes: 30, session_id: repeated })
-    // Written again after a Flink restart: counts once.
-    await insertSession({ campaigns: [campaignId, otherCampaign], clicked: [`${campaignId}:${product}`], added: [product], minutes: 30, session_id: repeated })
-    // Not converted: added another product than the one clicked.
-    await insertSession({ campaigns: [campaignId], clicked: [`${campaignId}:${product}`], added: [otherProduct], minutes: 10 })
-
-    const sessions = await metric(campaignId, 'sessions')
-    expect(sessions.status).toBe(200)
-    expect(sessions.body).toMatchObject({ metric: 'sessions', count: 2, total_sessions: 2, total_converted_sessions: 1 })
-    expect(sessions.body).not.toHaveProperty('customers')
-    // (30 + 30 + 10) / 3 rows: a repeated session counts in the average.
-    expect(sessions.body.avg_session_duration_ms).toBeCloseTo((70 / 3) * 60_000, -3)
-    // Seen, but the click and the basket were for another campaign.
-    expect((await metric(otherCampaign, 'sessions')).body).toMatchObject({ count: 1, total_converted_sessions: 0 })
-    expect((await metric(randomUUID(), 'sessions')).body).toMatchObject({ count: 0, avg_session_duration_ms: 0 })
   })
 })
 
@@ -529,7 +474,7 @@ describe("ClickHouse's tenant isolation (the reader user's row policy)", () => {
     expect(await tenantsSeen({ SQL_tenant_id: OTHER_TENANT })).toEqual([OTHER_TENANT])
     expect(await tenantsSeen({})).toEqual([])
     // The reader can't write.
-    await expect(readClickhouse.command({ query: `INSERT INTO tenants VALUES (generateUUIDv4(), 'enterprise', 1)` })).rejects.toThrow(/Not enough privileges/)
+    await expect(readClickhouse.command({ query: `INSERT INTO deleted_users (tenant_id, user_id, deleted_at) VALUES (generateUUIDv4(), generateUUIDv4(), now64(3))` })).rejects.toThrow(/Not enough privileges/)
   })
 })
 
@@ -550,52 +495,43 @@ describe('the /ad cache', () => {
   })
 })
 
-describe('sellers', () => {
-  it("shows a seller-manager only its own seller's campaigns, and a seller's totals across them", async () => {
-    const [mine, other] = [randomUUID(), randomUUID()]
-    const [first, second, theirs] = [randomUUID(), randomUUID(), randomUUID()]
-    for (const [campaignId, sellerId] of [[first, mine], [second, mine], [theirs, other]] as const) await insertCampaign(campaignId, sellerId)
+describe('stores', () => {
+  it("counts a campaign per store with ?storeId, and across its stores without; a customer in two stores counts once", async () => {
+    const campaignId = randomUUID()
+    const [web, app2] = [randomUUID(), randomUUID()]
     const [alice, bob] = [randomUUID(), randomUUID()]
     await insert([
-      { event_name: 'click', campaign_id: first, user_id: alice },
-      { event_name: 'click', campaign_id: second, user_id: alice },
-      { event_name: 'click', campaign_id: second, user_id: bob },
-      { event_name: 'click', campaign_id: theirs, user_id: bob },
+      { event_name: 'click', campaign_id: campaignId, store_id: web, user_id: alice },
+      { event_name: 'click', campaign_id: campaignId, store_id: web, user_id: bob },
+      { event_name: 'click', campaign_id: campaignId, store_id: app2, user_id: alice },
     ])
-    const sellerManager = (await tokenFor(keys, 'seller-manager', { tid: TENANT, sel: mine })).header
-    const sellerTotals = (sellerId: string, auth: string) => request(app).get(`/api/v1/ad/sellers/${sellerId}/clicks`).set('Authorization', auth)
-
-    expect((await metric(first, 'clicks', '', sellerManager)).body.count).toBe(1)
-    // Another seller's campaign doesn't exist for it.
-    expect((await metric(theirs, 'clicks', '', sellerManager)).status).toBe(404)
-    // Its totals: both of its campaigns, Alice counted once among the customers.
-    expect((await sellerTotals(mine, sellerManager)).body).toMatchObject({ sellerId: mine, campaigns: 2, count: 3, customers: 2 })
-    expect((await sellerTotals(other, sellerManager)).status).toBe(403)
-    // The retailer's campaign managers see every seller.
-    expect((await sellerTotals(other, reader)).body).toMatchObject({ campaigns: 1, count: 1 })
+    expect((await metric(campaignId, 'clicks', `?storeId=${web}`)).body).toMatchObject({ storeId: web, count: 2, customers: 2 })
+    expect((await metric(campaignId, 'clicks', `?storeId=${app2.toUpperCase()}`)).body).toMatchObject({ storeId: app2, count: 1, customers: 1 })
+    expect((await metric(campaignId, 'clicks')).body).toMatchObject({ count: 3, customers: 2 })
+    expect((await metric(campaignId, 'uniqueCustomers')).body).toMatchObject({ count: 2 })
+    expect((await metric(campaignId, 'clicks', `?storeId=${randomUUID()}`)).body.count).toBe(0)
+    expect((await metric(campaignId, 'clicks', '?storeId=web')).status).toBe(400)
   })
 })
 
 describe('the campaign list (GET /ad/campaigns)', () => {
-  it("lists the tenant's campaigns with their newest title, not archived ones; a seller-manager's seller's only", async () => {
-    const [north, south] = [randomUUID(), randomUUID()]
-    const [renamed, other, archived, foreign] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
-    await insertCampaign(renamed, north, { title: 'Spring Sale' })
-    await insertCampaign(renamed, north, { title: 'Summer Sale', version: 2 })
-    await insertCampaign(other, south, { title: 'Clearance' })
-    await insertCampaign(archived, north, { title: 'Gone', archived: true })
-    await insertCampaign(foreign, north, { title: 'Not ours', tenantId: OTHER_TENANT })
-    const list = (auth: string) => request(app).get('/api/v1/ad/campaigns').set('Authorization', auth)
-
-    const all = (await list(reader)).body.items as { id: string }[]
-    const ids = all.map((campaign) => campaign.id)
-    expect(all.find((campaign) => campaign.id === renamed)).toEqual({ id: renamed, title: 'Summer Sale', sellerId: north, status: 'active' })
-    expect(ids).toContain(other)
-    expect(ids).not.toContain(archived)
-    expect(ids).not.toContain(foreign)
-
-    const sellerManager = (await tokenFor(keys, 'seller-manager', { tid: TENANT, sel: north })).header
-    expect((await list(sellerManager)).body.items.map((campaign: { id: string }) => campaign.id)).toEqual([renamed])
-    expect((await list(visitor)).status).toBe(401)
+  it("lists the tenant's campaigns with activity, once per store, newest first; never another tenant's", async () => {
+    const [older, newer, foreign] = [randomUUID(), randomUUID(), randomUUID()]
+    const [web, app2] = [randomUUID(), randomUUID()]
+    await insert([
+      { event_name: 'impression', campaign_id: older, store_id: web, event_time: atDay(2, 10) },
+      { event_name: 'impression', campaign_id: older, store_id: app2, event_time: atDay(1, 10) },
+      { event_name: 'click', campaign_id: newer, event_time: ago(60_000) },
+      { event_name: 'impression', campaign_id: foreign, tenant_id: OTHER_TENANT },
+    ])
+    const res = await request(app).get('/api/v1/ad/campaigns').set('Authorization', reader)
+    expect(res.status).toBe(200)
+    const items = (res.body.items as { id: string }[]).filter((item) => [older, newer, foreign].some((id) => id === item.id))
+    expect(items).toEqual([
+      { id: newer, storeId: NO_STORE, lastDay: dayString(0) },
+      { id: older, storeId: app2, lastDay: dayString(1) },
+      { id: older, storeId: web, lastDay: dayString(2) },
+    ])
+    expect((await request(app).get('/api/v1/ad/campaigns').set('Authorization', visitor)).status).toBe(401)
   })
 })

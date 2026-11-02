@@ -1,6 +1,8 @@
 /**
- * The Flink job end to end: events published to the real retail.interactions.v1
- * topics must reach ClickHouse, basket additions must be matched with the user's
+ * The Flink job end to end: ad impressions and clicks published to the real
+ * retail.interactions.v1 topic must reach ClickHouse with their store (the zero
+ * store when an event has none), other events must not, and basket additions must
+ * be matched with the user's
  * earlier clicks by the attribution rules (basketline/flink/sql/pipelines/02_attributed_baskets.sql)
  * with the latest click credited. The cases are shared with the history backfill
  * (airflow/tests/fixtures/attribution_cases.json), so both implementations of the
@@ -10,19 +12,12 @@
  *   pnpm test:flink
  *
  * Every run uses its own tenant, so it only reads back its own rows.
- *
- * Sessions (pipelines/03_sessions.sql) aren't tested here: an event-time window
- * closes only when the shared watermark (newest event time - 1 hour) passes a
- * session's last event + 6 hours. Events dated in the past are late on a running
- * stack, and dating them in the future would make everyone's real events late.
- * flink/README.md ("Sessions") has the query that checks written sessions
- * against raw events.
  */
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ANALYTICS_EVENT_TYPE, INTERACTIONS_TOPIC, eventTypeOf, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@basketline/contracts'
+import { ANALYTICS_EVENT_TYPE, INTERACTIONS_TOPIC, NO_STORE, eventTypeOf, type AnalyticsEventName, type AnalyticsEventPayload, type UserType } from '@basketline/contracts'
 import { createKafkaEventBus, createLogger, type BusMessage, type EventBus } from '@basketline/platform'
 import { createClickHouse } from '@basketline/platform/clickhouse'
 
@@ -30,8 +25,8 @@ const BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',')
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
 const TENANT = randomUUID()
 const OTHER_TENANT = randomUUID()
-/** The seller ingestion-service stamps on events for a product (here: every product). */
-const SELLER = randomUUID()
+/** The store of the batches the events came in (here: all but one). */
+const STORE = randomUUID()
 const HOUR = 60 * 60 * 1000
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 
@@ -54,6 +49,8 @@ interface TestEvent {
   userId?: string
   userType?: UserType
   tenantId?: string
+  /** null: a message without one, as the job may still read from before stores. */
+  storeId?: string | null
   timestamp: string
 }
 
@@ -74,8 +71,9 @@ function message(event: TestEvent): BusMessage {
     properties: {},
     timestamp: event.timestamp,
     receivedAt: new Date().toISOString(),
-    sellerId: event.productId ? SELLER : null,
+    storeId: event.storeId ?? STORE,
   }
+  if (event.storeId === null) delete (payload as Partial<AnalyticsEventPayload>).storeId
   return {
     topic: INTERACTIONS_TOPIC,
     key: payload.eventId,
@@ -117,7 +115,7 @@ interface Case {
 const CASES: Case[] = JSON.parse(readFileSync(new URL('../airflow/tests/fixtures/attribution_cases.json', import.meta.url), 'utf8')).cases
 
 describe('the Flink job', () => {
-  it("stores every event and matches basket additions with the user's earlier clicks on the product, crediting the latest", async () => {
+  it("stores ad impressions and clicks with their store, and matches basket additions with the user's earlier clicks on the product, crediting the latest", async () => {
     // Each case's letters as its own IDs: users, products and campaigns don't meet across cases.
     const expected: { name: string; basket: string; campaign: string | null }[] = []
     const first: TestEvent[] = []
@@ -145,10 +143,19 @@ describe('the Flink job', () => {
       }
     }
 
+    // Stored too: an impression, and a click without a store. Not stored: activity that isn't on an ad.
+    first.push(
+      { eventName: 'impression', campaignId: randomUUID(), timestamp: ago(HOUR) },
+      { eventName: 'click', campaignId: randomUUID(), productId: randomUUID(), storeId: null, timestamp: ago(HOUR) },
+      { eventName: 'home_view', timestamp: ago(HOUR) },
+      { eventName: 'click', campaignId: null, productId: randomUUID(), timestamp: ago(HOUR) },
+    )
     await bus.publish(first.map(message))
     await sleep(5_000)
     await bus.publish(last.map(message))
-    const published = first.length + last.length
+    // ClickHouse stages 3 days (01_tables.sql TTL): the cases' older clicks are credited, then dropped.
+    const staged = (event: TestEvent) => Date.parse(event.timestamp) > Date.now() - 72 * HOUR
+    const adEvents = [...first, ...last].filter((event) => ['impression', 'click'].includes(event.eventName) && event.campaignId && staged(event)).length
 
     // Each basket addition and the campaign of its latest candidate click, as ClickHouse credits it.
     const creditedBaskets = () =>
@@ -165,14 +172,17 @@ describe('the Flink job', () => {
 
     const stored = await eventually(
       () => rows<{ events: string }>(`SELECT uniqExact(event_id) AS events FROM events WHERE tenant_id IN {tenants:Array(UUID)}`),
-      ([row]) => Number(row?.events) >= published,
+      ([row]) => Number(row?.events) >= adEvents,
     )
-    expect(Number(stored[0]?.events)).toBe(published)
+    // A little longer, so an event that shouldn't be stored would have arrived too.
+    await sleep(5_000)
+    expect(Number((await rows<{ events: string }>(`SELECT uniqExact(event_id) AS events FROM events WHERE tenant_id IN {tenants:Array(UUID)}`))[0]?.events)).toBe(adEvents)
+    expect(Number(stored[0]?.events)).toBe(adEvents)
 
-    // The seller and event type reach the stored events and credited baskets.
-    expect(await rows(`SELECT DISTINCT event_type, toString(seller_id) AS seller FROM events WHERE tenant_id IN {tenants:Array(UUID)} AND product_id IS NOT NULL`)).toEqual([
-      { event_type: 'interaction', seller: SELLER },
-    ])
-    expect(await rows(`SELECT DISTINCT toString(seller_id) AS seller FROM attributed_baskets WHERE tenant_id IN {tenants:Array(UUID)}`)).toEqual([{ seller: SELLER }])
+    // The store reaches the stored events and credited baskets.
+    expect(await rows(`SELECT DISTINCT toString(store_id) AS store FROM events WHERE tenant_id IN {tenants:Array(UUID)} ORDER BY store`)).toEqual(
+      [{ store: NO_STORE }, { store: STORE }].sort((a, b) => a.store.localeCompare(b.store)),
+    )
+    expect(await rows(`SELECT DISTINCT toString(store_id) AS store FROM attributed_baskets WHERE tenant_id IN {tenants:Array(UUID)}`)).toEqual([{ store: STORE }])
   }, 120_000)
 })

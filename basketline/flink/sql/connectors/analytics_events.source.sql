@@ -1,28 +1,15 @@
--- The interaction and identity topics, and retail.heartbeat.v1, which carries only
--- payload.timestamp: it moves the watermark when no events
--- arrive, and views/02_events.sql drops it. The value is the
--- EventEnvelope from ingestion-service (packages/contracts/src/analytics.ts),
--- read as text so a malformed record becomes NULLs instead of failing the job.
--- rowtime is the event's own time (payload.timestamp), for the session windows
--- (views/04_sessions.sql). The watermark trails the newest rowtime seen by an
--- hour: an event more than an hour older than that is too late for its session
--- (still stored and counted everywhere else). A malformed timestamp gets 1970,
--- since a rowtime can't be NULL; views/02_events.sql drops those records anyway.
+-- The interactions topic, and only it: identity events, campaigns, products and
+-- the catalog go to the data lake (basketline/connect), not through Flink. The
+-- value is the EventEnvelope from ingestion-service
+-- (packages/contracts/src/analytics.ts), read as text so a malformed record
+-- becomes NULLs instead of failing the job.
 CREATE TABLE kafka_events (
-  `value` STRING,
-  rowtime AS COALESCE(
-    TRY_CAST(REPLACE(REPLACE(JSON_VALUE(`value`, '$.payload.timestamp'), 'T', ' '), 'Z', '') AS TIMESTAMP(3)),
-    TIMESTAMP '1970-01-01 00:00:00'),
-  WATERMARK FOR rowtime AS rowtime - INTERVAL '1' HOUR
+  `value` STRING
 ) WITH (
   'connector' = 'kafka',
-  -- A deleted topic that a checkpoint still lists stops the source (it can't
-  -- find the partition's position): reset the checkpoint after deleting one.
-  'topic-pattern' = '^__TOPIC_PREFIX__(retail\.interactions\.v1|retail\.identity-events\.v1|retail\.heartbeat\.v1)$',
+  'topic' = '__TOPIC_PREFIX__retail.interactions.v1',
   'properties.bootstrap.servers' = '__KAFKA_BOOTSTRAP_SERVERS__',
   'properties.group.id' = '__KAFKA_GROUP_ID__',
-  -- Topics created after the job started are picked up within this interval.
-  'scan.topic-partition-discovery.interval' = '30 s',
   'scan.startup.mode' = '__KAFKA_STARTUP_MODE__',
   'format' = 'raw'
 );

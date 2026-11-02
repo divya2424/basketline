@@ -7,7 +7,7 @@ import type { AuthService } from '../services/auth.service.ts'
 import type { ShopperService } from '../services/shopper.service.ts'
 
 /** Public user shape. Never includes the password hash. */
-const toPublicUser = ({ id, username, role, tenantId, sellerId }: User) => ({ id, username, role, tenantId, ...(sellerId ? { sellerId } : {}) })
+const toPublicUser = ({ id, username, role, tenantId }: User) => ({ id, username, role, tenantId })
 
 /** Dates become ISO strings in res.json. */
 const toPublicSession = ({ id, clientType, sessionStartTime, expiresAt, sessionEndTime }: Session) => ({

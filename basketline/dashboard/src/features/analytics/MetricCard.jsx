@@ -101,19 +101,3 @@ export function SplitBar({ title, segments }) {
     </div>
   )
 }
-
-/** A share as a thin progress bar, e.g. converted sessions of all sessions. */
-export function ProgressStat({ label, value, of }) {
-  const share = of > 0 ? (value / of) * 100 : null
-  return (
-    <div className="progress-stat">
-      <p className="progress-stat__text">
-        {label} <strong>{formatCount(value)}</strong>
-        <span className="muted"> · {formatPercent(share)}</span>
-      </p>
-      <div className="progress-stat__track" aria-hidden="true">
-        <span className="progress-stat__fill" style={{ width: `${Math.min(share ?? 0, 100)}%` }} />
-      </div>
-    </div>
-  )
-}

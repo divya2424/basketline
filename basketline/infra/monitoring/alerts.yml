@@ -50,10 +50,6 @@ groups:
         expr: basketline_backup_age_seconds > 26 * 3600
         annotations: { summary: "No ClickHouse backup for {{ $value | humanizeDuration }}" }
 
-      - alert: InvalidTrafficSpike
-        expr: sum by (tenant) (delta(basketline_invalid_traffic_today[1h])) > 1000
-        annotations: { summary: "Tenant {{ $labels.tenant }}: {{ $value }} invalid-traffic events in the last hour" }
-
   # The services' RED metrics. The targets match loadtest/README.md: ingestion p99 < 500 ms, reads p99 < 1 s.
   - name: services
     rules:

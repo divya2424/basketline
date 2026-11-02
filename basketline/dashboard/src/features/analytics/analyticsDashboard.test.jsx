@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { AnalyticsPage } from './AnalyticsPage.jsx'
 import { buildMetricUrl, createAnalyticsApi, parseMetricResponse } from './analyticsService.js'
 import { calculateClickToBasketRate, calculateCtr } from './metricMath.js'
-import { campaigns } from '../../test/campaignData.js'
+import { APP_STORE, campaigns, NO_STORE } from '../../test/campaignData.js'
 import { mockFetch } from '../../test/mockFetch.js'
 import { DEFAULT_TIME_RANGE, formatRangeLabel, toPeriod } from './timeRange.js'
 import { REFRESH_MS } from './useCampaignMetrics.js'
@@ -62,6 +62,10 @@ describe('analyticsService', () => {
     )
   })
 
+  it('adds the store as a storeId query parameter', () => {
+    expect(buildMetricUrl('', 'c1', 'clicks', { storeId: APP_STORE })).toBe(`/ad/c1/clicks?storeId=${APP_STORE}`)
+  })
+
   it('parses numeric and { count } responses, and rejects anything else', () => {
     expect(parseMetricResponse(1240, 'clicks')).toEqual({ count: 1240, byClientType: null, byUserType: null })
     expect(parseMetricResponse('1240', 'clicks')).toEqual({ count: 1240, byClientType: null, byUserType: null })
@@ -113,7 +117,7 @@ describe('AnalyticsPage', () => {
     expect(screen.getByRole('heading', { name: 'Campaign Analytics' })).toBeInTheDocument()
     const requested = api.fetchMetric.mock.calls.map(([id, metric]) => `${id}/${metric}`)
     expect(new Set(requested)).toEqual(
-      new Set(['campaign_001/clicks', 'campaign_001/impressions', 'campaign_001/clickToBasket', 'campaign_001/uniqueCustomers', 'campaign_001/sessions']),
+      new Set(['campaign_001/clicks', 'campaign_001/impressions', 'campaign_001/clickToBasket', 'campaign_001/uniqueCustomers']),
     )
     expect(card('Ad clicks')).toHaveAttribute('aria-busy', 'true')
 
@@ -122,7 +126,6 @@ describe('AnalyticsPage', () => {
       clicks: { count: 1240, customers: 1100, byClientType: { web: 1000, mobile: 240 } },
       clickToBasket: { count: 312, customers: 280, byUserType: { registered: 200, visitor: 90 } },
       uniqueCustomers: { count: 4870, byClientType: { web: 3000, mobile: 2200, both: 330 }, byUserType: { registered: 1200, visitor: 3900 } },
-      sessions: { count: 5600, sessionStats: { converted: 900, averageDurationMs: 12 * 60_000 } },
     })
     expect(card('Ad impressions')).toHaveTextContent('12,450')
     expect(card('Unique customers')).toHaveTextContent('4,870')
@@ -140,10 +143,6 @@ describe('AnalyticsPage', () => {
     expect(screen.getByTestId('metric-Ad impressions')).toHaveTextContent('12,450')
     expect(card('Click-to-basket')).toHaveTextContent(/Registered 200\s*Visitors 90/)
     expect(card('Ad impressions')).not.toHaveTextContent('in total')
-    expect(card('Sessions')).toHaveTextContent('5,600')
-    // 900 of 5,600 sessions converted.
-    expect(card('Sessions')).toHaveTextContent(/Converted 900\s*· 16.07%/)
-    expect(card('Sessions')).toHaveTextContent('Average visit 12 min')
     expect(card('Click-through rate (CTR)')).toHaveTextContent('9.96%')
     expect(card('Click-to-basket rate')).toHaveTextContent('25.16%')
   })
@@ -151,28 +150,27 @@ describe('AnalyticsPage', () => {
   it('shows a loader while requests are in flight and removes it when all finish', async () => {
     const { api, settle } = createDeferredApi()
     render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
-    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('Loading metrics for Featured Picks… (0 of 5 loaded)')
+    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('Loading metrics for campaign_001… (0 of 4 loaded)')
     expect(within(card('Ad clicks')).getByRole('status')).toHaveTextContent('Loading Ad clicks')
 
     await settle('campaign_001', 'clicks', 10)
-    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(1 of 5 loaded)')
+    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(1 of 4 loaded)')
     expect(within(card('Ad clicks')).queryByRole('status')).not.toBeInTheDocument()
 
     await settle('campaign_001', 'impressions', 100)
     await settle('campaign_001', 'clickToBasket', new Error('boom'))
     await settle('campaign_001', 'uniqueCustomers', 7)
-    await settle('campaign_001', 'sessions', 3)
     expect(screen.queryByTestId('metrics-loading')).not.toBeInTheDocument()
   })
 
   it('shows the loader again while a failed metric is retried', async () => {
     const { api, settle, resolveAll } = createDeferredApi()
     render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
-    await resolveAll('campaign_001', { impressions: 1, clickToBasket: 1, uniqueCustomers: 1, sessions: 1 })
+    await resolveAll('campaign_001', { impressions: 1, clickToBasket: 1, uniqueCustomers: 1 })
     await settle('campaign_001', 'clicks', new Error('Request failed with status 500'))
     expect(screen.queryByTestId('metrics-loading')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry Ad clicks' }))
-    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(4 of 5 loaded)')
+    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(3 of 4 loaded)')
   })
 
   it('renders zero counts and shows — for zero denominators', async () => {
@@ -259,12 +257,30 @@ describe('AnalyticsPage', () => {
     await resolveAll('campaign_002', { impressions: 200, clicks: 20, clickToBasket: 2 })
     await resolveAll('campaign_003', { impressions: 0, clicks: 0, clickToBasket: 0 })
 
+    // A campaign in two stores is one row.
     const rows = screen.getAllByRole('row').slice(1)
-    expect(rows).toHaveLength(campaigns.length)
+    expect(rows).toHaveLength(4)
     expect(rows[0]).toHaveTextContent('10.00%')
     expect(rows[0]).toHaveTextContent('50.00%')
     expect(rows[2]).toHaveTextContent('—')
     expect(screen.getByText(/No totals: a shopper who saw several campaigns/)).toBeInTheDocument()
+  })
+
+  it("lists each campaign once, and a store's campaigns with counts for that store only", async () => {
+    const { api } = createDeferredApi()
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
+    const options = (label) => within(screen.getByLabelText(label)).getAllByRole('option').map((option) => option.textContent)
+    expect(options('Campaign')).toEqual(['campaign_001', 'campaign_002', 'campaign_003', 'campaign_004', 'Compare all campaigns'])
+    expect(options('Store')).toEqual(['All stores', campaigns[0].storeId, APP_STORE, 'No store'])
+    expect(api.fetchMetric.mock.calls.every(([, , { storeId }]) => storeId === undefined)).toBe(true)
+
+    await userEvent.selectOptions(screen.getByLabelText('Store'), APP_STORE)
+    expect(options('Campaign')).toEqual(['campaign_002', 'campaign_003', 'Compare all campaigns'])
+    expect(screen.getByLabelText('Campaign')).toHaveValue('campaign_002')
+    expect(api.fetchMetric).toHaveBeenLastCalledWith('campaign_002', expect.any(String), expect.objectContaining({ storeId: APP_STORE }))
+
+    await userEvent.selectOptions(screen.getByLabelText('Store'), NO_STORE)
+    expect(options('Campaign')).toEqual(['campaign_004', 'Compare all campaigns'])
   })
 
   it('labels the data source clearly in live and mock mode', () => {
@@ -299,7 +315,7 @@ describe('time range filter', () => {
 
     const sevenDays = toPeriod({ preset: '7d' })
     const newCalls = api.fetchMetric.mock.calls.filter(([, , period]) => period.from === sevenDays.from)
-    expect(newCalls.map(([, metric]) => metric).sort()).toEqual(['clickToBasket', 'clicks', 'impressions', 'sessions', 'uniqueCustomers'])
+    expect(newCalls.map(([, metric]) => metric).sort()).toEqual(['clickToBasket', 'clicks', 'impressions', 'uniqueCustomers'])
     expect(screen.getByTestId('analytics-period')).toHaveTextContent(formatRangeLabel({ preset: '7d' }))
 
     // The 30-day answer arrives after the switch: it must not show.

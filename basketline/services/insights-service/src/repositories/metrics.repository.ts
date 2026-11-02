@@ -3,8 +3,9 @@ import type { ClickHouse } from '@basketline/platform/clickhouse'
 /** One tenant's campaign over the UTC days [from, to); both are midnights. */
 export interface MetricScope {
   tenantId: string
-  /** One campaign, or all of a seller's (their sketches merge: a customer counts once). */
-  campaignIds: string[]
+  campaignId: string
+  /** One store's numbers; without one, every store's together (sketches merge: a customer counts once). */
+  storeId?: string
   from: Date
   to: Date
 }
@@ -38,10 +39,6 @@ const DAILY_METRICS = {
       columns: ['has_visited', 'has_visited_in_web', 'has_visited_in_mobile', 'has_visited_registered', 'has_visited_visitor'],
     },
   ],
-  sessions: [
-    { table: 'daily_campaign_sessions_aggregation', aggregate: 'uniqCombined64Merge', columns: ['total_sessions', 'total_converted_sessions'] },
-    { table: 'daily_campaign_sessions_aggregation', aggregate: 'avgMerge', columns: ['avg_session_duration_ms'] },
-  ],
 } as const
 
 export type DailyMetric = keyof typeof DAILY_METRICS
@@ -65,29 +62,27 @@ export const tenantRead = (tenantId: string) => ({ ...READ_LIMITS, SQL_tenant_id
 
 /**
  * A metric over the days in the scope, in one query per table: event counts
- * summed (from daily_campaign_aggregation, corrected nightly), customers'
+ * summed (from daily_campaign_aggregation, corrected hourly), and customers'
  * sketches merged (from daily_campaign_customers_aggregation, so a customer
- * active on several days, on both apps, or as a visitor and then registered
- * counts once), and sessions (from daily_campaign_sessions_aggregation).
- * Unique customers also get has_visited_in_both: web + mobile - total. The WHERE
- * clause follows the tables' sort key, so ClickHouse reads only that campaign's
- * days, and the aggregates combine rows that background merges haven't combined yet.
+ * active on several days, in several stores, on both apps, or as a visitor and
+ * then registered counts once). Unique customers also get has_visited_in_both:
+ * web + mobile - total. The WHERE clause follows the tables' sort key, and the
+ * aggregates combine rows that background merges haven't combined yet.
  */
-export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignIds, from, to }: MetricScope, metric: DailyMetric): Promise<MetricCount> {
+export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignId, storeId, from, to }: MetricScope, metric: DailyMetric): Promise<MetricCount> {
   const sources = DAILY_METRICS[metric]
   const rows = await Promise.all(
     sources.map(async ({ table, aggregate, columns }) => {
       const result = await clickhouse.query({
         query: `SELECT ${columns.map((column) => `${aggregate}(${column}) AS ${column}`).join(', ')} FROM ${table}
-                WHERE tenant_id = {tenantId:UUID} AND campaign_id IN {campaignIds:Array(UUID)}
+                WHERE tenant_id = {tenantId:UUID} ${storeId ? 'AND store_id = {storeId:UUID}' : ''} AND campaign_id = {campaignId:UUID}
                   AND day >= {from:Date} AND day < {to:Date}`,
-        query_params: { tenantId, campaignIds, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+        query_params: { tenantId, storeId, campaignId, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
         // One tenant's long range can't hold every core or run for long: other tenants' reads share them.
         clickhouse_settings: tenantRead(tenantId),
         format: 'JSONEachRow',
       })
       const [row = {}] = await result.json<Record<string, string | number | null>>()
-      // avgMerge of no rows is NaN (null in JSON): no sessions, so 0.
       return columns.map((column) => [column, Number(row[column] ?? 0) || 0] as const)
     }),
   )

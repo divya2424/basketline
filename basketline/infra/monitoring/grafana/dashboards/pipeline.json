@@ -430,7 +430,7 @@
     {
       "id": 9,
       "type": "bargauge",
-      "title": "Events in the last hour, per seller",
+      "title": "Impressions and clicks in the last hour, per store",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -438,7 +438,7 @@
       "gridPos": {
         "x": 0,
         "y": 12,
-        "w": 12,
+        "w": 24,
         "h": 9
       },
       "targets": [
@@ -448,8 +448,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sort_desc(topk(20, basketline_seller_events_last_hour))",
-          "legendFormat": "{{seller_name}} {{seller}}"
+          "expr": "sort_desc(topk(20, basketline_store_events_last_hour))",
+          "legendFormat": "{{tenant}} / {{store}}"
         }
       ],
       "fieldConfig": {
@@ -466,37 +466,6 @@
         }
       },
       "description": "Stored events with a seller, per seller (the 20 busiest). From analytics.events and analytics.sellers."
-    },
-    {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Invalid traffic today, per tenant",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 12,
-        "w": 12,
-        "h": 9
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (tenant, reason) (basketline_invalid_traffic_today)",
-          "legendFormat": "{{tenant}} {{reason}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {}
     },
     {
       "id": 11,

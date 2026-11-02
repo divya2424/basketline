@@ -8,9 +8,10 @@
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { CryptoKey } from 'jose'
-import { ANALYTICS_EVENT_TYPE, IDENTITY_TOPIC, type AnalyticsEventPayload } from '@basketline/contracts'
+import { ANALYTICS_EVENT_TYPE, IDENTITY_TOPIC, NO_STORE, type AnalyticsEventPayload } from '@basketline/contracts'
 import { isUniqueViolation, isUuid, signIntegrationToken, signShopperToken, unauthorized, type EventBus, type Logger } from '@basketline/platform'
 import { withTenant, type Db, type Tx } from '../db/client.ts'
+import { findAccount } from '../repositories/account.repository.ts'
 import {
   findActiveApiKey,
   findExternalCustomer,
@@ -54,14 +55,14 @@ export function createShopperService({ db, privateKey, bus, logger }: { db: Db; 
   }
 
   /**
-   * The retailer vouched for a signed-in customer: user_identified on the identity
+   * The store vouched for a signed-in customer: user_identified on the identity
    * topic (the visitor became this customer). Best effort: the token is issued anyway.
    */
   function recordIdentified(tenantId: string, userId: string, visitorId: string | undefined, clientType: 'web' | 'mobile') {
     if (!bus) return
     const now = new Date().toISOString()
     const payload: AnalyticsEventPayload = {
-      eventId: randomUUID(), eventType: 'identity', eventName: 'user_identified', campaignId: null, productId: null, sellerId: null,
+      eventId: randomUUID(), eventType: 'identity', eventName: 'user_identified', campaignId: null, productId: null, storeId: NO_STORE,
       userId, userType: 'registered', clientType, tenantId, pageName: null, featureName: null,
       properties: visitorId && isUuid(visitorId) ? { visitorId: visitorId.toLowerCase() } : {}, timestamp: now, receivedAt: now,
     }
@@ -98,7 +99,8 @@ export function createShopperService({ db, privateKey, bus, logger }: { db: Db; 
     async shopperToken(tenantId: string, authorization: string | undefined, input: ShopperTokenInput) {
       await checkApiKey(tenantId, authorization)
       const userId = await userIdFor(tenantId, input.customerId, input.visitorId)
-      const { token, expiresAt } = await signShopperToken(privateKey, { tenantId, userId, client: input.clientType ?? 'web' })
+      const tier = (await findAccount(db, tenantId))?.tier
+      const { token, expiresAt } = await signShopperToken(privateKey, { tenantId, userId, client: input.clientType ?? 'web', tier })
       recordIdentified(tenantId, userId, input.visitorId, input.clientType ?? 'web')
       return { token, expiresAt, userId }
     },

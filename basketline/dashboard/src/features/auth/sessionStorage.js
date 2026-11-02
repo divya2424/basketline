@@ -1,6 +1,6 @@
 /**
  * The signed-in session lives in sessionStorage (cleared when the tab closes):
- * profile, role (and a seller manager's seller), access token and its expiry, and the tenant the token belongs
+ * profile, role, access token and its expiry, and the tenant the token belongs
  * to. Never the password.
  * Note: script running on the page can read sessionStorage, so the app must
  * stay free of XSS; an httpOnly cookie would avoid that but needs backend support.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { METRICS } from './analyticsService.js'
 import { sharedRequest } from '../../api/sharedRequest.js'
 
-const loading = { status: 'loading', value: null, byClientType: null, byUserType: null, customers: null, sessionStats: null, error: null }
+const loading = { status: 'loading', value: null, byClientType: null, byUserType: null, customers: null, error: null }
 const loadingState = () => Object.fromEntries(METRICS.map((metric) => [metric, loading]))
 
 /**
@@ -13,11 +13,10 @@ export const REFRESH_MS = 20_000
 
 /**
  * Loads the metrics for a campaign over a period ({ from, to? }, see
- * timeRange.js): each one's total (value) and its split by client type
+ * timeRange.js), in one store (storeId) or all: each one's total (value) and its split by client type
  * (byClientType: { web, mobile }, plus both for unique customers, or null), the
  * customers behind it (customers) and their split by user type (byUserType:
- * { registered, visitor }), and for sessions the converted ones and their
- * average duration (sessionStats). Each metric is requested independently and in parallel, so one
+ * { registered, visitor }). Each metric is requested independently and in parallel, so one
  * failure never hides the others. Responses for a previous campaign or period
  * (or a superseded retry) are discarded.
  *
@@ -25,7 +24,7 @@ export const REFRESH_MS = 20_000
  * quietly: the shown values stay until the new ones arrive, and a failed refresh
  * keeps them (the next one tries again).
  */
-export function useCampaignMetrics(api, campaignId, { from, to } = {}) {
+export function useCampaignMetrics(api, campaignId, { from, to } = {}, storeId) {
   const [metrics, setMetrics] = useState(loadingState)
   const requestsRef = useRef({})
 
@@ -37,12 +36,12 @@ export function useCampaignMetrics(api, campaignId, { from, to } = {}) {
 
       if (!quiet) setMetrics((current) => ({ ...current, [metric]: loading }))
 
-      sharedRequest(api, `${campaignId}/${metric}/${from ?? ''}/${to ?? ''}`, () => api.fetchMetric(campaignId, metric, { from, to })).then(
-        ({ count, byClientType, byUserType = null, customers = null, sessionStats = null }) => {
+      sharedRequest(api, `${campaignId}/${metric}/${from ?? ''}/${to ?? ''}/${storeId ?? ''}`, () => api.fetchMetric(campaignId, metric, { from, to, storeId })).then(
+        ({ count, byClientType, byUserType = null, customers = null }) => {
           if (requestsRef.current[metric] !== request) return
           setMetrics((current) => ({
             ...current,
-            [metric]: { status: 'success', value: count, byClientType, byUserType, customers, sessionStats, error: null },
+            [metric]: { status: 'success', value: count, byClientType, byUserType, customers, error: null },
           }))
         },
         (error) => {
@@ -54,7 +53,7 @@ export function useCampaignMetrics(api, campaignId, { from, to } = {}) {
         },
       )
     },
-    [api, campaignId, from, to],
+    [api, campaignId, from, to, storeId],
   )
 
   useEffect(() => {

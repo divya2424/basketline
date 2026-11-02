@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { renderApp, MANAGER, SAMPLE_CATALOG, SELLER } from '../../test/utils.jsx'
+import { renderApp, MANAGER } from '../../test/utils.jsx'
 import { DEFAULT_TENANT_ID, getRequestContext, switchTenant } from '../../api/requestContext.js'
 import { jsonResponse, mockFetch } from '../../test/mockFetch.js'
 
@@ -215,17 +215,6 @@ describe('role-based access to analytics', () => {
     await onboardingHeading()
     expect(analyticsLink()).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Campaign Analytics' })).not.toBeInTheDocument()
-  })
-
-  it("shows a seller manager Analytics for their own seller's campaigns only, without the store's API keys", async () => {
-    const [own, other, ...rest] = SAMPLE_CATALOG.campaigns
-    const campaigns = [{ ...own, sellerId: SELLER.sellerId }, { ...other, sellerId: 'bbbbbbbb-0000-4000-8000-000000000002' }, ...rest]
-    renderApp('/analytics', { authProps: { persist: false, initialUser: SELLER }, catalogProps: { initialCatalog: { ...SAMPLE_CATALOG, campaigns } } })
-    expect(await screen.findByRole('heading', { name: 'Campaign Analytics' })).toBeInTheDocument()
-    expect(analyticsLink()).toBeInTheDocument()
-    const options = within(screen.getByLabelText('Campaign')).getAllByRole('option').map((option) => option.textContent)
-    expect(options).toEqual([own.title, 'Compare all campaigns'])
-    expect(screen.queryByText('Integrate your site')).not.toBeInTheDocument()
   })
 
   it('sends a signed-out visitor of the dashboard to onboarding', async () => {

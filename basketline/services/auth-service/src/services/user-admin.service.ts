@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { Role } from '@basketline/contracts'
-import { badRequest, conflict, event, isUniqueViolation, notFound, writeAudit, type NewEvent } from '@basketline/platform'
+import { conflict, event, isUniqueViolation, notFound, writeAudit, type NewEvent } from '@basketline/platform'
 import type { DbOrTx } from '../db/client.ts'
 import { endOpenSessionsForUser, type Session } from '../repositories/session.repository.ts'
 import { deactivateUser, findUserByUsername, insertUser, updateUserRole, type User } from '../repositories/user.repository.ts'
@@ -26,12 +26,10 @@ async function requireUserForUpdate(db: DbOrTx, tenantId: string, username: stri
 
 export async function createUser(
   db: DbOrTx,
-  input: { username: string; password: string; role: Role; tenantId: string; sellerId?: string },
+  input: { username: string; password: string; role: Role; tenantId: string },
   actorId: string | null,
 ): Promise<AdminResult> {
   const { role } = input
-  // A seller-manager sees one seller's data, so it needs its seller; no other role has one.
-  if ((role === 'seller-manager') !== Boolean(input.sellerId)) throw badRequest('SELLER_REQUIRED', 'A seller-manager needs a seller (and only a seller-manager has one)')
   let user: User
   try {
     user = await insertUser(db, {
@@ -40,7 +38,6 @@ export async function createUser(
       passwordHash: await hashPassword(input.password),
       role,
       tenantId: input.tenantId,
-      sellerId: input.sellerId?.toLowerCase() ?? null,
     })
   } catch (error) {
     if (isUniqueViolation(error, 'users_username_unique')) throw conflict('USERNAME_TAKEN', 'That username is already registered')
@@ -56,7 +53,6 @@ export async function createUser(
 export async function changeRole(db: DbOrTx, tenantId: string, username: string, role: Role, actorId: string | null): Promise<AdminResult> {
   const current = await requireUserForUpdate(db, tenantId, username)
   if (current.role === role) return { user: current, events: [] }
-  if (role === 'seller-manager' || current.role === 'seller-manager') throw badRequest('SELLER_REQUIRED', "A seller-manager's role can't change: create the user with its seller instead")
   const user = await updateUserRole(db, current.id, role)
   await writeAudit(db, { actorId, action: 'user.role_changed', subjectType: 'user', subjectId: user.id, details: { from: current.role, to: role } })
   return {

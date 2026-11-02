@@ -2,20 +2,19 @@
  * Campaign analytics API client. All network access for the dashboard lives
  * here; components never call fetch directly.
  *
- *   GET {VITE_API_BASE_URL}/ad/{campaignID}/clicks?from&to
- *   GET {VITE_API_BASE_URL}/ad/{campaignID}/impressions?from&to
- *   GET {VITE_API_BASE_URL}/ad/{campaignID}/clickToBasket?from&to
- *   GET {VITE_API_BASE_URL}/ad/{campaignID}/uniqueCustomers?from&to
- *   GET {VITE_API_BASE_URL}/ad/{campaignID}/sessions?from&to
+ *   GET {VITE_API_BASE_URL}/ad/{campaignID}/clicks?from&to&storeId
+ *   GET {VITE_API_BASE_URL}/ad/{campaignID}/impressions?from&to&storeId
+ *   GET {VITE_API_BASE_URL}/ad/{campaignID}/clickToBasket?from&to&storeId
+ *   GET {VITE_API_BASE_URL}/ad/{campaignID}/uniqueCustomers?from&to&storeId
  *
  * from/to are ISO timestamps (see timeRange.js); without them the backend
- * counts the last 30 days. Each answer has the total (count) and the metric's
+ * counts the last 30 days. storeId limits the counts to one store; without it
+ * they are the campaign's across all stores. Each answer has the total (count) and the metric's
  * columns per client type, e.g. total_web_clicks and total_mobile_clicks.
  * Impressions, clicks and click-to-basket also have the customers behind them
  * (customers), per user type e.g. customers_registered_clicks; unique customers
  * have has_visited_in_web, has_visited_in_mobile and has_visited_in_both, and per
- * user type has_visited_registered and has_visited_visitor; sessions have
- * total_converted_sessions and avg_session_duration_ms.
+ * user type has_visited_registered and has_visited_visitor.
  *
  * The response contract is not confirmed yet. parseMetricResponse() is the only
  * place that knows the response shape: change it when the backend is final.
@@ -23,7 +22,7 @@
 import { getMockMetric } from './mockMetrics.js'
 import { apiRequest } from '../../api/httpClient.js'
 
-export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers', 'sessions']
+export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers']
 
 /** The response field of each metric's count per client type (unique customers also on both). */
 const CLIENT_FIELDS = {
@@ -41,15 +40,11 @@ const USER_FIELDS = {
   uniqueCustomers: { registered: 'has_visited_registered', visitor: 'has_visited_visitor' },
 }
 
-/** Sessions that saw the campaign: those that converted, and their average duration. */
-const SESSION_FIELDS = { converted: 'total_converted_sessions', averageDurationMs: 'avg_session_duration_ms' }
-
 export const METRIC_LABELS = {
   clicks: 'Ad clicks',
   impressions: 'Ad impressions',
   clickToBasket: 'Click-to-basket',
   uniqueCustomers: 'Unique customers',
-  sessions: 'Sessions',
 }
 
 export class MetricRequestError extends Error {
@@ -60,10 +55,10 @@ export class MetricRequestError extends Error {
   }
 }
 
-export function buildMetricUrl(baseUrl, campaignId, metric, { from, to } = {}) {
+export function buildMetricUrl(baseUrl, campaignId, metric, { from, to, storeId } = {}) {
   if (!METRICS.includes(metric)) throw new Error(`Unknown metric "${metric}"`)
   const base = (baseUrl ?? '').replace(/\/+$/, '')
-  const query = new URLSearchParams(Object.entries({ from, to }).filter(([, value]) => value)).toString()
+  const query = new URLSearchParams(Object.entries({ from, to, storeId }).filter(([, value]) => value)).toString()
   return `${base}/ad/${encodeURIComponent(campaignId)}/${metric}${query ? `?${query}` : ''}`
 }
 
@@ -81,8 +76,7 @@ function counts(body, fields = {}) {
 /**
  * Response adapter: { count, byClientType: { web, mobile[, both] }, byUserType:
  * { registered, visitor } (customers), plus customers (impressions, clicks and
- * click-to-basket) or sessionStats: { converted, averageDurationMs } (sessions)
- * when the response has them }. Accepts a bare number (`1240`, or "1240" as
+ * click-to-basket) when the response has them }. Accepts a bare number (`1240`, or "1240" as
  * text) or an object with a numeric `count` (`{ "count": 1240 }`), with the
  * metric's columns when all of them are counts (else that split is null or
  * left out). Anything else is an error, never a guessed value.
@@ -92,13 +86,11 @@ export function parseMetricResponse(body, metric) {
   const count = toCount(body) ?? (isObject ? toCount(body.count) : null)
   if (count === null) throw new MetricRequestError('Unexpected response format')
   const customers = isObject ? toCount(body.customers) : null
-  const sessionStats = metric === 'sessions' ? counts(body, SESSION_FIELDS) : null
   return {
     count,
     byClientType: counts(body, CLIENT_FIELDS[metric]),
     byUserType: counts(body, USER_FIELDS[metric]),
     ...(customers === null ? {} : { customers }),
-    ...(sessionStats === null ? {} : { sessionStats }),
   }
 }
 
@@ -115,8 +107,8 @@ export function createAnalyticsApi({ mode = 'live', baseUrl = '' } = {}) {
     mode: 'live',
     baseUrl,
     // Through apiRequest: sends the access token, and a 401 signs the user out.
-    async fetchMetric(campaignId, metric, { signal, from, to } = {}) {
-      const url = buildMetricUrl('', campaignId, metric, { from, to })
+    async fetchMetric(campaignId, metric, { signal, from, to, storeId } = {}) {
+      const url = buildMetricUrl('', campaignId, metric, { from, to, storeId })
       const body = await apiRequest(url, { signal, baseUrl: baseUrl.replace(/\/+$/, '') })
       return parseMetricResponse(body, metric)
     },

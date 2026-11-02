@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
-import { useAuth } from '../auth/AuthContext.jsx'
-import { ROLES } from '../auth/authService.js'
 import { useCatalog } from '../catalog/CatalogContext.jsx'
 import { analyticsApi } from './analyticsService.js'
-import { ALL_CAMPAIGNS, CampaignSelector } from './CampaignSelector.jsx'
+import { ALL_CAMPAIGNS, ALL_STORES, CampaignSelector, StoreSelector } from './CampaignSelector.jsx'
 import { CampaignMetricsPanel } from './CampaignMetricsPanel.jsx'
 import { CampaignComparison } from './CampaignComparison.jsx'
 import { TimeRangeSelector } from './TimeRangeSelector.jsx'
@@ -14,17 +12,20 @@ import { DEFAULT_TIME_RANGE, formatRangeLabel, toPeriod } from './timeRange.js'
 import './analytics.css'
 
 export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) {
-  // Campaigns come from the catalog (GET /ad/campaigns) unless passed in.
+  // Campaigns per store ({ id, storeId }) come from the catalog (GET /ad/campaigns) unless passed in.
   const catalog = useCatalog()
-  const { user } = useAuth()
-  // A seller manager reports on their own seller's campaigns only (the API refuses the others).
-  const isSellerManager = user?.role === ROLES.SELLER_MANAGER
-  const allCampaigns = campaignsProp ?? catalog.campaigns
-  const campaigns = isSellerManager ? allCampaigns.filter((campaign) => campaign.sellerId === user.sellerId) : allCampaigns
+  const campaignStores = campaignsProp ?? catalog.campaigns
+  const stores = useMemo(() => [...new Set(campaignStores.map((campaign) => campaign.storeId))], [campaignStores])
+  const [storeId, setStoreId] = useState(ALL_STORES)
+  // Each campaign once, in the chosen store or any.
+  const campaigns = useMemo(
+    () => [...new Map(campaignStores.filter((campaign) => storeId === ALL_STORES || campaign.storeId === storeId).map((campaign) => [campaign.id, campaign])).values()],
+    [campaignStores, storeId],
+  )
   const [pickedId, setPickedId] = useState(null)
-  // Until the user picks one, show the first campaign (the list may still be loading).
-  const selectedId = pickedId ?? campaigns[0]?.id ?? ALL_CAMPAIGNS
-  const selected = campaigns.find((campaign) => campaign.id === selectedId)
+  // Until the user picks one (or when the store has no such campaign), show the first campaign (the list may still be loading).
+  const selectedId = pickedId === ALL_CAMPAIGNS || campaigns.some((campaign) => campaign.id === pickedId) ? pickedId : (campaigns[0]?.id ?? ALL_CAMPAIGNS)
+  const storeFilter = storeId === ALL_STORES ? undefined : storeId
   const [range, setRange] = useState(DEFAULT_TIME_RANGE)
   const period = useMemo(() => toPeriod(range), [range])
 
@@ -34,7 +35,7 @@ export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) 
         <div>
           <h1>Campaign Analytics</h1>
           <p className="muted">
-            Ad impressions, clicks and cart additions per campaign{isSellerManager ? ', for your seller’s campaigns' : ''}.
+            Ad impressions, clicks and cart additions per campaign and store.
           </p>
         </div>
         <DataSourceBadge api={api} />
@@ -56,28 +57,28 @@ export function AnalyticsPage({ api = analyticsApi, campaigns: campaignsProp }) 
       ) : (
         <>
           <div className="analytics-toolbar">
+            <StoreSelector stores={stores} value={storeId} onChange={setStoreId} />
             <CampaignSelector campaigns={campaigns} value={selectedId} onChange={setPickedId} />
             <TimeRangeSelector value={range} onChange={setRange} />
-            {selected?.description ? <p className="muted">{selected.description}</p> : null}
           </div>
           <p className="muted analytics-period" data-testid="analytics-period">
             Showing {formatRangeLabel(range)}
           </p>
           {selectedId === ALL_CAMPAIGNS ? (
-            <CampaignComparison key={`${period.from}|${period.to ?? ''}`} api={api} campaigns={campaigns} period={period} />
+            <CampaignComparison key={`${storeId}|${period.from}|${period.to ?? ''}`} api={api} campaigns={campaigns} storeId={storeFilter} period={period} />
           ) : (
-            // Keyed so switching campaigns or ranges starts from a clean loading state.
+            // Keyed so switching stores, campaigns or ranges starts from a clean loading state.
             <CampaignMetricsPanel
-              key={`${selectedId}|${period.from}|${period.to ?? ''}`}
+              key={`${storeId}|${selectedId}|${period.from}|${period.to ?? ''}`}
               api={api}
               campaignId={selectedId}
-              campaignTitle={selected?.title}
+              storeId={storeFilter}
               period={period}
             />
           )}
         </>
       )}
-      {isSellerManager ? null : <ApiKeysPanel />}
+      <ApiKeysPanel />
     </div>
   )
 }

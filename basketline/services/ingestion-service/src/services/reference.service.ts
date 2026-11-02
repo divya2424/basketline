@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import {
   ANALYTICS_EVENT_TYPE,
+  CAMPAIGN_PRODUCTS_TOPIC,
   CAMPAIGN_TOPIC,
   CATALOG_TOPIC,
   externalId,
   FIRST_PARTY_SELLER,
   IDENTITY_TOPIC,
+  NO_STORE,
   type AnalyticsEventPayload,
   type ReferenceEventPayload,
   type ReferencePayloads,
@@ -14,10 +16,10 @@ import { serviceUnavailable, type BusMessage, type EventBus, type Logger } from 
 import type { IncomingReferenceEvent } from '../validators/reference.validator.ts'
 
 /**
- * Reference data and server-side identity from a retailer's backend (contracts:
+ * Reference data and server-side identity from a store's backend (contracts:
  * retail.ts). Each update is published with its state's updatedAt as the version,
- * keyed by the entity, so the newest wins in every consumer. A retailer's own
- * IDs become UUIDs here (externalId), the same in every channel.
+ * keyed by the entity, so the newest wins downstream (the data lake). A store's
+ * own IDs become UUIDs here (externalId), the same in every channel.
  */
 export function createReferenceService({ bus, logger }: { bus: EventBus; logger: Logger }) {
   function envelope(eventName: string, aggregateId: string, updatedAt: string, payload: object) {
@@ -28,6 +30,7 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
     const updatedAt = event.updatedAt ? new Date(event.updatedAt).toISOString() : now
     const d = event.data as Record<string, any>
     const seller = (value: string | null | undefined) => externalId(tenantId, 'seller', value ?? FIRST_PARTY_SELLER)
+    const store = (value: string | null | undefined) => (value ? externalId(tenantId, 'store', value) : NO_STORE)
     const reference = <N extends keyof ReferencePayloads>(topic: string, name: N, entityId: string, state: Omit<ReferenceEventPayload<N>, 'tenantId' | 'updatedAt'>): BusMessage =>
       ({ topic, key: entityId, envelope: envelope(name, entityId, updatedAt, { ...state, tenantId, updatedAt }) })
     switch (event.eventName) {
@@ -39,9 +42,9 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
         const productId = externalId(tenantId, 'product', d.productId)
         const sellerId = seller(d.sellerId)
         const product = reference(CATALOG_TOPIC, 'product_upserted', productId, {
-          productId, sellerId, name: d.name, category: d.category ?? null, price: d.price ?? null, isActive: d.isActive ?? true,
+          productId, storeId: store(d.storeId), sellerId, name: d.name, category: d.category ?? null, price: d.price ?? null, isActive: d.isActive ?? true,
         })
-        // A product sent without a seller is the retailer's own: its first-party seller exists too.
+        // A product sent without a seller is the tenant's own: its first-party seller exists too.
         return d.sellerId == null ? [reference(CATALOG_TOPIC, 'seller_upserted', sellerId, { sellerId, name: 'First party' }), product] : [product]
       }
       case 'product_removed': {
@@ -52,6 +55,7 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
         const campaignId = externalId(tenantId, 'campaign', d.campaignId)
         return [reference(CAMPAIGN_TOPIC, 'campaign_upserted', campaignId, {
           campaignId,
+          storeId: store(d.storeId),
           sellerId: seller(d.sellerId),
           title: d.title,
           status: d.status,
@@ -65,9 +69,28 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
         const campaignId = externalId(tenantId, 'campaign', d.campaignId)
         return [reference(CAMPAIGN_TOPIC, 'campaign_removed', campaignId, { campaignId })]
       }
+      // Keyed by campaign and product, so the topic keeps each pair's latest state.
+      case 'campaign_product_added': {
+        const campaignId = externalId(tenantId, 'campaign', d.campaignId)
+        const productId = externalId(tenantId, 'product', d.productId)
+        return [reference(CAMPAIGN_PRODUCTS_TOPIC, 'campaign_product_added', `${campaignId}:${productId}`, {
+          campaignId,
+          productId,
+          storeId: store(d.storeId),
+          sellerId: d.sellerId == null ? null : seller(d.sellerId),
+          productName: d.productName,
+          productPrice: d.productPrice ?? null,
+          category: d.category ?? null,
+        })]
+      }
+      case 'campaign_product_removed': {
+        const campaignId = externalId(tenantId, 'campaign', d.campaignId)
+        const productId = externalId(tenantId, 'product', d.productId)
+        return [reference(CAMPAIGN_PRODUCTS_TOPIC, 'campaign_product_removed', `${campaignId}:${productId}`, { campaignId, productId })]
+      }
       default: {
-        // Server-side identity: stored like the shopper's own identity events (Flink),
-        // and user_deleted is applied by this service (events/identity.consumer.ts).
+        // Server-side identity: kept in the data lake like the shopper's own identity
+        // events, and user_deleted is applied by this service (events/identity.consumer.ts).
         const userId = (d.userId as string).toLowerCase()
         const payload: AnalyticsEventPayload = {
           eventId: randomUUID(),
@@ -75,7 +98,7 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
           eventName: event.eventName as AnalyticsEventPayload['eventName'],
           campaignId: null,
           productId: null,
-          sellerId: null,
+          storeId: NO_STORE,
           userId,
           userType: 'registered',
           clientType: 'web',

@@ -3,8 +3,7 @@
   - :9363/metrics: ClickHouse's own metrics, events and asynchronous metrics.
   - :8123/pipeline-metrics: the pipeline's health, read from its tables in the
     Prometheus text format: the newest stored event's age, the hourly check, the
-    newest backup's age, invalid traffic today, events in the last hour per
-    seller, and errors of the Kafka engine tables (e.g. offsets it can't commit,
+    newest backup's age, events in the last hour per store, and errors of the Kafka engine tables (e.g. offsets it can't commit,
     which leave it re-reading the same messages). Asks for a ClickHouse user (Prometheus sends basic auth).
 -->
 <clickhouse>
@@ -43,24 +42,17 @@
                                CAST(map(), 'Map(String, String)')
                         FROM system.backup_log WHERE status = 'BACKUP_CREATED'
                         UNION ALL
-                        SELECT 'basketline_invalid_traffic_today', toFloat64(sum(events)),
-                               'Events refused today as invalid traffic, per tenant and reason', 'gauge',
-                               map('tenant', toString(tenant_id), 'reason', toString(reason))
-                        FROM analytics.invalid_traffic_daily WHERE day = today() GROUP BY tenant_id, reason
-                        UNION ALL
                         SELECT 'basketline_clickhouse_kafka_errors_10m',
                                toFloat64(arrayCount(t -> t > now() - INTERVAL 10 MINUTE, exceptions.time)),
                                'Kafka engine errors in the last 10 minutes, per queue table', 'gauge', map('table', table)
                         FROM system.kafka_consumers WHERE database = 'analytics'
                         UNION ALL
-                        SELECT 'basketline_seller_events_last_hour', toFloat64(count()),
-                               'Events stored in the last hour, per seller', 'gauge',
-                               map('tenant', toString(e.tenant_id), 'seller', toString(assumeNotNull(e.seller_id)), 'seller_name', ifNull(any(s.name), ''))
-                        FROM analytics.events AS e
-                        LEFT JOIN (SELECT seller_id, tenant_id, argMax(name, version) AS name FROM analytics.sellers GROUP BY seller_id, tenant_id) AS s
-                          ON s.seller_id = e.seller_id AND s.tenant_id = e.tenant_id
-                        WHERE e.ingested_at > now() - INTERVAL 1 HOUR AND e.seller_id IS NOT NULL
-                        GROUP BY e.tenant_id, e.seller_id
+                        SELECT 'basketline_store_events_last_hour', toFloat64(count()),
+                               'Impressions and clicks stored in the last hour, per store', 'gauge',
+                               map('tenant', toString(tenant_id), 'store', toString(store_id))
+                        FROM analytics.events
+                        WHERE ingested_at > now() - INTERVAL 1 HOUR
+                        GROUP BY tenant_id, store_id
                     ) ORDER BY name
                     FORMAT Prometheus
                 </query>

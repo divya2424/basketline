@@ -1,14 +1,14 @@
 import { badRequest } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
-import { findCampaignSeller, findSellerCampaigns, listCampaigns } from '../repositories/campaign.repository.ts'
+import { listCampaigns } from '../repositories/campaign.repository.ts'
 import { countDaily, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
 
 /** API metric names (kept from the frontend contract). */
-export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers', 'sessions'] as const
+export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers'] as const
 export type MetricName = (typeof METRICS)[number]
 
 const DAY = 24 * 60 * 60 * 1000
-/** Distinct (tenant, campaign, metric, days) kept; random IDs must not grow it without bound. */
+/** Distinct (tenant, store, campaign, metric, days) kept; random IDs must not grow it without bound. */
 const CACHE_MAX = 10_000
 const DEFAULT_RANGE_DAYS = 30
 const MAX_RANGE_DAYS = 366
@@ -38,7 +38,7 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
   const cache = new Map<string, { count: Promise<MetricCount>; until: number }>()
 
   function cachedCount(scope: MetricScope, metric: MetricName) {
-    const key = `${scope.tenantId}:${scope.campaignIds.join(',')}:${metric}:${scope.from.toISOString()}:${scope.to.toISOString()}`
+    const key = `${scope.tenantId}:${scope.storeId ?? ''}:${scope.campaignId}:${metric}:${scope.from.toISOString()}:${scope.to.toISOString()}`
     const now = Date.now()
     let entry = cache.get(key)
     if (!entry || entry.until <= now) {
@@ -52,29 +52,22 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
 
   return {
     /**
-     * A tenant's campaign metric over the period's days, as the daily tables'
-     * columns: events of one kind in total and per client type (web, mobile),
-     * with the customers behind them (also per user type); unique customers
-     * (people who saw or clicked it); or sessions (that saw it, converted, and
-     * their average duration; about 7 hours behind). Customer and session counts
+     * A tenant's campaign metric over the period's days, in one store or all of
+     * them, as the daily tables' columns: events of one kind in total and per
+     * client type (web, mobile), with the customers behind them (also per user
+     * type); or unique customers (people who saw or clicked it). Customer counts
      * are estimates within about 1% beyond a few thousand. Today's numbers are
-     * live, and every day's event counts are exact within the hour (the hourly check). An
-     * unknown campaign simply has 0.
+     * live, and every day's event counts are exact within the hour (the hourly
+     * check). An unknown campaign simply has 0.
      */
-    async count(tenantId: string, campaignIds: string[], metric: MetricName, from?: string, to?: string) {
+    async count(tenantId: string, campaignId: string, metric: MetricName, { from, to, storeId }: { from?: string; to?: string; storeId?: string } = {}) {
       const period = resolvePeriod(from, to)
-      const scope = { tenantId, campaignIds: [...campaignIds].sort(), ...period }
+      const scope = { tenantId, campaignId, storeId, ...period }
       return { ...(await (cacheMs > 0 ? cachedCount(scope, metric) : countDaily(clickhouse, scope, metric))), period }
     },
 
-    /** A campaign's seller (undefined: not the tenant's campaign). */
-    campaignSeller: (tenantId: string, campaignId: string) => findCampaignSeller(clickhouse, tenantId, campaignId),
-
-    /** The tenant's campaigns of one seller. */
-    sellerCampaigns: (tenantId: string, sellerId: string) => findSellerCampaigns(clickhouse, tenantId, sellerId),
-
-    /** The tenant's campaigns, for the dashboard (one seller's when given). */
-    campaigns: (tenantId: string, sellerId?: string) => listCampaigns(clickhouse, tenantId, sellerId),
+    /** The tenant's campaigns with activity, per store, for the dashboard. */
+    campaigns: (tenantId: string) => listCampaigns(clickhouse, tenantId),
   }
 }
 

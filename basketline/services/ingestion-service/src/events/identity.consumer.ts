@@ -1,14 +1,14 @@
 import type { AnalyticsEventPayload, EventEnvelope } from '@basketline/contracts'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 
-/** Raw tables holding a shopper's rows. Daily totals hold no user IDs (counts and sketches). */
-const USER_TABLES = ['events', 'attributed_baskets', 'sessions']
+/** Staging tables holding a shopper's rows. Daily totals hold no user IDs (counts and sketches). */
+const USER_TABLES = ['events', 'attributed_baskets']
 
 /**
  * Erasure (user_deleted, retail.identity-events.v1): records the shopper as
- * deleted (the archive purge job deletes their archived rows), then deletes their
- * rows here. Lightweight deletes: hidden at once, removed by the next merges.
- * Other identity events are stored by the Flink job like interactions.
+ * deleted (so ClickHouse's queue views drop any of their rows still in flight),
+ * then deletes their staged rows. Lightweight deletes: hidden at once, removed by
+ * the next merges. Other identity events go only to the data lake.
  */
 export async function handleIdentityEvent(clickhouse: ClickHouse, envelope: EventEnvelope): Promise<void> {
   const event = envelope.payload as AnalyticsEventPayload

@@ -4,7 +4,7 @@ import type { Logger } from '@basketline/platform'
 
 export interface ServiceUrls {
   auth: string
-  /** The write path: events from the SDK, reference data from retailers' backends. */
+  /** The write path: events from the SDK, reference data from stores' backends. */
   ingestion: string
   /** The read path: the insights API. */
   insights: string

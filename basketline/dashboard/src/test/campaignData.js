@@ -1,31 +1,12 @@
-// A copy of the storefront's sample campaigns (retailer-sim/storefront), as test fixtures.
+// GET /ad/campaigns as test fixtures: one item per campaign and store with activity.
+export const WEB_STORE = '5e1a0b6c-0000-5000-8000-000000000001'
+export const APP_STORE = '5e1a0b6c-0000-5000-8000-000000000002'
+export const NO_STORE = '00000000-0000-0000-0000-000000000000'
+
 export const campaigns = [
-  {
-    id: 'campaign_001',
-    title: 'Featured Picks',
-    type: 'product_collection',
-    description: 'Our best-sellers this week.',
-    productIds: ['product_001', 'product_002'],
-  },
-  {
-    id: 'campaign_002',
-    title: 'Festive Gifting',
-    type: 'product_collection',
-    description: 'Gifts they will actually use.',
-    productIds: ['product_004', 'product_007', 'product_002', 'product_003'],
-  },
-  {
-    id: 'campaign_003',
-    title: 'Work From Home Essentials',
-    type: 'product_collection',
-    description: 'Upgrade your desk setup.',
-    productIds: ['product_006', 'product_010'],
-  },
-  {
-    id: 'campaign_004',
-    title: 'Weekend Getaway',
-    type: 'product_collection',
-    description: 'Pack light, travel far.',
-    productIds: ['product_005'],
-  },
+  { id: 'campaign_001', storeId: WEB_STORE, lastDay: '2026-10-30' },
+  { id: 'campaign_002', storeId: WEB_STORE, lastDay: '2026-10-30' },
+  { id: 'campaign_002', storeId: APP_STORE, lastDay: '2026-10-29' },
+  { id: 'campaign_003', storeId: APP_STORE, lastDay: '2026-10-28' },
+  { id: 'campaign_004', storeId: NO_STORE, lastDay: '2026-10-20' },
 ]

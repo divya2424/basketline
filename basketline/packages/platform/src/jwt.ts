@@ -15,7 +15,7 @@ export const VISITOR_AUDIENCE = 'basketline-events'
 export const VISITOR_TOKEN_TTL_SECONDS = 30 * 60
 export const SHOPPER_TOKEN_TTL_SECONDS = 30 * 60
 /**
- * Integration tokens: a retailer's backend exchanges its API key for one
+ * Integration tokens: a store's backend exchanges its API key for one
  * (POST /auth/integration-token) to send reference data (catalog, campaigns,
  * server-side identity). Only those APIs accept this audience.
  */
@@ -30,13 +30,11 @@ export interface AccessTokenClaims {
   tid: string
   /** The app the user signed in with. */
   client: ClientType
-  /** A seller-manager's seller (UUID); absent for other roles. */
-  sel?: string
   iat: number
   exp: number
 }
 
-/** A retailer's backend, for reference data: the tenant only. */
+/** A store's backend, for reference data: the tenant only. */
 export interface IntegrationTokenClaims {
   tid: string
   exp: number
@@ -53,6 +51,8 @@ export interface VisitorTokenClaims {
   tid: string
   client: ClientType
   kind: 'visitor' | 'shopper'
+  /** The tenant's account tier when the token was issued; ingestion sizes the tenant's budget by it. */
+  tier?: string
   exp: number
 }
 
@@ -78,13 +78,12 @@ export async function verifyAccessToken(token: string, publicKey: CryptoKey): Pr
     audience: JWT_AUDIENCE,
     algorithms: [JWT_ALGORITHM],
   })
-  const { sub, sid, role, tid, client, sel, iat, exp } = payload as Partial<AccessTokenClaims>
+  const { sub, sid, role, tid, client, iat, exp } = payload as Partial<AccessTokenClaims>
   if (typeof sub !== 'string' || typeof sid !== 'string' || !isUuid(tid) || typeof iat !== 'number' || typeof exp !== 'number') {
     throw new Error('token is missing required claims')
   }
   if (!ROLES.includes(role as Role)) throw new Error('token has an unknown role')
-  if (role === 'seller-manager' && !isUuid(sel)) throw new Error("a seller-manager's token needs its seller")
-  return { sub, sid, role: role as Role, tid, client: clientClaim(client), ...(role === 'seller-manager' ? { sel: sel! } : {}), iat, exp }
+  return { sub, sid, role: role as Role, tid, client: clientClaim(client), iat, exp }
 }
 
 export async function verifyIntegrationToken(token: string, publicKey: CryptoKey): Promise<IntegrationTokenClaims> {
@@ -115,9 +114,9 @@ export async function signIntegrationToken(
 
 export async function verifyVisitorToken(token: string, publicKey: CryptoKey): Promise<VisitorTokenClaims> {
   const { payload } = await jwtVerify(token, publicKey, { issuer: JWT_ISSUER, audience: VISITOR_AUDIENCE, algorithms: [JWT_ALGORITHM] })
-  const { sub, tid, client, kind, exp } = payload as Partial<VisitorTokenClaims>
+  const { sub, tid, client, kind, tier, exp } = payload as Partial<VisitorTokenClaims>
   if (!isUuid(sub) || !isUuid(tid) || typeof exp !== 'number') throw new Error('token is missing required claims')
-  return { sub, tid, client: clientClaim(client), kind: kind === 'shopper' ? 'shopper' : 'visitor', exp }
+  return { sub, tid, client: clientClaim(client), kind: kind === 'shopper' ? 'shopper' : 'visitor', ...(typeof tier === 'string' ? { tier } : {}), exp }
 }
 
 /** Who sent an analytics event: a signed-in user (access or shopper token) or a visitor (visitor token). */
@@ -127,6 +126,8 @@ export interface EventSender {
   userId: string
   userType: UserType
   clientType: ClientType
+  /** The tenant's tier, from a visitor or shopper token; null for an access token or an older token. */
+  tier: string | null
   /** Set for a Basketline user's access token, so the gateway can check revocation. */
   claims: AccessTokenClaims | null
 }
@@ -135,43 +136,43 @@ export interface EventSender {
 export async function verifyEventToken(token: string, publicKey: CryptoKey): Promise<EventSender> {
   try {
     const claims = await verifyAccessToken(token, publicKey)
-    return { tenantId: claims.tid, userId: claims.sub, userType: 'registered', clientType: claims.client, claims }
+    return { tenantId: claims.tid, userId: claims.sub, userType: 'registered', clientType: claims.client, tier: null, claims }
   } catch {
     const events = await verifyVisitorToken(token, publicKey)
     const userType = events.kind === 'shopper' ? 'registered' : 'visitor'
-    return { tenantId: events.tid, userId: events.sub, userType, clientType: events.client, claims: null }
+    return { tenantId: events.tid, userId: events.sub, userType, clientType: events.client, tier: events.tier ?? null, claims: null }
   }
 }
 
 /** visitorId: the client's UUID for the visitor, kept when the visitor registers, so its events count as one customer. */
 export async function signVisitorToken(
   privateKey: CryptoKey,
-  { tenantId, visitorId = randomUUID(), client = 'web' }: { tenantId: string; visitorId?: string; client?: ClientType },
+  { tenantId, visitorId = randomUUID(), client = 'web', tier }: { tenantId: string; visitorId?: string; client?: ClientType; tier?: string },
   issuedAt: Date = new Date(),
   ttlSeconds = VISITOR_TOKEN_TTL_SECONDS,
 ): Promise<{ token: string; expiresAt: Date }> {
-  return signEventsToken(privateKey, { tenantId, userId: visitorId, client, kind: 'visitor' }, issuedAt, ttlSeconds)
+  return signEventsToken(privateKey, { tenantId, userId: visitorId, client, kind: 'visitor', tier }, issuedAt, ttlSeconds)
 }
 
 /** A vendor's signed-in customer (registered), for events only; userId is the UUID Basketline keeps for them. */
 export async function signShopperToken(
   privateKey: CryptoKey,
-  { tenantId, userId, client = 'web' }: { tenantId: string; userId: string; client?: ClientType },
+  { tenantId, userId, client = 'web', tier }: { tenantId: string; userId: string; client?: ClientType; tier?: string },
   issuedAt: Date = new Date(),
   ttlSeconds = SHOPPER_TOKEN_TTL_SECONDS,
 ): Promise<{ token: string; expiresAt: Date }> {
-  return signEventsToken(privateKey, { tenantId, userId, client, kind: 'shopper' }, issuedAt, ttlSeconds)
+  return signEventsToken(privateKey, { tenantId, userId, client, kind: 'shopper', tier }, issuedAt, ttlSeconds)
 }
 
 async function signEventsToken(
   privateKey: CryptoKey,
-  { tenantId, userId, client, kind }: { tenantId: string; userId: string; client: ClientType; kind: VisitorTokenClaims['kind'] },
+  { tenantId, userId, client, kind, tier }: { tenantId: string; userId: string; client: ClientType; kind: VisitorTokenClaims['kind']; tier?: string },
   issuedAt: Date,
   ttlSeconds: number,
 ): Promise<{ token: string; expiresAt: Date }> {
   const iat = Math.floor(issuedAt.getTime() / 1000)
   const exp = iat + ttlSeconds
-  const token = await new SignJWT({ tid: tenantId, client, kind })
+  const token = await new SignJWT({ tid: tenantId, client, kind, ...(tier ? { tier } : {}) })
     .setProtectedHeader({ alg: JWT_ALGORITHM, typ: 'JWT' })
     .setSubject(userId)
     .setIssuer(JWT_ISSUER)
@@ -184,13 +185,13 @@ async function signEventsToken(
 
 export async function signAccessToken(
   privateKey: CryptoKey,
-  claims: { sub: string; sid: string; role: Role; tid: string; client: ClientType; sel?: string },
+  claims: { sub: string; sid: string; role: Role; tid: string; client: ClientType },
   issuedAt: Date = new Date(),
   ttlSeconds = ACCESS_TOKEN_TTL_SECONDS,
 ): Promise<{ token: string; expiresAt: Date }> {
   const iat = Math.floor(issuedAt.getTime() / 1000)
   const exp = iat + ttlSeconds
-  const token = await new SignJWT({ sid: claims.sid, role: claims.role, tid: claims.tid, client: claims.client, ...(claims.sel ? { sel: claims.sel } : {}) })
+  const token = await new SignJWT({ sid: claims.sid, role: claims.role, tid: claims.tid, client: claims.client })
     .setProtectedHeader({ alg: JWT_ALGORITHM, typ: 'JWT' })
     .setSubject(claims.sub)
     .setIssuer(JWT_ISSUER)

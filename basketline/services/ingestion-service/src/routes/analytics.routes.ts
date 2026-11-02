@@ -13,7 +13,7 @@ export function analyticsRoutes(ingestion: IngestionController, authenticateEven
 }
 
 /**
- * Mounted at /api/v1/retail: reference data and server-side identity from a retailer's
+ * Mounted at /api/v1/retail: reference data and server-side identity from a store's
  * backend, with an integration token (its API key, exchanged at POST /auth/integration-token).
  */
 export function referenceRoutes(reference: ReferenceController, authenticateIntegration: RequestHandler): Router {

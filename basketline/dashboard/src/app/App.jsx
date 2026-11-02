@@ -40,7 +40,7 @@ export function App({ authProps, catalogProps, onboardingProps }) {
                   path="/analytics"
                   element={
                     <RequireTenant>
-                      <RequireRole role={[ROLES.CAMPAIGN_MANAGER, ROLES.SELLER_MANAGER]}>
+                      <RequireRole role={ROLES.CAMPAIGN_MANAGER}>
                         <AnalyticsPage />
                       </RequireRole>
                     </RequireTenant>

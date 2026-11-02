@@ -1,10 +1,8 @@
-import { randomUUID } from 'node:crypto'
-import { CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC, INTERACTIONS_TOPIC, SERVING_TOPICS, TOPICS, WATERMARK_HEARTBEAT_TOPIC } from '@basketline/contracts'
+import { CAMPAIGN_PRODUCTS_TOPIC, CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC, INTERACTIONS_TOPIC, SERVING_TOPICS, TOPICS } from '@basketline/contracts'
 import { createBusFromEnv, createHealth, createLogger, handleShutdown, intEnv, loadPublicKey, requireEnv, secretEnv } from '@basketline/platform'
 import { createClickHouse } from '@basketline/platform/clickhouse'
 import { buildIngestionApp } from './app.ts'
 import { handleIdentityEvent } from './events/identity.consumer.ts'
-import { handleReferenceEvent } from './events/reference.consumer.ts'
 import { handleTenantEvent } from './events/tenant.consumer.ts'
 import { TENANT_EVENTS_PER_MINUTE } from './services/ingestion.service.ts'
 
@@ -12,51 +10,35 @@ const logger = createLogger('ingestion-service')
 const health = createHealth()
 
 // The interactions topic keeps 14 days: the Flink job keeps clicks 13 days (7-day
-// attribution window + 5 days events may arrive late + a day of slack), so a replay from the
-// topics can rebuild all of it. Applies when a topic is created; see
+// attribution window + late arrivals + slack), so a replay from the topics can rebuild
+// all of it. Applies when a topic is created; see
 // basketline/README.md for changing existing ones.
 const ANALYTICS_RETENTION_MS = String(14 * 24 * 60 * 60 * 1000)
 // The serving topics only bridge Flink and ClickHouse, so they keep 48 hours, enough
 // to ride out a ClickHouse outage; replays come from the interactions topic.
 const SERVING_RETENTION_MS = String(48 * 60 * 60 * 1000)
-// A heartbeat is only useful while it is the newest time Flink has seen.
-const HEARTBEAT_RETENTION_MS = String(60 * 60 * 1000)
-
-// Reference data (sellers, products, campaigns): the latest state per ID is kept for
-// good (compacted), so a rebuilt copy always has every entity.
+// Reference data (sellers, products, campaigns, campaign products): the latest state per
+// ID is kept for good (compacted); the data lake (basketline/connect) keeps every update.
 const REFERENCE_CONFIGS = { 'cleanup.policy': 'compact' }
 
 // Creates the topics this service publishes to (interactions, identity, reference
-// data, the heartbeat) and the serving topics the Flink job writes for ClickHouse.
+// data) and the serving topics the Flink job writes for ClickHouse.
 const bus = await createBusFromEnv('ingestion-service', logger, [
   { name: INTERACTIONS_TOPIC, configs: { 'retention.ms': ANALYTICS_RETENTION_MS } },
   { name: IDENTITY_TOPIC, configs: { 'retention.ms': ANALYTICS_RETENTION_MS } },
   { name: CATALOG_TOPIC, configs: REFERENCE_CONFIGS },
   { name: CAMPAIGN_TOPIC, configs: REFERENCE_CONFIGS },
-  { name: WATERMARK_HEARTBEAT_TOPIC, configs: { 'retention.ms': HEARTBEAT_RETENTION_MS } },
+  { name: CAMPAIGN_PRODUCTS_TOPIC, configs: REFERENCE_CONFIGS },
   ...Object.values(SERVING_TOPICS).map((name) => ({ name, configs: { 'retention.ms': SERVING_RETENTION_MS } })),
 ])
 health.addCheck('kafka', () => bus.healthCheck())
 
-// Every 30 s, half the Flink source's idle timeout, so the heartbeat's partition never
-// counts as idle. One key, so every instance's heartbeats share one partition.
-const heartbeat = setInterval(() => {
-  const timestamp = new Date().toISOString()
-  const envelope = { eventId: randomUUID(), eventType: 'WatermarkHeartbeat', eventVersion: 1, occurredAt: timestamp, producer: 'ingestion-service', aggregateId: 'heartbeat', aggregateVersion: 1, payload: { timestamp } }
-  bus.publish([{ topic: WATERMARK_HEARTBEAT_TOPIC, key: 'heartbeat', envelope }]).catch((error) => logger.warn({ err: error }, 'watermark heartbeat failed'))
-}, 30_000)
 const clickhouse = createClickHouse(requireEnv('CLICKHOUSE_URL'))
-// The retailer's reference data (this service's copies of sellers, products and
-// campaigns), erasures (user_deleted), and deleted tenants. Applying an event twice
-// is harmless.
+// Deletions only: erasures (user_deleted) and deleted tenants. Applying one twice is harmless.
 await bus.subscribe({
   groupId: 'ingestion-service',
-  topics: [CATALOG_TOPIC, CAMPAIGN_TOPIC, IDENTITY_TOPIC, TOPICS.tenants],
-  handler: async (envelope, { topic }) => {
-    if (topic.endsWith(IDENTITY_TOPIC)) return handleIdentityEvent(clickhouse, envelope)
-    if (topic.endsWith(TOPICS.tenants)) return handleTenantEvent(clickhouse, envelope)
-    return handleReferenceEvent(clickhouse, envelope)
-  },
+  topics: [IDENTITY_TOPIC, TOPICS.tenants],
+  handler: async (envelope, { topic }) => (topic.endsWith(IDENTITY_TOPIC) ? handleIdentityEvent(clickhouse, envelope) : handleTenantEvent(clickhouse, envelope)),
 })
 
 // Each tenant's ingestion budget per instance, by tier (ingestion.service.ts).
@@ -77,7 +59,6 @@ handleShutdown({
   server,
   health,
   closers: [
-    { name: 'watermark heartbeat timer', close: () => clearInterval(heartbeat) },
     { name: 'kafka', close: () => bus.close() },
     { name: 'clickhouse', close: () => clickhouse.close() },
   ],

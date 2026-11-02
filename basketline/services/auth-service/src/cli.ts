@@ -4,7 +4,6 @@
  *
  *   node src/cli.ts create-account --name 'Acme Store' [--tier free|pro|enterprise] [--tenant <uuid>]
  *   node src/cli.ts create-user --username maya --password '...' --role campaign-manager --tenant <uuid>
- *   node src/cli.ts create-user --username sam --password '...' --role seller-manager --seller <uuid> --tenant <uuid>
  *   node src/cli.ts set-role    --username sam --role campaign-manager --tenant <uuid>
  *   node src/cli.ts disable     --username maya --tenant <uuid>
  *   node src/cli.ts create-api-key --tenant <uuid> --name 'Production web'   (prints the key once)
@@ -33,7 +32,6 @@ const { positionals, values } = parseArgs({
     password: { type: 'string' },
     role: { type: 'string' },
     tenant: { type: 'string' },
-    seller: { type: 'string' },
     name: { type: 'string' },
     tier: { type: 'string' },
     prefix: { type: 'string' },
@@ -95,7 +93,7 @@ if (command === 'create-account') {
         case 'create-user':
           if (!values.password) throw new Error('--password is required')
           if (!role) throw new Error(`--role is required: ${ROLES.join(' or ')}`)
-          return createUser(tx, { username, password: values.password, role, tenantId, sellerId: values.seller }, null)
+          return createUser(tx, { username, password: values.password, role, tenantId }, null)
         case 'set-role':
           if (!role) throw new Error('--role is required')
           return changeRole(tx, tenantId, username, role, null)

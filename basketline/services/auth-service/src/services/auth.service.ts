@@ -33,7 +33,9 @@ export function createAuthService({
   publish: PublishEvents
 }) {
   async function requireAccount(tenantId: string) {
-    if (!(await findAccount(db, tenantId))) throw notFound('TENANT_NOT_FOUND', 'No such tenant')
+    const account = await findAccount(db, tenantId)
+    if (!account) throw notFound('TENANT_NOT_FOUND', 'No such tenant')
+    return account
   }
 
   return {
@@ -51,7 +53,7 @@ export function createAuthService({
 
       const now = new Date()
       const sessionId = randomUUID()
-      const { token, expiresAt } = await signAccessToken(privateKey, { sub: user.id, sid: sessionId, role: user.role, tid: user.tenantId, client: input.clientType, ...(user.sellerId ? { sel: user.sellerId } : {}) }, now)
+      const { token, expiresAt } = await signAccessToken(privateKey, { sub: user.id, sid: sessionId, role: user.role, tid: user.tenantId, client: input.clientType }, now)
       const session = await withTenant(db, user.tenantId, async (tx) => {
         const created = await insertSession(tx, { id: sessionId, tenantId: user.tenantId, userId: user.id, clientType: input.clientType, sessionStartTime: now, expiresAt })
         await setLastLogin(tx, user.id, now)
@@ -87,9 +89,9 @@ export function createAuthService({
      * customer across tokens, and stays its ID when it registers.
      */
     async visitor(tenantId: string, { userId, clientType }: VisitorInput) {
-      await requireAccount(tenantId)
+      const { tier } = await requireAccount(tenantId)
       const visitorId = userId?.toLowerCase() ?? randomUUID()
-      return { visitorId, ...(await signVisitorToken(privateKey, { tenantId, visitorId, client: clientType })) }
+      return { visitorId, ...(await signVisitorToken(privateKey, { tenantId, visitorId, client: clientType, tier })) }
     },
 
     async me(claims: AccessTokenClaims) {

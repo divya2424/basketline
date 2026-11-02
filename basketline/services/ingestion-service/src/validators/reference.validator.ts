@@ -1,10 +1,10 @@
 import { isIsoDate, isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
-import { CAMPAIGN_EVENT_NAMES, CATALOG_EVENT_NAMES, isRetailerId, SERVER_IDENTITY_EVENT_NAMES } from '@basketline/contracts'
+import { CAMPAIGN_EVENT_NAMES, CAMPAIGN_PRODUCT_EVENT_NAMES, CATALOG_EVENT_NAMES, isStoreRecordId, SERVER_IDENTITY_EVENT_NAMES } from '@basketline/contracts'
 
 export const MAX_REFERENCE_EVENTS_PER_REQUEST = 500
 const STATUSES = ['draft', 'active', 'paused', 'completed']
 
-/** One update from the retailer's server: its name, when the state is from (default: now), and the state. */
+/** One update from the store's server: its name, when the state is from (default: now), and the state. */
 export interface IncomingReferenceEvent {
   eventName: string
   updatedAt?: string
@@ -12,41 +12,66 @@ export interface IncomingReferenceEvent {
 }
 
 const id = (data: Record<string, unknown>, field: string, errors: string[], at: string) => {
-  if (!isRetailerId(data[field])) errors.push(`${at}.data.${field} must be an ID (a UUID or your own, up to 128 characters)`)
+  if (!isStoreRecordId(data[field])) errors.push(`${at}.data.${field} must be an ID (a UUID or your own, up to 128 characters)`)
 }
 
-/** Field checks per event name; a retailer's own IDs are mapped later (externalId). */
+/** Field checks per event name; a store's own IDs are mapped later (externalId). */
+const optionalId = (data: Record<string, unknown>, field: string, errors: string[], at: string) => {
+  if (data[field] != null) id(data, field, errors, at)
+}
+const price = (data: Record<string, unknown>, field: string, errors: string[], at: string) => {
+  if (data[field] != null && !(typeof data[field] === 'number' && data[field] >= 0)) errors.push(`${at}.data.${field} must be a number ≥ 0`)
+}
+const category = (data: Record<string, unknown>, errors: string[], at: string) => {
+  if (data.category != null && !isNonEmptyString(data.category, 100)) errors.push(`${at}.data.category must be a string (max 100 characters)`)
+}
+
 const DATA: Record<string, { fields: string[]; check: (data: Record<string, unknown>, errors: string[], at: string) => void }> = {
   seller_upserted: {
     fields: ['sellerId', 'name'],
     check: (d, e, at) => { id(d, 'sellerId', e, at); if (!isNonEmptyString(d.name, 200)) e.push(`${at}.data.name must be a string (max 200 characters)`) },
   },
   product_upserted: {
-    fields: ['productId', 'sellerId', 'name', 'category', 'price', 'isActive'],
+    fields: ['productId', 'storeId', 'sellerId', 'name', 'category', 'price', 'isActive'],
     check: (d, e, at) => {
       id(d, 'productId', e, at)
-      // Optional: without one, the product is the retailer's own (first-party).
-      if (d.sellerId != null) id(d, 'sellerId', e, at)
+      optionalId(d, 'storeId', e, at)
+      // Optional: without one, the product is the tenant's own (first-party).
+      optionalId(d, 'sellerId', e, at)
       if (!isNonEmptyString(d.name, 300)) e.push(`${at}.data.name must be a string (max 300 characters)`)
-      if (d.category != null && !isNonEmptyString(d.category, 100)) e.push(`${at}.data.category must be a string (max 100 characters)`)
-      if (d.price != null && !(typeof d.price === 'number' && d.price >= 0)) e.push(`${at}.data.price must be a number ≥ 0`)
+      category(d, e, at)
+      price(d, 'price', e, at)
       if (d.isActive != null && typeof d.isActive !== 'boolean') e.push(`${at}.data.isActive must be true or false`)
     },
   },
   product_removed: { fields: ['productId'], check: (d, e, at) => id(d, 'productId', e, at) },
   campaign_upserted: {
-    fields: ['campaignId', 'sellerId', 'title', 'status', 'startTime', 'endTime', 'archived', 'productIds'],
+    fields: ['campaignId', 'storeId', 'sellerId', 'title', 'status', 'startTime', 'endTime', 'archived', 'productIds'],
     check: (d, e, at) => {
       id(d, 'campaignId', e, at)
+      optionalId(d, 'storeId', e, at)
       id(d, 'sellerId', e, at)
       if (!isNonEmptyString(d.title, 200)) e.push(`${at}.data.title must be a string (max 200 characters)`)
       if (!isOneOf(d.status, STATUSES)) e.push(`${at}.data.status must be one of ${STATUSES.join(', ')}`)
       for (const field of ['startTime', 'endTime']) if (d[field] != null && !isIsoDate(d[field])) e.push(`${at}.data.${field} must be an ISO 8601 date-time`)
       if (d.archived != null && typeof d.archived !== 'boolean') e.push(`${at}.data.archived must be true or false`)
-      if (!Array.isArray(d.productIds) || d.productIds.length > 500 || !d.productIds.every(isRetailerId)) e.push(`${at}.data.productIds must be a list of up to 500 product IDs`)
+      if (!Array.isArray(d.productIds) || d.productIds.length > 500 || !d.productIds.every(isStoreRecordId)) e.push(`${at}.data.productIds must be a list of up to 500 product IDs`)
     },
   },
   campaign_removed: { fields: ['campaignId'], check: (d, e, at) => id(d, 'campaignId', e, at) },
+  campaign_product_added: {
+    fields: ['campaignId', 'productId', 'storeId', 'sellerId', 'productName', 'productPrice', 'category'],
+    check: (d, e, at) => {
+      id(d, 'campaignId', e, at)
+      id(d, 'productId', e, at)
+      optionalId(d, 'storeId', e, at)
+      optionalId(d, 'sellerId', e, at)
+      if (!isNonEmptyString(d.productName, 300)) e.push(`${at}.data.productName must be a string (max 300 characters)`)
+      price(d, 'productPrice', e, at)
+      category(d, e, at)
+    },
+  },
+  campaign_product_removed: { fields: ['campaignId', 'productId'], check: (d, e, at) => { id(d, 'campaignId', e, at); id(d, 'productId', e, at) } },
   // userId: the ID Basketline returned for the shopper (POST /auth/shopper-token).
   user_identified: {
     fields: ['userId', 'visitorId'],
@@ -79,5 +104,5 @@ function referenceValidator(names: readonly string[]) {
 }
 
 export const validateCatalog = referenceValidator(CATALOG_EVENT_NAMES)
-export const validateCampaigns = referenceValidator(CAMPAIGN_EVENT_NAMES)
+export const validateCampaigns = referenceValidator([...CAMPAIGN_EVENT_NAMES, ...CAMPAIGN_PRODUCT_EVENT_NAMES])
 export const validateIdentity = referenceValidator(SERVER_IDENTITY_EVENT_NAMES)

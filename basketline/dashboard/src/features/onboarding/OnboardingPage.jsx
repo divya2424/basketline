@@ -99,7 +99,7 @@ export function OnboardingPage({ navigateTo, fullReload = true }) {
         <p className="muted">
           Retailers onboard with Basketline’s API (<code>POST /accounts</code>), keeping the API key it returns. The simulated retailer does
           it from its storefront’s <a href={`${STOREFRONT_URL}/stores`}>Stores</a> page. Each tenant has an <code>{ONBOARDING_USERNAME}</code>{' '}
-          user, a campaign manager, and a seller manager for each seller the retailer named, all with the password <code>{DEMO_PASSWORD}</code>.
+          user, its campaign manager, with the password <code>{DEMO_PASSWORD}</code>.
         </p>
       </div>
 

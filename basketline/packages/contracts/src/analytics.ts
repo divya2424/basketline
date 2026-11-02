@@ -2,9 +2,10 @@
  * Analytics events: what shoppers do. Every event has a type and a name:
  *   interaction  ad and storefront activity (INTERACTIONS_TOPIC)
  *   identity     login and user activity (IDENTITY_TOPIC): what the shopper's
- *                client sends, and what only the retailer's server can vouch for
- * ingestion-service publishes them; the Flink job (basketline/flink) reads both topics
- * and writes the SERVING_TOPICS, which ClickHouse loads (infra/clickhouse/03_kafka.sql).
+ *                client sends, and what only the store's server can vouch for
+ * ingestion-service publishes them; the Flink job (basketline/flink) reads only the
+ * interactions and writes the SERVING_TOPICS, which ClickHouse loads into its daily
+ * aggregates (infra/clickhouse). Every topic also goes to the data lake (basketline/connect).
  * What exists (sellers, products, campaigns) is reference data: retail.ts.
  */
 
@@ -37,7 +38,7 @@ export const INTERACTION_EVENT_NAMES = [...METRIC_EVENT_NAMES, ...ACTIVITY_EVENT
 /** Login and user activity the shopper's own client sends (the SDK's identity(), identify() and reset()). */
 export const CLIENT_IDENTITY_EVENT_NAMES = ['login_click', 'signup_click', 'login', 'logout'] as const
 /**
- * What only the retailer's server can vouch for (POST /api/v1/retail/identity, with its
+ * What only the store's server can vouch for (POST /api/v1/retail/identity, with its
  * API key): a login succeeded (the visitor became this customer), and erasure.
  */
 export const SERVER_IDENTITY_EVENT_NAMES = ['user_identified', 'user_deleted'] as const
@@ -57,15 +58,14 @@ export function eventTypeOf(eventName: AnalyticsEventName): AnalyticsEventKind {
 export const ANALYTICS_EVENT_TYPE = 'AnalyticsEventRecorded'
 
 /**
- * Written by the Flink job: every valid event as an analytics.events row, each
- * (add_to_cart, earlier click on that product by the same user) pair as an
- * analytics.attributed_baskets row, and each user session as an analytics.sessions row.
- * The job reads only INTERACTIONS_TOPIC, IDENTITY_TOPIC and WATERMARK_HEARTBEAT_TOPIC, never its own output.
+ * Written by the Flink job: every impression, click and add_to_cart as an
+ * analytics.events row, and each (add_to_cart, earlier click on that product by
+ * the same user) pair as an analytics.attributed_baskets row. The job reads only
+ * INTERACTIONS_TOPIC, never its own output.
  */
 export const SERVING_TOPICS = {
   events: 'serving.events.v1',
   attributedBaskets: 'serving.attributed_baskets.v1',
-  sessions: 'serving.sessions.v1',
 } as const
 
 /**
@@ -77,7 +77,7 @@ export const INTERACTIONS_TOPIC = 'retail.interactions.v1'
 
 /**
  * Identity events: their own topic, since part of them comes only from the
- * retailer's server (different access), and ingestion-service applies erasure
+ * store's server (different access), and ingestion-service applies erasure
  * (user_deleted) from it (different processing).
  */
 export const IDENTITY_TOPIC = 'retail.identity-events.v1'
@@ -87,15 +87,6 @@ export function topicOf(eventName: AnalyticsEventName): string {
   return eventTypeOf(eventName) === 'interaction' ? INTERACTIONS_TOPIC : IDENTITY_TOPIC
 }
 
-/**
- * ingestion-service publishes the current time here every 30 s. The Flink job
- * reads it with the interactions, so the session windows' watermark keeps moving
- * when no events arrive (after a replay, or a quiet night); without it, sessions
- * would stay open until the next event. It has no eventId or tenantId, so the
- * job's events view drops it before anything is written. A topic of its own:
- * it keeps 1 hour, not 14 days.
- */
-export const WATERMARK_HEARTBEAT_TOPIC = 'retail.heartbeat.v1'
 
 /** Envelope payload of an AnalyticsEventRecorded message. Missing values are null. */
 export interface AnalyticsEventPayload {
@@ -104,11 +95,8 @@ export interface AnalyticsEventPayload {
   eventName: AnalyticsEventName
   campaignId: string | null
   productId: string | null
-  /**
-   * The seller of productId, from the catalog (retail.ts), stamped on arrival.
-   * Null without a product, or for a product the catalog hasn't sent yet.
-   */
-  sellerId: string | null
+  /** The store it happened in (retail.ts NO_STORE when the client sent none). */
+  storeId: string
   /**
    * The person, from the sender's token (never from the request body): the
    * registered user's ID, or the visitor's UUID, which the client keeps when the

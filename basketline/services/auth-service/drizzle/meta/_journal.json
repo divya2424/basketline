@@ -50,6 +50,13 @@
       "when": 1793648821219,
       "tag": "0006_retire_standard_users",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793653642246,
+      "tag": "0007_retire_seller_managers",
+      "breakpoints": true
     }
   ]
 }

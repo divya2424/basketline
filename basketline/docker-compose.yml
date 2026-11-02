@@ -277,9 +277,10 @@ services:
     depends_on: { kafka: { condition: service_healthy } }
 
   # Central logs: Alloy reads every container's logs and sends them to Loki.
+  # Only with: docker compose --profile logs up -d
   loki:
     image: grafana/loki:3.5.0
-    profiles: [monitoring]
+    profiles: [logs]
     command: [-config.file=/etc/loki/loki.yml]
     volumes:
       - ./infra/monitoring/loki.yml:/etc/loki/loki.yml:ro
@@ -287,7 +288,7 @@ services:
 
   alloy:
     image: grafana/alloy:v1.8.3
-    profiles: [monitoring]
+    profiles: [logs]
     command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy/data]
     volumes:
       - ./infra/monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
@@ -308,7 +309,7 @@ services:
     volumes:
       - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    depends_on: [prometheus, loki]
+    depends_on: [prometheus]
 
 volumes:
   prometheus-data:

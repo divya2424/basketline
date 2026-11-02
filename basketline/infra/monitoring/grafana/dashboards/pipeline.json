@@ -465,38 +465,7 @@
           ]
         }
       },
-      "description": "Stored events with a seller, per seller (the 20 busiest). From analytics.events and analytics.sellers."
-    },
-    {
-      "id": 11,
-      "type": "timeseries",
-      "title": "Late events left out of sessions",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 21,
-        "w": 12,
-        "h": 7
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(increase(flink_taskmanager_job_task_operator_numLateRecordsDropped[1h]))",
-          "legendFormat": "per hour"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {}
+      "description": "Impressions and clicks stored in the last hour, per tenant and store (the 20 busiest). From analytics.events."
     },
     {
       "id": 12,
@@ -507,9 +476,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 12,
+        "x": 0,
         "y": 21,
-        "w": 12,
+        "w": 24,
         "h": 7
       },
       "targets": [

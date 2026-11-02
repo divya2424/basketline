@@ -444,16 +444,17 @@ Everything after the backup comes back from Kafka. Days older than the replay ke
 ### Monitoring
 
 ```bash
-docker compose --profile monitoring up -d   # Prometheus, Grafana, a Kafka lag exporter, Loki and Alloy
+docker compose --profile monitoring up -d   # metrics: Prometheus, Grafana and a Kafka lag exporter
+docker compose --profile logs up -d         # optional logs: Loki and Alloy
 ```
 
-Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's requests per second, 5xx rate and p99 latency (with ingestion and `/ad` against their targets), Node event-loop lag, the Flink job (uptime, restarts, failed checkpoints, records per second, late events), Kafka consumer lag, the newest stored event, the hourly check, the newest backup, invalid traffic per tenant, and events in the last hour per seller. Configuration in `infra/monitoring/`:
+Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's requests per second, 5xx rate and p99 latency (with ingestion and `/ad` against their targets), Node event-loop lag, the Flink job (uptime, restarts, failed checkpoints, records per second), Kafka consumer lag, the newest stored event, the hourly check, the newest backup, and impressions and clicks in the last hour per store. Configuration in `infra/monitoring/`:
 
 - **Sources:** every service's `GET /metrics` (`packages/platform/src/metrics.ts`: one request histogram by method, route pattern and status, plus Node's process metrics); Flink's Prometheus reporter (`flink/config.yaml`, ports 9249 and 9250); ClickHouse's own metrics (`:9363`); the pipeline's health read from its tables (`:8123/pipeline-metrics`, a query in `infra/clickhouse/config/prometheus.xml`); `kafka-exporter` for lag.
-- **Alerts** (`alerts.yml`, listed at http://localhost:9090/alerts): a target down, ClickHouse consumers falling behind, the Flink job down or restarting, failing checkpoints, late events dropped, the hourly check failing or stale, no backup for 26 hours, an invalid-traffic spike, a service answering over 5% 5xx, ingestion p99 over 500 ms and `/ad` p99 over 1 s, and ClickHouse's Kafka tables failing to read or commit (after an overload they can loop on the same messages; `docker compose restart clickhouse` makes them rejoin). No Alertmanager locally: route them to a pager on AWS. `BackupStale` fires until the first nightly backup has run.
-- **Logs:** Alloy ships every container's logs to Loki (kept 7 days, `infra/monitoring/{loki.yml,alloy.alloy}`), labelled by `service` and pino's `level` (50 = error). In Grafana: the dashboard's **Logs** row, or **Explore → Loki**, e.g. `{service="ingestion-service"} | json | tenantId = "…"`.
+- **Alerts** (`alerts.yml`, listed at http://localhost:9090/alerts): a target down, ClickHouse consumers falling behind, the Flink job down or restarting, failing checkpoints, the hourly check failing or stale, no backup for 26 hours, a service answering over 5% 5xx, ingestion p99 over 500 ms and `/ad` p99 over 1 s, and ClickHouse's Kafka tables failing to read or commit (after an overload they can loop on the same messages; `docker compose restart clickhouse` makes them rejoin). No Alertmanager locally: route them to a pager on AWS. `BackupStale` fires until the first nightly backup has run.
+- **Logs** (profile `logs`): Alloy ships every container's logs to Loki (kept 7 days, `infra/monitoring/{loki.yml,alloy.alloy}`), labelled by `service` and pino's `level` (50 = error). In Grafana: the dashboard's **Logs** row (empty without the profile), or **Explore → Loki**, e.g. `{service="ingestion-service"} | json | tenantId = "…"`.
 - `/metrics` is served on each service's own port, so the gateway's is public on `:8080`. In production, block `/metrics` at the ingress (the gateway chart's ingress passes every path), and let Prometheus scrape the pods inside the cluster.
-- The per-seller metric has one series per seller with events in the last hour; at many thousands of sellers, chart it from ClickHouse instead.
+- The per-store metric has one series per store with events in the last hour; at many thousands of stores, chart it from ClickHouse instead.
 
 ### Looking at the data
 

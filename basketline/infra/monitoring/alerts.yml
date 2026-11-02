@@ -34,12 +34,7 @@ groups:
 
       - alert: FlinkCheckpointsFailing
         expr: increase(flink_jobmanager_job_numberOfFailedCheckpoints[15m]) > 0
-        annotations: { summary: "Flink checkpoints are failing: a restart would replay more, and the archive commits nothing" }
-
-      # Events later than the watermark (1 hour) are left out of sessions.
-      - alert: LateRecordsDropped
-        expr: sum(increase(flink_taskmanager_job_task_operator_numLateRecordsDropped[1h])) > 0
-        annotations: { summary: "{{ $value }} late events were left out of sessions in the last hour" }
+        annotations: { summary: "Flink checkpoints are failing: a restart would replay more" }
 
       - alert: HourlyCheckFailing
         expr: basketline_hourly_check_failed == 1 or basketline_hourly_check_age_seconds > 3 * 3600

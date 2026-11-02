@@ -1,8 +1,8 @@
-"""Daily: deletes deleted tenants' and shoppers' rows from the Iceberg archive (jobs/purge_tenants.py).
+"""Daily: deletes deleted tenants' and erased shoppers' rows from the data lake (jobs/purge_tenants.py).
 
 Deleting a tenant on the platform removes its data from every service and from
-ClickHouse at once; its archived files are rewritten here, and again on every
-run while a replay of Kafka could archive its events again (purge_tenants.py).
+ClickHouse at once; its rows in the lake's Iceberg tables are deleted here, and
+again on every run, in case a replay of Kafka appended them again (purge_tenants.py).
 Trigger it by hand to purge sooner.
 """
 
@@ -21,7 +21,7 @@ JOBS_PYTHON = "/opt/jobs/bin/python"
     max_active_runs=1,
     is_paused_upon_creation=False,
     default_args={"retries": 3, "retry_delay": timedelta(minutes=10)},
-    tags=["archive"],
+    tags=["lake"],
 )
 def tenant_purge():
     @task.bash

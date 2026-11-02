@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Only a dependency list: the Dockerfile's build stage copies these jars (and theirs) into the Kafka Connect plugin. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>basketline</groupId>
+  <artifactId>lake-sink-plugin</artifactId>
+  <version>1</version>
+  <packaging>pom</packaging>
+
+  <properties>
+    <iceberg.version>1.12.0</iceberg.version>
+  </properties>
+
+  <dependencies>
+    <!-- The Apache Iceberg sink, its SMTs (KafkaMetadataTransform) and Parquet writer. -->
+    <dependency><groupId>org.apache.iceberg</groupId><artifactId>iceberg-kafka-connect</artifactId><version>${iceberg.version}</version></dependency>
+    <dependency><groupId>org.apache.iceberg</groupId><artifactId>iceberg-kafka-connect-transforms</artifactId><version>${iceberg.version}</version></dependency>
+    <dependency><groupId>org.apache.iceberg</groupId><artifactId>iceberg-parquet</artifactId><version>${iceberg.version}</version></dependency>
+    <!-- S3FileIO (and Glue, on AWS), and the AWS SDK it uses. -->
+    <dependency><groupId>org.apache.iceberg</groupId><artifactId>iceberg-aws</artifactId><version>${iceberg.version}</version></dependency>
+    <dependency><groupId>org.apache.iceberg</groupId><artifactId>iceberg-aws-bundle</artifactId><version>${iceberg.version}</version></dependency>
+    <!-- The JDBC catalog's database. -->
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>42.7.14</version></dependency>
+    <!-- Parquet and the sink's catalog loading use Hadoop's Configuration class; nothing else of Hadoop runs. -->
+    <dependency>
+      <groupId>org.apache.hadoop</groupId><artifactId>hadoop-common</artifactId><version>3.4.1</version>
+      <exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>
+    </dependency>
+    <dependency><groupId>org.apache.hadoop.thirdparty</groupId><artifactId>hadoop-shaded-guava</artifactId><version>1.3.0</version></dependency>
+    <dependency><groupId>commons-logging</groupId><artifactId>commons-logging</artifactId><version>1.3.5</version></dependency>
+    <dependency><groupId>org.apache.commons</groupId><artifactId>commons-configuration2</artifactId><version>2.11.0</version></dependency>
+    <dependency><groupId>com.fasterxml.woodstox</groupId><artifactId>woodstox-core</artifactId><version>7.1.0</version></dependency>
+  </dependencies>
+</project>

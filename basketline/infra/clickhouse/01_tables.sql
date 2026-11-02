@@ -67,12 +67,15 @@ SETTINGS ttl_only_drop_parts = 1;
 -- Shoppers erased at the store's request (user_deleted, from ingestion-service):
 -- their staged rows are deleted at once, and 03_kafka.sql's queue views drop any
 -- still in flight. The daily tables hold no user IDs (counts and sketches).
+-- lake_purged_at: when the purge job (airflow/dags/tenant_purge.py) deleted
+-- their rows from the data lake; the newest row per shopper wins.
 CREATE TABLE IF NOT EXISTS analytics.deleted_users
 (
-    tenant_id  UUID,
-    user_id    UUID,
-    deleted_at DateTime64(3, 'UTC'),
-    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    tenant_id      UUID,
+    user_id        UUID,
+    deleted_at     DateTime64(3, 'UTC'),
+    lake_purged_at Nullable(DateTime64(3, 'UTC')),
+    updated_at     DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, user_id);
@@ -81,7 +84,7 @@ ORDER BY (tenant_id, user_id);
 -- deleted from every table here, and 03_kafka.sql's queue views drop any that a
 -- replay from Kafka would bring back (Kafka keeps raw events up to 14 days).
 -- lake_purged_at: when the purge job (airflow/dags/tenant_purge.py) deleted the
--- tenant's folders from the data lake; the newest row per tenant wins.
+-- tenant's rows from the data lake; the newest row per tenant wins.
 CREATE TABLE IF NOT EXISTS analytics.deleted_tenants
 (
     tenant_id      UUID,

@@ -1,5 +1,5 @@
 """Daily: backs up the ClickHouse tables nothing else can rebuild (the daily totals,
-campaign statuses, deleted tenants, backfill runs) to S3
+deleted tenants and shoppers) to S3
 (jobs/backup_clickhouse.py). basketline/README.md has the restore.
 """
 

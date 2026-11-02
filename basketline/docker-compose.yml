@@ -146,11 +146,45 @@ services:
       # It creates the retail and serving topics.
       ingestion-service: { condition: service_healthy }
 
-  # S3 for the Iceberg archive locally (S3 itself on AWS). SeaweedFS, because
-  # MinIO no longer publishes images. Its admin UI browses the bucket.
+  # Writes Basketline's topics to Iceberg tables in the data lake (connect/): one
+  # table per topic, a commit an hour. Its REST API (connector status) at :8083.
+  connect:
+    build: { context: ./connect }
+    environment:
+      LAKE_CATALOG_URI: jdbc:postgresql://postgres:5432/iceberg_catalog_db
+      LAKE_CATALOG_USER: iceberg_svc
+      LAKE_CATALOG_PASSWORD: iceberg_svc_dev
+      LAKE_S3_ENDPOINT: http://archive-storage:8333
+      LAKE_S3_ACCESS_KEY_ID: archive
+      LAKE_S3_SECRET_ACCESS_KEY: archive_dev
+    ports: ["8083:8083"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/connectors"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      archive-storage: { condition: service_healthy }
+      # They create the topics it reads.
+      ingestion-service: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+
+  # Registers (or updates) the lake sink connector once Connect is up.
+  connect-init:
+    image: curlimages/curl:8.11.1
+    command: ["-fsS", "-X", "PUT", "-H", "Content-Type: application/json", "--data-binary", "@/lake-sink.json", "http://connect:8083/connectors/lake-sink/config"]
+    volumes: ["./connect/lake-sink.json:/lake-sink.json:ro"]
+    depends_on: { connect: { condition: service_healthy } }
+
+  # S3 locally (S3 itself on AWS): the data lake's bucket (basketline-pipeline) and
+  # the ClickHouse backups' (ad-insights-archive). SeaweedFS, because MinIO no
+  # longer publishes images. Its admin UI browses the buckets.
   archive-storage:
     image: chrislusf/seaweedfs:4.48
-    command: mini -dir=/data -bucket=ad-insights-archive
+    command: mini -dir=/data -bucket=ad-insights-archive,basketline-pipeline
     environment:
       AWS_ACCESS_KEY_ID: archive
       AWS_SECRET_ACCESS_KEY: archive_dev
@@ -162,8 +196,8 @@ services:
       timeout: 5s
       retries: 40
 
-  # Runs the batch jobs: the nightly Iceberg export (airflow/dags). UI at
-  # http://localhost:8082, no login (local only).
+  # Runs the batch jobs (airflow/dags): the data lake's tenant and shopper purges,
+  # and ClickHouse's backups. UI at http://localhost:8082, no login (local only).
   airflow:
     build: { context: ./airflow }
     command: standalone
@@ -172,26 +206,24 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_svc:airflow_svc_dev@postgres:5432/airflow_db
-      # For the export job (airflow/jobs/export_archive.py).
       CLICKHOUSE_URL: http://basketline:basketline_dev@clickhouse:8123/analytics
-      PYICEBERG_CATALOG__ARCHIVE__TYPE: sql
-      PYICEBERG_CATALOG__ARCHIVE__URI: postgresql+psycopg2://iceberg_svc:iceberg_svc_dev@postgres:5432/iceberg_catalog_db
-      PYICEBERG_CATALOG__ARCHIVE__WAREHOUSE: s3://ad-insights-archive
-      PYICEBERG_CATALOG__ARCHIVE__S3__ENDPOINT: http://archive-storage:8333
-      PYICEBERG_CATALOG__ARCHIVE__S3__REGION: us-east-1
-      PYICEBERG_CATALOG__ARCHIVE__S3__ACCESS_KEY_ID: archive
-      PYICEBERG_CATALOG__ARCHIVE__S3__SECRET_ACCESS_KEY: archive_dev
-      # For the history backfill (airflow/jobs/backfill): the warehouse as ClickHouse
-      # reaches it, to read the Spark job's output with icebergS3.
-      ARCHIVE_S3_URL: http://archive-storage:8333/ad-insights-archive
+      # The data lake's catalog, as Kafka Connect writes it (connect/lake-sink.json).
+      PYICEBERG_CATALOG__LAKE__TYPE: sql
+      PYICEBERG_CATALOG__LAKE__URI: postgresql+psycopg2://iceberg_svc:iceberg_svc_dev@postgres:5432/iceberg_catalog_db
+      PYICEBERG_CATALOG__LAKE__WAREHOUSE: s3://basketline-pipeline
+      PYICEBERG_CATALOG__LAKE__S3__ENDPOINT: http://archive-storage:8333
+      PYICEBERG_CATALOG__LAKE__S3__REGION: us-east-1
+      PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID: archive
+      PYICEBERG_CATALOG__LAKE__S3__SECRET_ACCESS_KEY: archive_dev
+      # ClickHouse's backups (jobs/backup_clickhouse.py), as ClickHouse reaches the bucket.
+      CLICKHOUSE_BACKUP_S3_URL: http://archive-storage:8333/ad-insights-archive/clickhouse-backups
+      BACKUP_S3_ACCESS_KEY_ID: archive
+      BACKUP_S3_SECRET_ACCESS_KEY: archive_dev
     ports: ["127.0.0.1:8082:8080"]
-    # Also baked into the image; mounted so edits apply without a rebuild. The
-    # tests and the ClickHouse schema are for the backfill test, which runs here (it needs Java).
+    # Also baked into the image; mounted so edits apply without a rebuild.
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
       - ./airflow/jobs:/opt/airflow/jobs:ro
-      - ./airflow/tests:/opt/airflow/tests:ro
-      - ./infra/clickhouse:/opt/airflow/clickhouse:ro
     depends_on:
       postgres: { condition: service_healthy }
       clickhouse: { condition: service_healthy }

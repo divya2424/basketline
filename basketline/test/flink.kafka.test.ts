@@ -2,11 +2,9 @@
  * The Flink job end to end: ad impressions and clicks published to the real
  * retail.interactions.v1 topic must reach ClickHouse with their store (the zero
  * store when an event has none), other events must not, and basket additions must
- * be matched with the user's
- * earlier clicks by the attribution rules (basketline/flink/sql/pipelines/02_attributed_baskets.sql)
- * with the latest click credited. The cases are shared with the history backfill
- * (airflow/tests/fixtures/attribution_cases.json), so both implementations of the
- * rule give the same answers. Needs the stack running:
+ * be matched with the user's earlier clicks by the attribution rules
+ * (basketline/flink/sql/pipelines/02_attributed_baskets.sql) with the latest
+ * click credited (the cases: fixtures/attribution_cases.json). Needs the stack running:
  *
  *   docker compose up -d --build kafka clickhouse ingestion-service flink-streaming
  *   pnpm test:flink
@@ -112,7 +110,7 @@ interface Case {
   credits: Record<string, string | null>
   publishLast?: string[]
 }
-const CASES: Case[] = JSON.parse(readFileSync(new URL('../airflow/tests/fixtures/attribution_cases.json', import.meta.url), 'utf8')).cases
+const CASES: Case[] = JSON.parse(readFileSync(new URL('./fixtures/attribution_cases.json', import.meta.url), 'utf8')).cases
 
 describe('the Flink job', () => {
   it("stores ad impressions and clicks with their store, and matches basket additions with the user's earlier clicks on the product, crediting the latest", async () => {

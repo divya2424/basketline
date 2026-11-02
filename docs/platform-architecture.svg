@@ -1,20 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1110" viewBox="0 0 1800 1110" role="img" aria-labelledby="title desc">
   <title id="title">Basketline platform architecture</title>
-  <desc id="desc">Logical architecture. The retailer's systems (simulated in this repository: storefront, product and campaign services) are outside the platform. The Basketline platform starts at its edge and ingestion: gateway, identity and access, ingestion-service ingestion and retail API, Kafka, Flink, ClickHouse and the insights API, the Iceberg archive with Airflow, and observability.</desc>
+  <desc id="desc">Logical architecture. Retailers' sites and backends send events and reference data to Basketline's gateway and ingestion-service, which publish to Kafka. Flink computes ad events, click-to-basket attribution and user sessions into serving topics that ClickHouse aggregates per tenant, store, campaign and day; insights-service serves the /ad API from them. Kafka Connect writes every topic to Iceberg tables on S3, the system of record, from which Airflow's history backfill recomputes ClickHouse's daily tables.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
-    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
-    <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/></marker>
-    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ea580c"/></marker>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker><marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker><marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/></marker><marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ea580c"/></marker>
     <style>
       text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#172033}
       .title{font-size:34px;font-weight:750}.sub{font-size:16px;fill:#475569}
       .zone{font-size:15px;font-weight:700;letter-spacing:.06em}
       .head{font-size:18px;font-weight:700}.body{font-size:14px;fill:#334155}.small{font-size:12px;fill:#475569}
       .tag{font-size:12px;font-weight:700;fill:#1d4ed8}
-      .box{rx:14;stroke-width:2}.infra{fill:#f8fafc;stroke:#cbd5e1}.svc{fill:#eff6ff;stroke:#60a5fa}.kafka{fill:#fff7ed;stroke:#fb923c}.proc{fill:#f5f3ff;stroke:#a78bfa}.db{fill:#ecfdf5;stroke:#34d399}.archive{fill:#f0fdfa;stroke:#2dd4bf}.ops{fill:#fdf2f8;stroke:#f472b6}
-      .retailer{fill:#fafafa;stroke:#94a3b8;stroke-width:2;stroke-dasharray:9 7;rx:20}
-      .platform{fill:#f8fbff;stroke:#2563eb;stroke-width:3;rx:22}
+      .infra{fill:#f8fafc;stroke:#cbd5e1;stroke-width:2}.svc{fill:#eff6ff;stroke:#60a5fa;stroke-width:2}
+      .kafka{fill:#fff7ed;stroke:#fb923c;stroke-width:2}.proc{fill:#f5f3ff;stroke:#a78bfa;stroke-width:2}
+      .db{fill:#ecfdf5;stroke:#34d399;stroke-width:2}.archive{fill:#f0fdfa;stroke:#2dd4bf;stroke-width:2}
+      .ops{fill:#fdf2f8;stroke:#f472b6;stroke-width:2}.client{fill:#ffffff;stroke:#94a3b8;stroke-width:2}
+      .retailer{fill:#fafafa;stroke:#94a3b8;stroke-width:2;stroke-dasharray:9 7}
+      .platform{fill:#f8fbff;stroke:#2563eb;stroke-width:3}
+      .region{fill:#fbfdff;stroke:#0f766e;stroke-width:2.5;stroke-dasharray:10 6}
+      .pool{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5}
       .arrow{fill:none;stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}
       .live{fill:none;stroke:#2563eb;stroke-width:2.6;marker-end:url(#arrowBlue)}
       .batch{fill:none;stroke:#0d9488;stroke-width:2.2;stroke-dasharray:7 6;marker-end:url(#arrowTeal)}
@@ -22,175 +24,155 @@
       .lbl{font-size:12px;fill:#334155}
     </style>
   </defs>
-  <rect width="1800" height="1120" fill="#ffffff"/>
+  <rect width="1800" height="1110" fill="#ffffff"/>
   <text x="40" y="58" class="title">Basketline — platform architecture</text>
-  <text x="40" y="88" class="sub">The platform starts where events and reference data are ingested. Everything left of the dashed line is the retailer's own system (simulated in this repository).</text>
-
-  <!-- ===== Retailer side ===== -->
-  <rect x="30" y="120" width="320" height="760" class="retailer"/>
-  <text x="52" y="150" class="zone" fill="#64748b">RETAILER SYSTEMS (SIMULATED)</text>
-
-  <rect x="52" y="172" width="276" height="118" class="box infra"/>
-  <text x="72" y="204" class="head">Storefront and apps</text>
-  <text x="72" y="230" class="body">Browser SDK: track(), identity()</text>
-  <text x="72" y="252" class="body">Visitor and shopper tokens</text>
-  <text x="72" y="273" class="small">Shopper events, live</text>
-
-  <rect x="52" y="320" width="276" height="96" class="box infra"/>
-  <text x="72" y="352" class="head">product-service</text>
-  <text x="72" y="377" class="body">Catalog and sellers</text>
-  <text x="72" y="398" class="small">Postgres product_db</text>
-
-  <rect x="52" y="436" width="276" height="96" class="box infra"/>
-  <text x="72" y="468" class="head">campaign-service</text>
-  <text x="72" y="493" class="body">Campaigns and their products</text>
-  <text x="72" y="514" class="small">Postgres campaign_db</text>
-
-  <text x="72" y="560" class="small">Both send full state after each change to</text>
-  <text x="72" y="578" class="small">/retail/* with an integration token (SDK /server).</text>
-  <text x="72" y="596" class="small">Shopper logins stay with the retailer: its backend</text>
-  <text x="72" y="614" class="small">vouches for a shopper with its API key.</text>
-
-  <rect x="52" y="690" width="276" height="96" class="box infra"/>
-  <text x="72" y="722" class="head">Marketers and sellers</text>
-  <text x="72" y="747" class="body">Campaign and seller managers</text>
-  <text x="72" y="768" class="small">Use the dashboard</text>
-
-  <!-- ===== Platform ===== -->
-  <rect x="380" y="120" width="1390" height="890" class="platform"/>
-  <text x="402" y="150" class="zone" fill="#1d4ed8">BASKETLINE PLATFORM</text>
-
-  <!-- Edge -->
-  <text x="410" y="182" class="tag">EDGE</text>
-  <rect x="410" y="192" width="250" height="118" class="box svc"/>
-  <text x="430" y="224" class="head">Gateway</text>
-  <text x="430" y="250" class="body">Token check, routes, CORS</text>
-  <text x="430" y="272" class="body">Per-IP rate limits</text>
-  <text x="430" y="293" class="small">Stateless, autoscaled</text>
-
-  <rect x="410" y="340" width="250" height="150" class="box svc"/>
-  <text x="430" y="372" class="head">Identity and access</text>
-  <text x="430" y="397" class="body">auth-service</text>
-  <text x="430" y="419" class="body">API keys; visitor, shopper,</text>
-  <text x="430" y="440" class="body">integration tokens</text>
-  <text x="430" y="462" class="body">Dashboard users and roles</text>
-  <text x="430" y="481" class="small">Postgres identity_db</text>
-
-  <!-- Ingestion -->
-  <text x="700" y="182" class="tag">INGESTION</text>
-  <rect x="700" y="192" width="262" height="190" class="box svc"/>
-  <text x="720" y="224" class="head">Event ingestion</text>
-  <text x="720" y="248" class="small">ingestion-service · POST /analytics/events</text>
-  <text x="720" y="274" class="body">Validate, bot filter</text>
-  <text x="720" y="296" class="body">Campaign active? Seller of product</text>
-  <text x="720" y="318" class="body">Budget per sender and per tenant</text>
-  <text x="720" y="340" class="body">(by tier) → 429 when over</text>
-  <text x="720" y="364" class="small">Stateless, autoscaled</text>
-
-  <rect x="700" y="412" width="262" height="120" class="box svc"/>
-  <text x="720" y="444" class="head">Retail API</text>
-  <text x="720" y="468" class="small">ingestion-service · POST /retail/*</text>
-  <text x="720" y="492" class="body">Sellers, products, campaigns,</text>
-  <text x="720" y="514" class="body">server identity (erasure)</text>
-
-  <!-- Stream -->
-  <text x="1000" y="182" class="tag">STREAM</text>
-  <rect x="1000" y="192" width="330" height="340" class="box kafka"/>
-  <text x="1020" y="224" class="head">Kafka (shared by all tenants)</text>
-  <text x="1020" y="254" class="body">retail.interactions.v1</text>
-  <text x="1036" y="274" class="small">keyed by event ID: spreads every tenant</text>
-  <text x="1036" y="291" class="small">over all partitions · 14 days</text>
-  <text x="1020" y="318" class="body">retail.identity-events.v1 · 14 days</text>
-  <text x="1020" y="346" class="body">retail.catalog-events.v1</text>
-  <text x="1020" y="368" class="body">retail.campaign-events.v1</text>
-  <text x="1036" y="388" class="small">compacted: latest state per ID</text>
-  <text x="1020" y="416" class="body">retail.heartbeat.v1 (watermark)</text>
-  <text x="1020" y="446" class="body">serving.events / attributed_baskets</text>
-  <text x="1020" y="468" class="body">/ sessions.v1 · 48 hours</text>
-  <text x="1020" y="500" class="small">Replays rebuild every downstream copy</text>
-
-  <!-- Processing -->
-  <text x="1370" y="182" class="tag">PROCESSING</text>
-  <rect x="1370" y="192" width="370" height="150" class="box proc"/>
-  <text x="1390" y="224" class="head">Flink (SQL, event time)</text>
-  <text x="1390" y="250" class="body">Click → basket: 7-day keyed join</text>
-  <text x="1390" y="272" class="body">Sessions: 6-hour gap windows</text>
-  <text x="1390" y="294" class="body">State in RocksDB, checkpointed</text>
-  <text x="1390" y="318" class="small">Keyed by tenant + user (+ product): state spreads</text>
-
-  <!-- Serving -->
-  <text x="1370" y="374" class="tag">SERVING</text>
-  <rect x="1370" y="384" width="370" height="170" class="box db"/>
-  <text x="1390" y="416" class="head">ClickHouse</text>
-  <text x="1390" y="442" class="body">Raw rows: 20 days (7 hot, rest on S3)</text>
-  <text x="1390" y="464" class="body">Daily tables: kept forever, tiny</text>
-  <text x="1390" y="486" class="body">Live views + hourly recount</text>
-  <text x="1390" y="508" class="body">Copies: sellers, products, campaigns</text>
-  <text x="1390" y="532" class="small">Shards by tenant hash at scale</text>
-
-  <rect x="1370" y="584" width="370" height="118" class="box svc"/>
-  <text x="1390" y="616" class="head">insights-service (/ad)</text>
-  <text x="1390" y="642" class="body">GET /ad/{campaign}/{metric}</text>
-  <text x="1390" y="664" class="body">GET /ad/sellers/{seller}/{metric}</text>
-  <text x="1390" y="686" class="small">reader user: one tenant per query · no Kafka</text>
-
-  <!-- Archive and batch -->
-  <text x="1000" y="574" class="tag">ARCHIVE AND BATCH</text>
-  <rect x="1000" y="584" width="330" height="140" class="box archive"/>
-  <text x="1020" y="616" class="head">Iceberg on S3</text>
-  <text x="1020" y="642" class="body">Every raw event, every tenant</text>
-  <text x="1020" y="664" class="body">Partitioned by day, tenant bucket</text>
-  <text x="1020" y="686" class="body">Kept forever, cheaper tiers</text>
-  <text x="1020" y="708" class="small">System of record; Athena / Trino</text>
-
-  <rect x="700" y="584" width="262" height="140" class="box archive"/>
-  <text x="720" y="616" class="head">Airflow</text>
-  <text x="720" y="642" class="body">Nightly backups, sessions</text>
-  <text x="720" y="664" class="body">History backfill (Spark)</text>
-  <text x="720" y="686" class="body">Tenant and shopper purges</text>
-  <text x="720" y="708" class="small">Batch path: hourly / nightly</text>
-
-  <!-- Observability -->
-  <text x="410" y="784" class="tag">OBSERVABILITY</text>
-  <rect x="410" y="794" width="1330" height="100" class="box ops"/>
-  <text x="430" y="826" class="head">Prometheus · Grafana · alerts</text>
-  <text x="430" y="852" class="body">Services: requests, 5xx, p99 · Kafka consumer lag · Flink uptime, restarts, checkpoints, late events · ClickHouse ·</text>
-  <text x="430" y="874" class="body">pipeline health from SQL (newest event, hourly check, backups, invalid traffic, events per seller)</text>
-
-  <!-- Legend -->
-  <rect x="410" y="920" width="1330" height="70" class="box infra"/>
-  <path d="M432 945 H492" class="live"/><text x="502" y="950" class="lbl">Live path (seconds)</text>
-  <path d="M660 945 H720" class="ref"/><text x="730" y="950" class="lbl">Reference data (catalog, campaigns)</text>
-  <path d="M990 945 H1050" class="batch"/><text x="1060" y="950" class="lbl">Batch path (hourly / nightly)</text>
-  <path d="M1290 945 H1350" class="arrow"/><text x="1360" y="950" class="lbl">Tokens, reads</text>
-  <text x="432" y="976" class="small">Each layer scales out on its own: stateless pods (edge, ingestion) on CPU, Kafka by partitions, Flink by parallelism, ClickHouse by shards. A tenant is capped at its tier's budget at ingestion.</text>
-
-  <!-- ===== Arrows ===== -->
-  <!-- storefront → gateway → ingestion → kafka → flink → clickhouse → api -->
-  <path d="M328 231 H402" class="live"/>
-  <path d="M660 251 H692" class="live"/>
-  <path d="M962 270 H992" class="live"/>
-  <path d="M1330 250 H1362" class="live"/>
-  <path d="M1555 342 V376" class="live"/>
-  <text x="1564" y="364" class="lbl">serving topics</text>
-  <path d="M1555 554 V576" class="live"/>
-  <!-- retailer backend → gateway (retail API) -->
-  <path d="M328 410 C360 410 370 300 402 290" class="ref"/>
-  <path d="M328 484 C366 484 372 320 402 300" class="ref"/>
-  <path d="M660 290 C680 330 680 440 692 466" class="ref"/>
-  <path d="M962 470 H992" class="ref"/>
-  <!-- reference topics → ClickHouse copies (ingestion-service consumes them) -->
-  <path d="M1330 368 H1362" class="ref"/>
-  <!-- gateway ↔ identity -->
-  <path d="M535 310 V332" class="arrow"/>
-  <!-- flink → iceberg archive -->
-  <path d="M1350 342 V560 H1250 V576" class="batch"/>
-  <text x="1236" y="552" class="lbl" fill="#0f766e">archive writes</text>
-  <!-- airflow ↔ iceberg / clickhouse -->
-  <path d="M962 654 H992" class="batch"/>
-  <path d="M1330 640 C1352 640 1356 600 1376 562" class="batch"/>
-  <text x="1020" y="744" class="lbl" fill="#0f766e">Airflow: backups and backfills → ClickHouse</text>
-  <!-- dashboard users → API -->
-  <path d="M328 768 H1555 V710" class="arrow"/>
-  <text x="560" y="762" class="lbl">dashboard reads (through the gateway)</text>
+  <text x="40" y="88" class="sub">The platform starts where events and reference data are ingested. Left of the dashed line: the retailer's own systems (simulated in retailer-sim/).</text>
+  <rect x="30" y="120" width="300" height="590" rx="20" class="retailer"/>
+  <text x="50" y="150" class="zone" fill="#64748b">RETAILER SYSTEMS</text>
+  <rect x="50" y="170" width="260" height="150" rx="14" class="client"/>
+  <text x="66" y="198" class="head">Storefront and apps</text>
+  <text x="66" y="222" class="body">Basketline SDK: track()</text>
+  <text x="66" y="242" class="body">Visitor and shopper tokens</text>
+  <text x="66" y="262" class="body">Events in batches of 1–100</text>
+  <text x="66" y="282" class="small">  impressions, clicks, views, cart</text>
+  <rect x="50" y="350" width="260" height="170" rx="14" class="client"/>
+  <text x="66" y="378" class="head">Retailer backend</text>
+  <text x="66" y="402" class="body">Catalog, stores, campaigns</text>
+  <text x="66" y="422" class="body">and their products</text>
+  <text x="66" y="442" class="body">Full state to /retail/*</text>
+  <text x="66" y="462" class="body">with an integration token</text>
+  <text x="66" y="482" class="body">Erasure: user_deleted</text>
+  <rect x="50" y="550" width="260" height="130" rx="14" class="client"/>
+  <text x="66" y="578" class="head">Marketers</text>
+  <text x="66" y="602" class="body">Campaign managers</text>
+  <text x="66" y="622" class="body">Dashboard (React SPA)</text>
+  <text x="66" y="642" class="body">GET /ad/* through the gateway</text>
+  <rect x="350" y="120" width="1430" height="860" rx="22" class="platform"/>
+  <text x="370" y="142" class="zone" fill="#2563eb">BASKETLINE PLATFORM</text>
+  <text x="380" y="168" class="zone" fill="#2563eb">EDGE</text>
+  <rect x="380" y="175" width="220" height="150" rx="14" class="svc"/>
+  <text x="396" y="203" class="head">Gateway</text>
+  <text x="396" y="227" class="body">Token check, routing</text>
+  <text x="396" y="247" class="body">CORS per tenant's origins</text>
+  <text x="396" y="267" class="body">Per-IP rate limits</text>
+  <text x="396" y="287" class="body">Stateless, autoscaled</text>
+  <rect x="380" y="350" width="220" height="170" rx="14" class="svc"/>
+  <text x="396" y="378" class="head">auth-service</text>
+  <text x="396" y="402" class="body">Tenants, API keys</text>
+  <text x="396" y="422" class="body">Visitor, shopper,</text>
+  <text x="396" y="442" class="body">integration tokens</text>
+  <text x="396" y="462" class="body">Dashboard users, roles</text>
+  <text x="396" y="482" class="body">Postgres identity_db</text>
+  <text x="630" y="168" class="zone" fill="#2563eb">INGESTION</text>
+  <rect x="630" y="175" width="250" height="190" rx="14" class="svc"/>
+  <text x="646" y="203" class="head">ingestion-service</text>
+  <text x="646" y="227" class="body">POST /analytics/events</text>
+  <text x="646" y="247" class="body">Validate, refuse bots</text>
+  <text x="646" y="267" class="body">Active campaign of the tenant</text>
+  <text x="646" y="287" class="body">Budget per sender and tenant</text>
+  <text x="646" y="307" class="body">tier → 429 + Retry-After</text>
+  <text x="646" y="327" class="body">Stateless, autoscaled</text>
+  <rect x="630" y="390" width="250" height="130" rx="14" class="svc"/>
+  <text x="646" y="418" class="head">Retail API</text>
+  <text x="646" y="442" class="body">ingestion-service · /retail/*</text>
+  <text x="646" y="462" class="body">Catalog, campaigns, stores,</text>
+  <text x="646" y="482" class="body">campaign products, identity</text>
+  <text x="910" y="168" class="zone" fill="#ea580c">STREAM</text>
+  <rect x="910" y="175" width="270" height="345" rx="14" class="kafka"/>
+  <text x="926" y="203" class="head">Kafka (all tenants)</text>
+  <text x="926" y="227" class="body">retail.interactions.v1</text>
+  <text x="926" y="247" class="small">  keyed by event ID · 14 days</text>
+  <text x="926" y="267" class="body">retail.identity-events.v1 · 14 d</text>
+  <text x="926" y="287" class="body">catalog, campaign, campaign-</text>
+  <text x="926" y="307" class="body">products, tenant topics</text>
+  <text x="926" y="327" class="small">  compacted: latest state per ID</text>
+  <text x="926" y="347" class="body">serving.events.v1</text>
+  <text x="926" y="367" class="body">serving.attributed_baskets.v1</text>
+  <text x="926" y="387" class="body">serving.sessions.v1</text>
+  <text x="926" y="407" class="small">  48 hours</text>
+  <text x="1210" y="168" class="zone" fill="#7c3aed">PROCESSING</text>
+  <rect x="1210" y="175" width="270" height="345" rx="14" class="proc"/>
+  <text x="1226" y="203" class="head">Flink SQL (one job)</text>
+  <text x="1226" y="227" class="body">Ad events: validate, project</text>
+  <text x="1226" y="247" class="body"></text>
+  <text x="1226" y="267" class="body">Click → basket attribution</text>
+  <text x="1226" y="287" class="small">  regular join, keyed by</text>
+  <text x="1226" y="307" class="small">  (tenant, user, product), 7 days</text>
+  <text x="1226" y="327" class="body"></text>
+  <text x="1226" y="347" class="body">User sessions</text>
+  <text x="1226" y="367" class="small">  event-time window, keyed by</text>
+  <text x="1226" y="387" class="small">  (tenant, user), 30-min gap</text>
+  <text x="1226" y="407" class="body"></text>
+  <text x="1226" y="427" class="body">RocksDB state, checkpoints</text>
+  <text x="1510" y="168" class="zone" fill="#059669">SERVING</text>
+  <rect x="1510" y="175" width="250" height="200" rx="14" class="db"/>
+  <text x="1526" y="203" class="head">ClickHouse</text>
+  <text x="1526" y="227" class="body">Staging: Flink's output, 3 days</text>
+  <text x="1526" y="247" class="body">Daily tables per tenant, store,</text>
+  <text x="1526" y="267" class="body">campaign, day: kept forever</text>
+  <text x="1526" y="287" class="body">Live views + hourly recount</text>
+  <text x="1526" y="307" class="body">Row policy: one tenant per</text>
+  <text x="1526" y="327" class="body">query for the reader</text>
+  <rect x="1510" y="395" width="250" height="125" rx="14" class="svc"/>
+  <text x="1526" y="423" class="head">insights-service</text>
+  <text x="1526" y="447" class="body">GET /ad/{campaign}/{metric}</text>
+  <text x="1526" y="467" class="body">clicks · impressions ·</text>
+  <text x="1526" y="487" class="body">clickToBasket · sessions</text>
+  <text x="910" y="600" class="zone" fill="#0d9488">DATA LAKE AND BATCH</text>
+  <rect x="910" y="615" width="270" height="165" rx="14" class="archive"/>
+  <text x="926" y="643" class="head">Kafka Connect</text>
+  <text x="926" y="667" class="body">Iceberg sink: every topic</text>
+  <text x="926" y="687" class="body">Payload flattened into</text>
+  <text x="926" y="707" class="body">typed, evolving columns</text>
+  <text x="926" y="727" class="body">Commits hourly</text>
+  <rect x="1210" y="615" width="270" height="165" rx="14" class="archive"/>
+  <text x="1226" y="643" class="head">Iceberg on S3 (the lake)</text>
+  <text x="1226" y="667" class="body">Every event, every tenant</text>
+  <text x="1226" y="687" class="body">Partitioned by tenant, hour</text>
+  <text x="1226" y="707" class="body">Kept forever, tiered storage</text>
+  <text x="1226" y="727" class="body">Athena · Trino · Snowflake</text>
+  <rect x="1510" y="615" width="250" height="165" rx="14" class="ops"/>
+  <text x="1526" y="643" class="head">Airflow</text>
+  <text x="1526" y="667" class="body">history_backfill: lake →</text>
+  <text x="1526" y="687" class="small">  ClickHouse daily tables</text>
+  <text x="1526" y="707" class="body">Daily ClickHouse backups</text>
+  <text x="1526" y="727" class="body">Tenant and shopper purges</text>
+  <text x="380" y="820" class="zone" fill="#db2777">OBSERVABILITY</text>
+  <rect x="380" y="835" width="1380" height="115" rx="14" class="ops"/>
+  <text x="396" y="863" class="head">Prometheus · Grafana · Alertmanager · Loki</text>
+  <text x="396" y="887" class="body">Services: requests, 5xx, p99, event-loop lag · Kafka consumer lag · Flink uptime, restarts, checkpoints, records/s, late events · ClickHouse</text>
+  <text x="396" y="907" class="body">Pipeline health from SQL: newest event age, hourly check, backup age, Kafka engine errors, events per store · logs: Alloy → Loki (profile logs)</text>
+  <rect x="380" y="600" width="500" height="180" rx="14" class="infra"/>
+  <text x="396" y="628" class="head">Tenant isolation</text>
+  <text x="396" y="652" class="body">Tenant comes from the token, never the body</text>
+  <text x="396" y="672" class="body">Every row and topic message has tenant_id</text>
+  <text x="396" y="692" class="body">ClickHouse row policy for the /ad reader</text>
+  <text x="396" y="712" class="body">Lake partitioned by tenant: purge, export</text>
+  <text x="396" y="732" class="body">Budgets by tier; per-query read limits</text>
+  <path d="M310,245 H378" class="live"/>
+  <text x="318" y="236" class="lbl">events</text>
+  <path d="M600,250 H628" class="live"/>
+  <path d="M490,325 V348" class="arrow"/>
+  <path d="M880,250 H908" class="live"/>
+  <path d="M1180,250 H1208" class="live"/>
+  <path d="M1480,260 H1508" class="live"/>
+  <path d="M1635,375 V393" class="arrow"/>
+  <path d="M1635,520 V560 H600 V545 H312 V600" class="arrow"/>
+  <text x="640" y="552" class="lbl">dashboard reads (through the gateway)</text>
+  <path d="M310,420 L378,300" class="ref"/>
+  <path d="M600,300 L628,440" class="ref"/>
+  <path d="M880,455 H908" class="ref"/>
+  <path d="M1150,520 V613" class="batch"/>
+  <path d="M1180,700 H1208" class="batch"/>
+  <path d="M1480,700 H1508" class="batch"/>
+  <path d="M1760,700 H1775 V275 H1762" class="batch"/>
+  <path d="M380,1010 H430" class="live"/>
+  <text x="442" y="1015" class="body">Live path (seconds)</text>
+  <path d="M720,1010 H770" class="ref"/>
+  <text x="782" y="1015" class="body">Reference data</text>
+  <path d="M1060,1010 H1110" class="batch"/>
+  <text x="1122" y="1015" class="body">Lake and batch</text>
+  <path d="M1400,1010 H1450" class="arrow"/>
+  <text x="1462" y="1015" class="body">Tokens, reads</text>
+  <text x="380" y="1060" class="small">Each layer scales out on its own: stateless pods on CPU, Kafka by partitions, Flink by parallelism, ClickHouse by shards. A tenant is capped at its tier's budget at ingestion.</text>
 </svg>

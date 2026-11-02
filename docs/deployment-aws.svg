@@ -1,225 +1,190 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1290" viewBox="0 0 1800 1290" role="img" aria-labelledby="title desc">
   <title id="title">Basketline production deployment on AWS</title>
-  <desc id="desc">One AWS region across three availability zones: Route 53, CloudFront and an ALB with WAF in front of an EKS cluster with edge, stream, ClickHouse and ops node pools; Amazon MSK, S3 with Glue and Athena, RDS Postgres Multi-AZ, Secrets Manager and KMS; CI/CD from GitHub Actions through ECR and helmfile; sizing for 100k events per second.</desc>
+  <desc id="desc">One AWS region across three availability zones: Route 53, CloudFront and an ALB with WAF in front of EKS, where the stateless services, Flink (Kubernetes operator), Kafka Connect, ClickHouse (operator, sharded and replicated), Airflow and monitoring run in node pools; Amazon MSK for Kafka, S3 with the Glue catalog for the Iceberg lake and backups, RDS PostgreSQL, Secrets Manager and KMS; CI/CD through GitHub Actions and ECR.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
-    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
-    <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/></marker>
-    <marker id="arrowPink" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#db2777"/></marker>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker><marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker><marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/></marker><marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ea580c"/></marker>
     <style>
       text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#172033}
       .title{font-size:34px;font-weight:750}.sub{font-size:16px;fill:#475569}
       .zone{font-size:15px;font-weight:700;letter-spacing:.06em}
-      .head{font-size:17px;font-weight:700}.body{font-size:13.5px;fill:#334155}.small{font-size:12px;fill:#475569}
-      .box{rx:12;stroke-width:2}.infra{fill:#f8fafc;stroke:#cbd5e1}.svc{fill:#eff6ff;stroke:#60a5fa}.kafka{fill:#fff7ed;stroke:#fb923c}.proc{fill:#f5f3ff;stroke:#a78bfa}.db{fill:#ecfdf5;stroke:#34d399}.archive{fill:#f0fdfa;stroke:#2dd4bf}.ops{fill:#fdf2f8;stroke:#f472b6}.sec{fill:#fefce8;stroke:#facc15}
-      .region{fill:#fbfdff;stroke:#2563eb;stroke-width:3;rx:22}
-      .eks{fill:#ffffff;stroke:#64748b;stroke-width:2;stroke-dasharray:9 6;rx:18}
-      .pod{rx:7;stroke-width:1.5;fill:#ffffff;stroke:#93c5fd}
-      .podtxt{font-size:11.5px;fill:#1e3a8a}
-      .az{font-size:11px;font-weight:700;fill:#64748b}
+      .head{font-size:18px;font-weight:700}.body{font-size:14px;fill:#334155}.small{font-size:12px;fill:#475569}
+      .tag{font-size:12px;font-weight:700;fill:#1d4ed8}
+      .infra{fill:#f8fafc;stroke:#cbd5e1;stroke-width:2}.svc{fill:#eff6ff;stroke:#60a5fa;stroke-width:2}
+      .kafka{fill:#fff7ed;stroke:#fb923c;stroke-width:2}.proc{fill:#f5f3ff;stroke:#a78bfa;stroke-width:2}
+      .db{fill:#ecfdf5;stroke:#34d399;stroke-width:2}.archive{fill:#f0fdfa;stroke:#2dd4bf;stroke-width:2}
+      .ops{fill:#fdf2f8;stroke:#f472b6;stroke-width:2}.client{fill:#ffffff;stroke:#94a3b8;stroke-width:2}
+      .retailer{fill:#fafafa;stroke:#94a3b8;stroke-width:2;stroke-dasharray:9 7}
+      .platform{fill:#f8fbff;stroke:#2563eb;stroke-width:3}
+      .region{fill:#fbfdff;stroke:#0f766e;stroke-width:2.5;stroke-dasharray:10 6}
+      .pool{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5}
       .arrow{fill:none;stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}
       .live{fill:none;stroke:#2563eb;stroke-width:2.6;marker-end:url(#arrowBlue)}
       .batch{fill:none;stroke:#0d9488;stroke-width:2.2;stroke-dasharray:7 6;marker-end:url(#arrowTeal)}
-      .scrape{fill:none;stroke:#db2777;stroke-width:1.8;stroke-dasharray:4 5;marker-end:url(#arrowPink)}
+      .ref{fill:none;stroke:#ea580c;stroke-width:2.2;marker-end:url(#arrowOrange)}
       .lbl{font-size:12px;fill:#334155}
     </style>
   </defs>
-  <rect width="1800" height="1200" fill="#ffffff"/>
+  <rect width="1800" height="1290" fill="#ffffff"/>
   <text x="40" y="58" class="title">Basketline — production deployment (AWS)</text>
-  <text x="40" y="88" class="sub">One region, three availability zones. Sized for 100k events/s from the load-test capacity model (basketline/loadtest/README.md). Every stateful tier is replicated across AZs.</text>
-
-  <!-- ===== Clients ===== -->
-  <text x="40" y="132" class="zone" fill="#64748b">CLIENTS</text>
-  <rect x="40" y="144" width="210" height="96" class="box infra"/>
-  <text x="58" y="174" class="head">Shoppers</text>
-  <text x="58" y="198" class="body">Retailer sites and apps</text>
-  <text x="58" y="218" class="small">Browser SDK → /analytics/events</text>
-
-  <rect x="40" y="258" width="210" height="96" class="box infra"/>
-  <text x="58" y="288" class="head">Retailer backends</text>
-  <text x="58" y="312" class="body">Catalog, campaigns, identity</text>
-  <text x="58" y="332" class="small">SDK /server → /retail/*</text>
-
-  <rect x="40" y="372" width="210" height="96" class="box infra"/>
-  <text x="58" y="402" class="head">Marketers, sellers</text>
-  <text x="58" y="426" class="body">Dashboard (React SPA)</text>
-  <text x="58" y="446" class="small">GET /ad/* every 20 s</text>
-
-  <!-- ===== Global entry ===== -->
-  <text x="280" y="132" class="zone" fill="#64748b">ENTRY</text>
-  <rect x="280" y="144" width="220" height="74" class="box infra"/>
-  <text x="298" y="172" class="head">Route 53</text>
-  <text x="298" y="196" class="body">api. and app. domains</text>
-
-  <rect x="280" y="232" width="220" height="96" class="box infra"/>
-  <text x="298" y="260" class="head">CloudFront</text>
-  <text x="298" y="284" class="body">Dashboard SPA from S3</text>
-  <text x="298" y="304" class="small">Static, cached at the edge</text>
-
-  <rect x="280" y="342" width="220" height="126" class="box sec"/>
-  <text x="298" y="370" class="head">ALB + AWS WAF</text>
-  <text x="298" y="394" class="body">TLS, spread over 3 AZs</text>
-  <text x="298" y="414" class="body">WAF: bot and IP rules,</text>
-  <text x="298" y="432" class="body">rate-based limits</text>
-  <text x="298" y="452" class="small">Only /api reaches the cluster</text>
-
-  <!-- ===== Region ===== -->
-  <rect x="530" y="112" width="1240" height="740" class="region"/>
-  <text x="552" y="140" class="zone" fill="#1d4ed8">AWS REGION (e.g. ap-south-1) · VPC · PRIVATE SUBNETS IN AZ a, b, c</text>
-
-  <!-- EKS -->
-  <rect x="552" y="156" width="760" height="680" class="eks"/>
-  <text x="572" y="182" class="zone" fill="#475569">AMAZON EKS · one Helm release per service (helmfile)</text>
-
-  <!-- Edge pool -->
-  <rect x="572" y="196" width="720" height="168" class="box svc"/>
-  <text x="590" y="222" class="head">Edge node pool</text>
-  <text x="760" y="222" class="small">stateless · HPA on CPU · pods spread over AZs · PodDisruptionBudgets</text>
-  <rect x="590" y="236" width="166" height="112" class="pod"/>
-  <text x="602" y="258" class="podtxt" font-weight="700">gateway</text>
-  <text x="602" y="278" class="podtxt">3 → ~60 pods</text>
-  <text x="602" y="296" class="podtxt">tokens, per-IP limits</text>
-  <text x="602" y="316" class="az">AZ a · b · c</text>
-  <text x="602" y="334" class="podtxt">/metrics blocked</text>
-  <rect x="766" y="236" width="166" height="112" class="pod"/>
-  <text x="778" y="258" class="podtxt" font-weight="700">ingestion-service</text>
-  <text x="778" y="278" class="podtxt">3 → ~60 pods</text>
-  <text x="778" y="296" class="podtxt">SDK events, /retail/*</text>
-  <text x="778" y="316" class="az">AZ a · b · c</text>
-  <text x="778" y="334" class="podtxt">tenant budget by tier</text>
-  <rect x="942" y="236" width="166" height="112" class="pod"/>
-  <text x="954" y="258" class="podtxt" font-weight="700">insights-service</text>
-  <text x="954" y="278" class="podtxt">3 → 20 pods</text>
-  <text x="954" y="296" class="podtxt">/ad, reader user only</text>
-  <text x="954" y="316" class="az">AZ a · b · c</text>
-  <text x="954" y="334" class="podtxt">no Kafka, no writes</text>
-  <rect x="1118" y="236" width="158" height="112" class="pod"/>
-  <text x="1130" y="258" class="podtxt" font-weight="700">auth-service</text>
-  <text x="1130" y="278" class="podtxt">3 → 10 pods</text>
-  <text x="1130" y="296" class="podtxt">keys, tokens, users</text>
-  <text x="1130" y="316" class="az">AZ a · b · c</text>
-  <text x="1130" y="334" class="podtxt">(+ retailer mimics)</text>
-
-  <!-- Stream pool -->
-  <rect x="572" y="380" width="720" height="150" class="box proc"/>
-  <text x="590" y="406" class="head">Stream node pool</text>
-  <text x="760" y="406" class="small">Flink Kubernetes Operator · local NVMe for RocksDB state</text>
-  <rect x="590" y="420" width="220" height="94" class="pod" style="stroke:#c4b5fd"/>
-  <text x="604" y="442" class="podtxt" font-weight="700" style="fill:#4c1d95">JobManager × 2</text>
-  <text x="604" y="462" class="podtxt" style="fill:#4c1d95">high availability (leader</text>
-  <text x="604" y="480" class="podtxt" style="fill:#4c1d95">election), AZ a and b</text>
-  <text x="604" y="500" class="podtxt" style="fill:#4c1d95">upgrade: last-state</text>
-  <rect x="826" y="420" width="450" height="94" class="pod" style="stroke:#c4b5fd"/>
-  <text x="840" y="442" class="podtxt" font-weight="700" style="fill:#4c1d95">TaskManagers: parallelism 48 (= partitions)</text>
-  <text x="840" y="462" class="podtxt" style="fill:#4c1d95">attribution join, sessions, Iceberg writer</text>
-  <text x="840" y="480" class="podtxt" style="fill:#4c1d95">operator autoscaler: adds parallelism on Kafka lag</text>
-  <text x="840" y="500" class="podtxt" style="fill:#4c1d95">checkpoints + savepoints → S3 every minute</text>
-
-  <!-- ClickHouse pool -->
-  <rect x="572" y="546" width="720" height="150" class="box db"/>
-  <text x="590" y="572" class="head">ClickHouse node pool</text>
-  <text x="790" y="572" class="small">Altinity operator (or ClickHouse Cloud) · gp3 disks · cold tier on S3</text>
-  <rect x="590" y="586" width="230" height="94" class="pod" style="stroke:#6ee7b7"/>
-  <text x="604" y="608" class="podtxt" font-weight="700" style="fill:#065f46">Shard 1</text>
-  <text x="604" y="628" class="podtxt" style="fill:#065f46">replica AZ a · replica AZ b</text>
-  <text x="604" y="648" class="podtxt" style="fill:#065f46">tenants by cityHash64(tenant)</text>
-  <text x="604" y="666" class="podtxt" style="fill:#065f46">Kafka engine consumers</text>
-  <rect x="836" y="586" width="230" height="94" class="pod" style="stroke:#6ee7b7"/>
-  <text x="850" y="608" class="podtxt" font-weight="700" style="fill:#065f46">Shard 2</text>
-  <text x="850" y="628" class="podtxt" style="fill:#065f46">replica AZ b · replica AZ c</text>
-  <text x="850" y="648" class="podtxt" style="fill:#065f46">Distributed tables on top</text>
-  <text x="850" y="666" class="podtxt" style="fill:#065f46">(+ a shard for a huge tenant)</text>
-  <rect x="1082" y="586" width="194" height="94" class="pod" style="stroke:#6ee7b7"/>
-  <text x="1096" y="608" class="podtxt" font-weight="700" style="fill:#065f46">ClickHouse Keeper × 3</text>
-  <text x="1096" y="628" class="podtxt" style="fill:#065f46">one per AZ</text>
-  <text x="1096" y="648" class="podtxt" style="fill:#065f46">replication, the hourly</text>
-  <text x="1096" y="666" class="podtxt" style="fill:#065f46">check runs once per shard</text>
-
-  <!-- Ops pool -->
-  <rect x="572" y="712" width="720" height="108" class="box ops"/>
-  <text x="590" y="738" class="head">Ops node pool</text>
-  <rect x="590" y="750" width="250" height="56" class="pod" style="stroke:#f9a8d4"/>
-  <text x="604" y="772" class="podtxt" font-weight="700" style="fill:#831843">Airflow</text>
-  <text x="604" y="792" class="podtxt" style="fill:#831843">KubernetesExecutor: a pod per task</text>
-  <rect x="856" y="750" width="420" height="56" class="pod" style="stroke:#f9a8d4"/>
-  <text x="870" y="772" class="podtxt" font-weight="700" style="fill:#831843">Prometheus · Alertmanager → pager · Grafana · Loki</text>
-  <text x="870" y="792" class="podtxt" style="fill:#831843">scrapes every pod's /metrics, MSK, Flink, ClickHouse</text>
-
-  <!-- Managed services -->
-  <rect x="1336" y="156" width="414" height="176" class="box kafka"/>
-  <text x="1354" y="184" class="head">Amazon MSK (Kafka)</text>
-  <text x="1354" y="208" class="body">3 brokers, one per AZ · RF 3 · min ISR 2</text>
-  <text x="1354" y="230" class="body">retail.interactions.v1: 48 partitions</text>
-  <text x="1370" y="249" class="small">keyed by event ID: no tenant hot spot · 14 days</text>
-  <text x="1354" y="272" class="body">retail.identity-events.v1 · 14 days</text>
-  <text x="1354" y="294" class="body">catalog / campaign events: compacted</text>
-  <text x="1354" y="316" class="body">serving.*: 48 hours · IAM auth, TLS</text>
-
-  <rect x="1336" y="348" width="414" height="196" class="box archive"/>
-  <text x="1354" y="376" class="head">Amazon S3 + Glue + Athena</text>
-  <text x="1354" y="400" class="body">iceberg-archive/: every tenant's raw events</text>
-  <text x="1370" y="419" class="small">day × tenant bucket · Standard → IA (30 d) → Glacier IR (180 d)</text>
-  <text x="1354" y="442" class="body">clickhouse-cold/: raw days 8–20</text>
-  <text x="1354" y="464" class="body">clickhouse-backups/: 35 days</text>
-  <text x="1354" y="486" class="body">flink-checkpoints/</text>
-  <text x="1354" y="508" class="body">Glue Data Catalog (Iceberg) · Athena</text>
-  <text x="1354" y="530" class="small">SSE-KMS · versioning on backups</text>
-
-  <rect x="1336" y="560" width="414" height="112" class="box db"/>
-  <text x="1354" y="588" class="head">Amazon RDS for PostgreSQL</text>
-  <text x="1354" y="612" class="body">Multi-AZ · one database and login per service</text>
-  <text x="1354" y="634" class="body">identity, gateway, airflow (+ retailer mimics)</text>
-  <text x="1354" y="656" class="small">Automated backups, point-in-time recovery</text>
-
-  <rect x="1336" y="688" width="414" height="148" class="box sec"/>
-  <text x="1354" y="716" class="head">Security</text>
-  <text x="1354" y="740" class="body">Secrets Manager → External Secrets (pods)</text>
-  <text x="1354" y="762" class="body">KMS keys: S3, MSK, RDS, EBS</text>
-  <text x="1354" y="784" class="body">IRSA: one IAM role per service account</text>
-  <text x="1354" y="806" class="body">JWT signing key: auth-service only</text>
-  <text x="1354" y="826" class="small">Private subnets; NAT for egress only</text>
-
-  <!-- ===== CI/CD ===== -->
-  <text x="40" y="896" class="zone" fill="#64748b">CI / CD</text>
-  <rect x="40" y="908" width="1730" height="96" class="box infra"/>
-  <rect x="60" y="924" width="300" height="64" class="pod" style="stroke:#cbd5e1"/>
-  <text x="74" y="948" class="podtxt" font-weight="700" style="fill:#172033">GitHub (pull request)</text>
-  <text x="74" y="968" class="podtxt" style="fill:#334155">ci: lint, typecheck, tests, e2e</text>
-  <rect x="400" y="924" width="300" height="64" class="pod" style="stroke:#cbd5e1"/>
-  <text x="414" y="948" class="podtxt" font-weight="700" style="fill:#172033">GitHub Actions (main)</text>
-  <text x="414" y="968" class="podtxt" style="fill:#334155">build one image per service</text>
-  <rect x="740" y="924" width="260" height="64" class="pod" style="stroke:#cbd5e1"/>
-  <text x="754" y="948" class="podtxt" font-weight="700" style="fill:#172033">Amazon ECR</text>
-  <text x="754" y="968" class="podtxt" style="fill:#334155">immutable tags, image scanning</text>
-  <rect x="1040" y="924" width="340" height="64" class="pod" style="stroke:#cbd5e1"/>
-  <text x="1054" y="948" class="podtxt" font-weight="700" style="fill:#172033">helmfile apply (or Argo CD)</text>
-  <text x="1054" y="968" class="podtxt" style="fill:#334155">one service at a time; rolls back if unready</text>
-  <rect x="1420" y="924" width="330" height="64" class="pod" style="stroke:#cbd5e1"/>
-  <text x="1434" y="948" class="podtxt" font-weight="700" style="fill:#172033">GitHub Packages</text>
-  <text x="1434" y="968" class="podtxt" style="fill:#334155">SDK and Kafka library, on release</text>
-  <path d="M360 956 H392" class="arrow"/><path d="M700 956 H732" class="arrow"/><path d="M1000 956 H1032" class="arrow"/>
-
-  <!-- ===== Sizing ===== -->
-  <rect x="40" y="1022" width="1730" height="150" class="box infra"/>
-  <text x="60" y="1050" class="head">Sizing for 100k events/s (≈11k requests/s at 9 events each; measured ~250 requests/s per 1-vCPU Node pod)</text>
-  <text x="60" y="1076" class="body">Edge: ~60 gateway + ~60 ingestion-service pods with 30% headroom (insights scales on dashboard reads) (~11 each if clients batch 50 events) · MSK: 3+ brokers, 48 partitions on interactions (~100 MB/s)</text>
-  <text x="60" y="1098" class="body">Flink: parallelism 48 on the operator, RocksDB on NVMe · ClickHouse: 2 shards × 2 replicas; /ad reads stay small (daily rows), each bounded to 10 s and 4 threads</text>
-  <text x="60" y="1120" class="body">A heavy tenant: capped by its tier's budget at ingestion (429 + Retry-After); its events spread over all partitions and Flink tasks; the largest tenants can get their own shard.</text>
-  <text x="60" y="1146" class="small">Laptop-based figures are a conservative first estimate: re-measure on the target instances before committing to node counts.</text>
-
-  <!-- ===== Arrows ===== -->
-  <path d="M250 192 H272" class="live"/>
-  <path d="M250 306 C264 306 262 380 272 392" class="live"/>
-  <path d="M250 420 C262 420 262 290 272 282" class="arrow"/>
-  <path d="M500 405 C530 405 540 300 564 292" class="live"/>
-  <text x="508" y="456" class="lbl">/api</text>
-  <!-- edge → MSK -->
-  <path d="M1292 260 C1310 230 1316 220 1328 220" class="live"/>
-  <!-- MSK → Flink -->
-  <path d="M1336 300 C1300 340 1300 420 1284 440" class="live"/>
-  <!-- MSK → ClickHouse (serving topics) -->
-  <path d="M1336 320 C1318 420 1310 560 1284 604" class="live"/>
-  <!-- Flink / ClickHouse → S3 -->
-  <path d="M1292 500 C1310 500 1316 420 1328 420" class="batch"/>
-  <path d="M1292 640 C1316 640 1316 480 1328 470" class="batch"/>
+  <text x="40" y="88" class="sub">One region, three availability zones; every stateful tier replicated across them. Sized for 100k events/s from the load-test capacity model (basketline/loadtest/README.md).</text>
+  <text x="40" y="150" class="zone" fill="#64748b">CLIENTS</text>
+  <rect x="30" y="165" width="230" height="130" rx="14" class="client"/>
+  <text x="46" y="193" class="head">Shoppers</text>
+  <text x="46" y="217" class="body">Retailer sites and apps</text>
+  <text x="46" y="237" class="body">SDK → /analytics/events</text>
+  <rect x="30" y="315" width="230" height="130" rx="14" class="client"/>
+  <text x="46" y="343" class="head">Retailer backends</text>
+  <text x="46" y="367" class="body">Catalog, campaigns, identity</text>
+  <text x="46" y="387" class="body">SDK /server → /retail/*</text>
+  <rect x="30" y="465" width="230" height="130" rx="14" class="client"/>
+  <text x="46" y="493" class="head">Marketers</text>
+  <text x="46" y="517" class="body">Dashboard (React SPA)</text>
+  <text x="46" y="537" class="body">GET /ad/*</text>
+  <text x="300" y="150" class="zone" fill="#64748b">ENTRY</text>
+  <rect x="290" y="165" width="220" height="100" rx="14" class="infra"/>
+  <text x="306" y="193" class="head">Route 53</text>
+  <text x="306" y="217" class="body">api. and app. domains</text>
+  <rect x="290" y="285" width="220" height="110" rx="14" class="infra"/>
+  <text x="306" y="313" class="head">CloudFront</text>
+  <text x="306" y="337" class="body">Dashboard SPA from S3</text>
+  <text x="306" y="357" class="body">cached at the edge</text>
+  <rect x="290" y="415" width="220" height="180" rx="14" class="infra"/>
+  <text x="306" y="443" class="head">ALB + AWS WAF</text>
+  <text x="306" y="467" class="body">TLS, over 3 AZs</text>
+  <text x="306" y="487" class="body">WAF: bot and IP rules,</text>
+  <text x="306" y="507" class="body">rate-based limits</text>
+  <text x="306" y="527" class="body">Only /api reaches</text>
+  <text x="306" y="547" class="body">the cluster</text>
+  <rect x="540" y="120" width="1240" height="880" rx="20" class="region"/>
+  <text x="560" y="150" class="zone" fill="#0f766e">AWS REGION · VPC · PRIVATE SUBNETS IN AZ a, b, c</text>
+  <rect x="555" y="165" width="815" height="820" rx="16" class="pool"/>
+  <text x="575" y="192" class="zone" fill="#2563eb">AMAZON EKS · one Helm release per service (helmfile)</text>
+  <rect x="570" y="205" width="785" height="185" rx="12" class="pool"/>
+  <text x="585" y="228" class="small">Edge node pool · stateless · HPA on CPU · spread over AZs · PodDisruptionBudgets</text>
+  <rect x="585" y="240" width="180" height="135" rx="14" class="svc"/>
+  <text x="601" y="268" class="head">gateway</text>
+  <text x="601" y="292" class="body">3 → ~60 pods</text>
+  <text x="601" y="312" class="body">tokens, per-IP limits</text>
+  <text x="601" y="332" class="body">/metrics blocked</text>
+  <rect x="777" y="240" width="180" height="135" rx="14" class="svc"/>
+  <text x="793" y="268" class="head">ingestion-service</text>
+  <text x="793" y="292" class="body">3 → ~60 pods</text>
+  <text x="793" y="312" class="body">events, /retail/*</text>
+  <text x="793" y="332" class="body">tenant budget by tier</text>
+  <rect x="969" y="240" width="180" height="135" rx="14" class="svc"/>
+  <text x="985" y="268" class="head">insights-service</text>
+  <text x="985" y="292" class="body">3 → 20 pods</text>
+  <text x="985" y="312" class="body">/ad, reader user only</text>
+  <text x="985" y="332" class="body">no Kafka, no writes</text>
+  <rect x="1161" y="240" width="180" height="135" rx="14" class="svc"/>
+  <text x="1177" y="268" class="head">auth-service</text>
+  <text x="1177" y="292" class="body">3 → 10 pods</text>
+  <text x="1177" y="312" class="body">keys, tokens, users</text>
+  <text x="1177" y="332" class="body">Postgres via RDS</text>
+  <rect x="570" y="405" width="785" height="185" rx="12" class="pool"/>
+  <text x="585" y="428" class="small">Stream node pool · Flink Kubernetes Operator · local NVMe for RocksDB state</text>
+  <rect x="585" y="440" width="200" height="135" rx="14" class="proc"/>
+  <text x="601" y="468" class="head">JobManager × 2</text>
+  <text x="601" y="492" class="body">HA leader election</text>
+  <text x="601" y="512" class="body">AZ a and b</text>
+  <text x="601" y="532" class="body">upgrade: last-state</text>
+  <rect x="800" y="440" width="290" height="135" rx="14" class="proc"/>
+  <text x="816" y="468" class="head">TaskManagers</text>
+  <text x="816" y="492" class="body">parallelism 48 (= partitions)</text>
+  <text x="816" y="511" class="body">attribution join, sessions</text>
+  <text x="816" y="530" class="body">autoscaler on Kafka lag</text>
+  <text x="816" y="549" class="body">checkpoints → S3 every minute</text>
+  <rect x="1105" y="440" width="235" height="135" rx="14" class="archive"/>
+  <text x="1121" y="468" class="head">Kafka Connect</text>
+  <text x="1121" y="492" class="body">Iceberg sink, 3+ workers</text>
+  <text x="1121" y="512" class="body">a task per partition</text>
+  <text x="1121" y="532" class="body">or Amazon MSK Connect</text>
+  <rect x="570" y="605" width="785" height="185" rx="12" class="pool"/>
+  <text x="585" y="628" class="small">ClickHouse node pool · Altinity operator (or ClickHouse Cloud) · gp3 disks</text>
+  <rect x="585" y="640" width="245" height="135" rx="14" class="db"/>
+  <text x="601" y="668" class="head">Shard 1</text>
+  <text x="601" y="692" class="body">replica AZ a · replica AZ b</text>
+  <text x="601" y="711" class="body">tenants by cityHash64(tenant)</text>
+  <text x="601" y="730" class="body">Kafka engine consumers</text>
+  <rect x="845" y="640" width="245" height="135" rx="14" class="db"/>
+  <text x="861" y="668" class="head">Shard 2</text>
+  <text x="861" y="692" class="body">replica AZ b · replica AZ c</text>
+  <text x="861" y="711" class="body">Distributed tables on top</text>
+  <text x="861" y="730" class="body">(+ a shard for a huge tenant)</text>
+  <rect x="1105" y="640" width="235" height="135" rx="14" class="db"/>
+  <text x="1121" y="668" class="head">ClickHouse Keeper × 3</text>
+  <text x="1121" y="692" class="body">one per AZ</text>
+  <text x="1121" y="711" class="body">replication; the hourly</text>
+  <text x="1121" y="730" class="body">check runs once per shard</text>
+  <rect x="570" y="805" width="785" height="165" rx="12" class="pool"/>
+  <text x="585" y="828" class="small">Ops node pool</text>
+  <rect x="585" y="840" width="370" height="115" rx="14" class="ops"/>
+  <text x="601" y="868" class="head">Airflow</text>
+  <text x="601" y="892" class="body">KubernetesExecutor: a pod per task</text>
+  <text x="601" y="912" class="body">history_backfill · backups · lake purges</text>
+  <rect x="970" y="840" width="370" height="115" rx="14" class="ops"/>
+  <text x="986" y="868" class="head">Prometheus · Grafana · Loki</text>
+  <text x="986" y="892" class="body">every pod's /metrics, MSK, Flink, ClickHouse</text>
+  <text x="986" y="912" class="body">Alertmanager → pager</text>
+  <rect x="1390" y="165" width="375" height="230" rx="14" class="kafka"/>
+  <text x="1406" y="193" class="head">Amazon MSK (Kafka)</text>
+  <text x="1406" y="217" class="body">3+ brokers, one per AZ · RF 3 · min ISR 2</text>
+  <text x="1406" y="237" class="body">retail.interactions.v1: 48 partitions</text>
+  <text x="1406" y="257" class="small">  keyed by event ID · 14 days</text>
+  <text x="1406" y="277" class="body">identity events · 14 days</text>
+  <text x="1406" y="297" class="body">catalog, campaign, campaign-products,</text>
+  <text x="1406" y="317" class="body">tenant topics: compacted</text>
+  <text x="1406" y="337" class="body">serving.*: 48 hours · IAM auth, TLS</text>
+  <rect x="1390" y="415" width="375" height="230" rx="14" class="archive"/>
+  <text x="1406" y="443" class="head">Amazon S3 + Glue + Athena</text>
+  <text x="1406" y="467" class="body">lake/: Iceberg tables, every topic,</text>
+  <text x="1406" y="487" class="small">  partitioned by tenant and hour</text>
+  <text x="1406" y="507" class="small">  Standard → IA (30 d) → Glacier IR (180 d)</text>
+  <text x="1406" y="527" class="body">clickhouse-backups/ · 35 days</text>
+  <text x="1406" y="547" class="body">flink-checkpoints/</text>
+  <text x="1406" y="567" class="body">Glue Data Catalog · Athena · SSE-KMS</text>
+  <rect x="1390" y="665" width="375" height="115" rx="14" class="db"/>
+  <text x="1406" y="693" class="head">Amazon RDS for PostgreSQL</text>
+  <text x="1406" y="717" class="body">Multi-AZ · a database and login per service</text>
+  <text x="1406" y="737" class="body">identity, airflow · point-in-time recovery</text>
+  <rect x="1390" y="800" width="375" height="185" rx="14" class="infra"/>
+  <text x="1406" y="828" class="head">Security</text>
+  <text x="1406" y="852" class="body">Secrets Manager → External Secrets</text>
+  <text x="1406" y="872" class="body">KMS keys: S3, MSK, RDS, EBS</text>
+  <text x="1406" y="892" class="body">IRSA: one IAM role per service account</text>
+  <text x="1406" y="912" class="body">JWT signing key: auth-service only</text>
+  <text x="1406" y="932" class="body">Private subnets; NAT for egress only</text>
+  <path d="M260,230 H288" class="arrow"/>
+  <path d="M260,530 H288" class="arrow"/>
+  <path d="M260,380 L288,470" class="arrow"/>
+  <path d="M510,500 H583" class="live"/>
+  <text x="520" y="490" class="lbl">/api</text>
+  <path d="M1356,300 H1388" class="live"/>
+  <path d="M1388,355 H1372 V403" class="live"/>
+  <path d="M1342,505 H1388" class="batch"/>
+  <path d="M1388,385 H1380 V700 H1358" class="live"/>
+  <text x="40" y="1040" class="zone" fill="#64748b">CI / CD</text>
+  <rect x="30" y="1055" width="330" height="85" rx="14" class="infra"/>
+  <text x="46" y="1083" class="head">GitHub pull request</text>
+  <text x="46" y="1107" class="body">ci: lint, typecheck, tests, e2e</text>
+  <rect x="380" y="1055" width="330" height="85" rx="14" class="infra"/>
+  <text x="396" y="1083" class="head">GitHub Actions (main)</text>
+  <text x="396" y="1107" class="body">one image per service</text>
+  <path d="M360,1097 H378" class="arrow"/>
+  <rect x="730" y="1055" width="330" height="85" rx="14" class="infra"/>
+  <text x="746" y="1083" class="head">Amazon ECR</text>
+  <text x="746" y="1107" class="body">immutable tags, scanning</text>
+  <path d="M710,1097 H728" class="arrow"/>
+  <rect x="1080" y="1055" width="330" height="85" rx="14" class="infra"/>
+  <text x="1096" y="1083" class="head">helmfile apply (or Argo CD)</text>
+  <text x="1096" y="1107" class="body">one service at a time, rollback</text>
+  <path d="M1060,1097 H1078" class="arrow"/>
+  <rect x="1430" y="1055" width="330" height="85" rx="14" class="infra"/>
+  <text x="1446" y="1083" class="head">GitHub Packages</text>
+  <text x="1446" y="1107" class="body">SDK and Kafka library</text>
+  <path d="M1410,1097 H1428" class="arrow"/>
+  <text x="40" y="1180" class="small">Sizing for 100k events/s (≈11k requests/s at 9 events each; measured ~250 requests/s per 1-vCPU Node pod): ~60 gateway and ~60 ingestion pods with headroom ·</text>
+  <text x="40" y="1200" class="small">MSK 3+ brokers, 48 partitions (~100 MB/s) · Flink parallelism 48 · ClickHouse 2 shards × 2 replicas; /ad reads are daily rows, bounded to 10 s and 4 threads.</text>
+  <text x="40" y="1220" class="small">A heavy tenant is capped by its tier's budget at ingestion (429 + Retry-After); its events spread over all partitions and Flink tasks; the largest can get their own shard.</text>
+  <text x="40" y="1240" class="small">Laptop-based figures are a first estimate: re-measure on the target instances before committing to node counts.</text>
 </svg>

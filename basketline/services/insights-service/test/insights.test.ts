@@ -112,6 +112,38 @@ async function insertAttributed(rows: AttributedBasket[]) {
   })
 }
 
+/** A user session as the Flink job writes it: "store:campaign" seen, "campaign:product" clicked, products added. */
+interface Session {
+  user_id?: string
+  session_start?: string
+  web?: boolean
+  mobile?: boolean
+  campaigns: string[]
+  clicked?: string[]
+  added?: string[]
+}
+
+async function insertSessions(rows: Session[]) {
+  await clickhouse.insert({
+    table: 'sessions',
+    format: 'JSONEachRow',
+    clickhouse_settings: { date_time_input_format: 'best_effort' },
+    values: rows.map((row) => ({
+      tenant_id: TENANT,
+      user_id: randomUUID(),
+      user_type: 'visitor',
+      session_start: ago(HOUR),
+      session_end: ago(HOUR / 2),
+      events: 3,
+      web: true,
+      mobile: false,
+      clicked: [],
+      added: [],
+      ...row,
+    })),
+  })
+}
+
 const metric = (campaignId: string, name: string, query = '', auth = reader) =>
   request(app).get(`/api/v1/ad/${campaignId}/${name}${query}`).set('Authorization', auth)
 
@@ -443,6 +475,35 @@ describe('web, mobile and total', () => {
       })
       expect(await rows.json()).toEqual([{ rows: 1 }])
     }
+  })
+})
+
+describe('daily_campaign_sessions_aggregation: sessions', () => {
+  it('counts the sessions that saw the campaign, per store and client type, and those that added a product clicked in it', async () => {
+    const campaignId = randomUUID()
+    const [storeA, storeB, product, other] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    const converted = { user_id: randomUUID(), session_start: ago(2 * HOUR), campaigns: [`${storeA}:${campaignId}`], clicked: [`${campaignId}:${product}`], added: [product] }
+    await insertSessions([
+      converted,
+      // Written again after a Flink restart: the same session.
+      converted,
+      // Clicked the product, added another one.
+      { web: false, mobile: true, campaigns: [`${storeB}:${campaignId}`], clicked: [`${campaignId}:${product}`], added: [other] },
+      // Added a product it clicked in another campaign.
+      { campaigns: [`${storeA}:${campaignId}`, `${storeA}:${other}`], clicked: [`${other}:${product}`], added: [product] },
+    ])
+
+    expect((await metric(campaignId, 'sessions')).body).toMatchObject({
+      campaignId,
+      metric: 'sessions',
+      count: 3,
+      total_sessions: 3,
+      total_web_sessions: 2,
+      total_mobile_sessions: 1,
+      total_converted_sessions: 1,
+    })
+    expect((await metric(campaignId, 'sessions')).body).not.toHaveProperty('customers')
+    expect((await metric(campaignId, 'sessions', `?storeId=${storeA}`)).body).toMatchObject({ count: 2, total_converted_sessions: 1 })
   })
 })
 

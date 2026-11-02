@@ -2,7 +2,7 @@
 
     python backup_clickhouse.py --day 2026-10-31
 
-The staging tables (events, attributed_baskets) are left out: they hold 3
+The staging tables (events, attributed_baskets, sessions) are left out: they hold 3
 days, which a replay of Kafka (14 days) rebuilds. These can't be rebuilt:
 
   daily_campaign_*   the daily totals, kept forever
@@ -26,6 +26,7 @@ from clickhouse_connect.driver.exceptions import DatabaseError
 TABLES = [
     "daily_campaign_aggregation",
     "daily_campaign_customers_aggregation",
+    "daily_campaign_sessions_aggregation",
     "deleted_tenants",
     "deleted_users",
     "backfill_runs",

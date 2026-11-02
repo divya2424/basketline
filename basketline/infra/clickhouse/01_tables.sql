@@ -64,6 +64,38 @@ ORDER BY (tenant_id, store_id, campaign_id, event_time, basket_event_id, click_e
 TTL toDateTime(event_time) + INTERVAL 3 DAY
 SETTINGS ttl_only_drop_parts = 1;
 
+-- Staging: each user session (the Flink job's serving.sessions.v1,
+-- flink/sql/pipelines/03_sessions.sql): a user's interactions with no gap of 30
+-- minutes, written about 40 minutes after its last one. Kept 3 days, like events.
+-- session_id comes from (tenant, user, start), so a session Flink writes again
+-- after a restart is the same one, merged away and counted once.
+--   campaigns: "store_id:campaign_id" of each campaign it saw or clicked;
+--   clicked:   "campaign_id:product_id" of each click;
+--   added:     the products it added to the cart.
+CREATE TABLE IF NOT EXISTS analytics.sessions
+(
+    tenant_id     UUID,
+    user_id       UUID,
+    -- registered if any of its events was sent signed in.
+    user_type     LowCardinality(String),
+    session_start DateTime64(3, 'UTC'),
+    session_end   DateTime64(3, 'UTC'),
+    events        UInt32,
+    -- Whether it had events from the web app, the mobile app (both: one session).
+    web           Bool,
+    mobile        Bool,
+    campaigns     Array(String),
+    clicked       Array(String),
+    added         Array(UUID),
+    session_id    UUID DEFAULT reinterpretAsUUID(sipHash128(tenant_id, user_id, session_start)),
+    ingested_at   DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY toDate(session_start)
+ORDER BY (tenant_id, session_start, user_id)
+TTL toDateTime(session_start) + INTERVAL 3 DAY
+SETTINGS ttl_only_drop_parts = 1;
+
 -- Shoppers erased at the store's request (user_deleted, from ingestion-service):
 -- their staged rows are deleted at once, and 03_kafka.sql's queue views drop any
 -- still in flight. The daily tables hold no user IDs (counts and sketches).
@@ -179,6 +211,27 @@ CREATE TABLE IF NOT EXISTS analytics.daily_campaign_customers_aggregation
     customers_mobile_click_to_basket     AggregateFunction(uniqCombined64, UUID),
     customers_registered_click_to_basket AggregateFunction(uniqCombined64, UUID),
     customers_visitor_click_to_basket    AggregateFunction(uniqCombined64, UUID)
+)
+ENGINE = AggregatingMergeTree
+PARTITION BY toYYYYMM(day)
+ORDER BY (tenant_id, store_id, campaign_id, day);
+
+-- Sessions per UTC day (of the session's start), tenant, store and campaign: the
+-- sessions that saw or clicked the campaign in that store, in total, with web or
+-- mobile events, and converted (added to the cart a product clicked in the
+-- campaign, in the same session). uniqCombined64 sketches of session_id, like
+-- the customers' table: a session written twice counts once, and a period's
+-- days and stores merge. Filled by 02_materialized_views.sql as sessions are stored.
+CREATE TABLE IF NOT EXISTS analytics.daily_campaign_sessions_aggregation
+(
+    day                      Date,
+    tenant_id                UUID,
+    store_id                 UUID,
+    campaign_id              UUID,
+    total_sessions           AggregateFunction(uniqCombined64, UUID),
+    total_web_sessions       AggregateFunction(uniqCombined64, UUID),
+    total_mobile_sessions    AggregateFunction(uniqCombined64, UUID),
+    total_converted_sessions AggregateFunction(uniqCombined64, UUID)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)

@@ -1,5 +1,5 @@
 -- Loads the Flink job's serving topics (basketline/flink/sql/) into the staging
--- tables analytics.events and analytics.attributed_baskets: a Kafka engine table
+-- tables analytics.events, analytics.attributed_baskets and analytics.sessions: a Kafka engine table
 -- reads each topic, and a materialized view inserts what it reads.
 --
 -- ClickHouse schema, part 3 of 4. Kept apart: the tests load 01_tables.sql and
@@ -63,5 +63,31 @@ SETTINGS kafka_broker_list = 'kafka:19092',
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.attributed_baskets_queue_mv TO analytics.attributed_baskets
 AS SELECT * FROM analytics.attributed_baskets_queue
+WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants)
+  AND (tenant_id, user_id) NOT IN (SELECT tenant_id, user_id FROM analytics.deleted_users);
+
+CREATE TABLE IF NOT EXISTS analytics.sessions_queue
+(
+    tenant_id     UUID,
+    user_id       UUID,
+    user_type     LowCardinality(String),
+    session_start DateTime64(3, 'UTC'),
+    session_end   DateTime64(3, 'UTC'),
+    events        UInt32,
+    web           Bool,
+    mobile        Bool,
+    campaigns     Array(String),
+    clicked       Array(String),
+    added         Array(UUID)
+)
+ENGINE = Kafka
+SETTINGS kafka_broker_list = 'kafka:19092',
+         kafka_topic_list = 'serving.sessions.v1',
+         kafka_group_name = 'clickhouse-sessions',
+         kafka_format = 'JSONEachRow',
+         kafka_flush_interval_ms = 15000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.sessions_queue_mv TO analytics.sessions
+AS SELECT * FROM analytics.sessions_queue
 WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants)
   AND (tenant_id, user_id) NOT IN (SELECT tenant_id, user_id FROM analytics.deleted_users);

@@ -2,7 +2,7 @@ import type { AnalyticsEventPayload, EventEnvelope } from '@basketline/contracts
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 
 /** Staging tables holding a shopper's rows. Daily totals hold no user IDs (counts and sketches). */
-const USER_TABLES = ['events', 'attributed_baskets']
+const USER_TABLES = ['events', 'attributed_baskets', 'sessions']
 
 /**
  * Erasure (user_deleted, retail.identity-events.v1): records the shopper as

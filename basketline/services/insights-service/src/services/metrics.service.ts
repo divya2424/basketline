@@ -4,7 +4,7 @@ import { listCampaigns } from '../repositories/campaign.repository.ts'
 import { countDaily, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
 
 /** API metric names (kept from the frontend contract). */
-export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers'] as const
+export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers', 'sessions'] as const
 export type MetricName = (typeof METRICS)[number]
 
 const DAY = 24 * 60 * 60 * 1000
@@ -55,7 +55,8 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
      * A tenant's campaign metric over the period's days, in one store or all of
      * them, as the daily tables' columns: events of one kind in total and per
      * client type (web, mobile), with the customers behind them (also per user
-     * type); or unique customers (people who saw or clicked it). Customer counts
+     * type); unique customers (people who saw or clicked it); or sessions (that saw or
+     * clicked it, per client type, and converted). Customer counts
      * are estimates within about 1% beyond a few thousand. Today's numbers are
      * live, and every day's event counts are exact within the hour (the hourly
      * check). An unknown campaign simply has 0.

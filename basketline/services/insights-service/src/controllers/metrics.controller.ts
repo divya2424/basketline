@@ -9,7 +9,7 @@ const queryString = (value: unknown) => (typeof value === 'string' ? value : und
 
 function metricOf(req: Request<{ metric: string }>): MetricName {
   const metric = req.params.metric as MetricName
-  if (!METRICS.includes(metric)) throw badRequest('UNKNOWN_METRIC', 'metric must be clicks, impressions, clickToBasket or uniqueCustomers')
+  if (!METRICS.includes(metric)) throw badRequest('UNKNOWN_METRIC', 'metric must be clicks, impressions, clickToBasket, uniqueCustomers or sessions')
   return metric
 }
 

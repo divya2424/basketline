@@ -15,3 +15,6 @@ SET 'execution.checkpointing.dir' = 'file://__CHECKPOINT_DIR__';
 -- manager still restores from checkpoint storage.
 SET 'execution.checkpointing.local-backup.enabled' = 'true';
 SET 'execution.state-recovery.from-local' = 'true';
+-- A Kafka partition with no events for a minute stops holding the watermark back,
+-- so the other partitions' sessions still close (pipelines/03_sessions.sql).
+SET 'table.exec.source.idle-timeout' = '1 min';

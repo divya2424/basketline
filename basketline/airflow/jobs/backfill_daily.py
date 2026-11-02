@@ -13,9 +13,10 @@ interaction ever sent; ClickHouse keeps only the daily totals, recomputed here:
      table included.
   2. For each day, the lake's events are inserted into its staging tables as the
      Flink job writes them (flink/sql): ad impressions and clicks with a
-     campaign, and each basket addition with every click on its product by the
-     same user in the 7 days before it (the views credit the latest). Each event
-     once (by event ID); deleted tenants and erased shoppers left out.
+     campaign, each basket addition with every click on its product by the
+     same user in the 7 days before it (the views credit the latest), and the
+     sessions that began that day. Each event once (by event ID); deleted
+     tenants and erased shoppers left out.
   3. Each month the days are in is swapped into analytics atomically (REPLACE
      PARTITION): the recomputed rows, plus the rows of every other day and tenant
      as they are. While it swaps, ClickHouse stops reading Kafka and the hourly
@@ -42,7 +43,7 @@ NO_STORE = "00000000-0000-0000-0000-000000000000"
 # A day can still get events until 2 days after it (ingestion-service's MAX_EVENT_AGE_MS).
 SETTLED_DAYS = 3
 # Live inserts into the staging tables (03_kafka.sql) and the hourly recount (02_materialized_views.sql).
-QUEUE_VIEWS = ["events_queue_mv", "attributed_baskets_queue_mv"]
+QUEUE_VIEWS = ["events_queue_mv", "attributed_baskets_queue_mv", "sessions_queue_mv"]
 CHECK_VIEW = "daily_campaign_aggregation_check_mv"
 
 # The lake's interaction events between two Kafka times (the lake's hourly
@@ -102,6 +103,38 @@ ATTRIBUTED = """
     WHERE b.event_time >= c.event_time AND b.event_time <= c.event_time + INTERVAL 7 DAY
 """
 
+# The sessions that began on the day (flink/sql/pipelines/03_sessions.sql): a known
+# user's interactions with no gap of 30 minutes or more. The day before tells
+# whether the day's first events continue a session, and the day after holds the
+# end of one that runs past midnight. Unlike Flink, no event is too late for its session.
+SESSIONS = """
+    INSERT INTO {scratch}.sessions (tenant_id, user_id, user_type, session_start, session_end, events, web, mobile, campaigns, clicked, added)
+    WITH ordered AS (
+        SELECT *, lagInFrame(event_time, 1, toDateTime64(0, 3, 'UTC')) OVER (
+                      PARTITION BY tenant_id, user_id ORDER BY event_time, event_id
+                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS previous_time
+        FROM ({valid})
+        WHERE user_id IS NOT NULL
+          AND event_time >= {{day:Date}} - INTERVAL 1 DAY AND event_time < {{day:Date}} + INTERVAL 2 DAY
+    ),
+    numbered AS (
+        SELECT *, sum(event_time >= previous_time + INTERVAL 30 MINUTE) OVER (
+                      PARTITION BY tenant_id, user_id ORDER BY event_time, event_id
+                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session
+        FROM ordered
+    )
+    SELECT tenant_id, assumeNotNull(user_id),
+           if(countIf(user_type = 'registered') > 0, 'registered', 'visitor'),
+           min(event_time), max(event_time), count(), countIf(client_type = 'web') > 0, countIf(client_type = 'mobile') > 0,
+           groupUniqArrayIf(concat(toString(store_id), ':', toString(assumeNotNull(campaign_id))), event_name IN ('impression', 'click') AND campaign_id IS NOT NULL),
+           groupUniqArrayIf(concat(toString(assumeNotNull(campaign_id)), ':', toString(assumeNotNull(product_id))),
+                            event_name = 'click' AND campaign_id IS NOT NULL AND product_id IS NOT NULL),
+           groupUniqArrayIf(assumeNotNull(product_id), event_name = 'add_to_cart' AND product_id IS NOT NULL)
+    FROM numbered
+    GROUP BY tenant_id, user_id, session
+    HAVING toDate(min(event_time)) = {{day:Date}}
+"""
+
 
 def statements(file: str, database: str) -> list[str]:
     """A schema file's statements, for `database` instead of analytics."""
@@ -150,6 +183,8 @@ def recompute(ch, source: str, database: str, scratch: str, start: dt.date, end:
         ch.command(EVENTS.format(scratch=scratch, valid=valid(1, 3)), parameters=params)
         # The clicks of the 7 days before, and the day's baskets, arrive between 8 days before and 3 after.
         ch.command(ATTRIBUTED.format(scratch=scratch, valid=valid(8, 3)), parameters=params)
+        # The day before to the day after, which arrive between 2 days before and 4 after.
+        ch.command(SESSIONS.format(scratch=scratch, valid=valid(2, 4)), parameters=params)
 
 
 def pause(ch, database: str) -> None:

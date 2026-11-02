@@ -60,12 +60,14 @@ export const ANALYTICS_EVENT_TYPE = 'AnalyticsEventRecorded'
 /**
  * Written by the Flink job: every impression, click and add_to_cart as an
  * analytics.events row, and each (add_to_cart, earlier click on that product by
- * the same user) pair as an analytics.attributed_baskets row. The job reads only
+ * the same user) pair as an analytics.attributed_baskets row, and each user
+ * session (no gap of 30 minutes) as an analytics.sessions row. The job reads only
  * INTERACTIONS_TOPIC, never its own output.
  */
 export const SERVING_TOPICS = {
   events: 'serving.events.v1',
   attributedBaskets: 'serving.attributed_baskets.v1',
+  sessions: 'serving.sessions.v1',
 } as const
 
 /**

@@ -236,3 +236,21 @@ FROM
     GROUP BY tenant_id, basket_event_id
 )
 GROUP BY day, tenant_id, store_id, campaign_id;
+
+-- Live: each stored session, once per campaign it saw or clicked ("store_id:campaign_id"),
+-- on the day it began. Converted: it added to the cart a product it clicked in that campaign.
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_sessions_aggregation_mv
+TO analytics.daily_campaign_sessions_aggregation
+AS SELECT
+    toDate(session_start) AS day,
+    tenant_id,
+    toUUID(splitByChar(':', engaged)[1]) AS store_id,
+    toUUID(splitByChar(':', engaged)[2]) AS campaign_id,
+    uniqCombined64State(session_id) AS total_sessions,
+    uniqCombined64StateIf(session_id, web) AS total_web_sessions,
+    uniqCombined64StateIf(session_id, mobile) AS total_mobile_sessions,
+    uniqCombined64StateIf(session_id, arrayExists(product -> has(clicked, concat(splitByChar(':', engaged)[2], ':', toString(product))), added))
+        AS total_converted_sessions
+FROM analytics.sessions
+ARRAY JOIN campaigns AS engaged
+GROUP BY day, tenant_id, store_id, campaign_id;

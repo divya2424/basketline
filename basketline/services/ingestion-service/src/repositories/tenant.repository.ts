@@ -1,7 +1,15 @@
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 
 /** Every table with a tenant's rows: staging, the daily aggregates, and its erasures. */
-const TENANT_TABLES = ['events', 'attributed_baskets', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation', 'deleted_users']
+const TENANT_TABLES = [
+  'events',
+  'attributed_baskets',
+  'sessions',
+  'daily_campaign_aggregation',
+  'daily_campaign_customers_aggregation',
+  'daily_campaign_sessions_aggregation',
+  'deleted_users',
+]
 
 /**
  * Records the tenant as deleted first (so the Kafka queue views drop any of its

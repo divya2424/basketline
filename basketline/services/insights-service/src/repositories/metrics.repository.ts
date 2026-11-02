@@ -39,6 +39,14 @@ const DAILY_METRICS = {
       columns: ['has_visited', 'has_visited_in_web', 'has_visited_in_mobile', 'has_visited_registered', 'has_visited_visitor'],
     },
   ],
+  // Sessions that saw or clicked the campaign, and those that converted (flink/sql/pipelines/03_sessions.sql).
+  sessions: [
+    {
+      table: 'daily_campaign_sessions_aggregation',
+      aggregate: 'uniqCombined64Merge',
+      columns: ['total_sessions', 'total_web_sessions', 'total_mobile_sessions', 'total_converted_sessions'],
+    },
+  ],
 } as const
 
 export type DailyMetric = keyof typeof DAILY_METRICS

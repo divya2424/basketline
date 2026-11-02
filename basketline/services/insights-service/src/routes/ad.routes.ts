@@ -5,7 +5,7 @@ import { validateMetricQuery } from '../validators/metric.validator.ts'
 
 /**
  * Mounted at /api/v1/ad: GET /campaigns (the tenant's campaigns per store) and
- * /:campaignId/<metric>?storeId (clicks, impressions, clickToBasket, uniqueCustomers),
+ * /:campaignId/<metric>?storeId (clicks, impressions, clickToBasket, uniqueCustomers, sessions),
  * for campaign managers.
  */
 export function adMetricRoutes(metrics: MetricsController, authenticate: RequestHandler): Router {

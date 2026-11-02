@@ -184,7 +184,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | GET | `/ad/campaigns` | campaign or seller manager | The tenant's campaigns, as the retail API sent them: `{items: [{id, title, sellerId, status}]}`, not archived; a seller manager gets their seller's only |
 | GET | `/ad/:campaignId/impressions` | `clicks` | `clickToBasket` | campaign or seller manager | `?from&to` → `{count, customers, total_*, customers_*, period}` |
 | GET | `/ad/:campaignId/uniqueCustomers` | campaign or seller manager | → `has_visited`, its web, mobile, both, registered and visitor splits |
-| GET | `/ad/:campaignId/sessions` | campaign or seller manager | → `total_sessions`, `total_converted_sessions`, `avg_session_duration_ms` |
+| GET | `/ad/:campaignId/sessions` | campaign manager | `?storeId&from&to` → `total_sessions` (that saw or clicked it), `total_web_sessions`, `total_mobile_sessions`, `total_converted_sessions` |
 | GET | `/ad/sellers/:sellerId/<metric>` | campaign manager, or that seller's manager | The same metrics over all the seller's campaigns: `{sellerId, campaigns, count, …}`. Customers are merged, so one counts once across campaigns |
 | POST | `/retail/catalog` | integration token | `{events: [{eventName, updatedAt?, data}]}`, 1–500: `seller_upserted` `{sellerId, name}`, `product_upserted` `{productId, sellerId?, name, category?, price?, isActive?}`, `product_removed` `{productId}` → 202 `{accepted}` |
 | POST | `/retail/campaigns` | integration token | `campaign_upserted` `{campaignId, sellerId, title, status, startTime?, endTime?, archived?, productIds}`, `campaign_removed` `{campaignId}` |
@@ -215,7 +215,7 @@ Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properti
 
   - the sender: a batch whose `User-Agent` is a bot's (crawlers, headless browsers, uptime checkers) is refused as `INVALID_TRAFFIC` and counted in `analytics.invalid_traffic_daily` (per day, tenant and reason). Generic HTTP clients aren't on the list, since mobile apps send them;
   - the format: a known `eventName`, campaign and product IDs as UUIDs or the retailer's own IDs (mapped as in the retail API), and a `properties.campaignId` on metric events;
-  - the timestamp: at most 5 days old, at most 5 minutes ahead;
+  - the timestamp: at most 2 days old, at most 5 minutes ahead;
   - the rate: 300 events per sender per minute, and a budget per tenant set by its account tier (free 60k, pro 600k, enterprise 6M events per minute), each per instance. A tenant over its budget gets `429 TENANT_RATE_LIMITED` with `Retry-After` for the whole batch, so one busy tenant can't crowd out the others. The tier comes from `TenantOnboarded` (`analytics.tenants`); a tenant without one counts as free. See [docs/platform-design.md](../docs/platform-design.md);
   - for metric events, an active, unarchived campaign of the sender's tenant (else `CAMPAIGN_NOT_ACTIVE`). The check reads `analytics.campaigns`, built from `retail.campaign-events.v1` and cached for 10 s.
 
@@ -233,14 +233,19 @@ Clients send plain `add_to_cart` events. There is no `click_to_basket` event and
 
 - **The rule:** Flink credits an `add_to_cart` of product P to the same user's **latest** `click` on P in the **7 days** before it.
 - **Across registration:** a click made as a visitor still counts after signing in, since the UUID stays the same.
-- **Order:** either event may arrive first, up to 5 days late.
+- **Order:** either event may arrive first, up to 2 days late.
 - **Candidates:** Flink writes every candidate click to `analytics.attributed_baskets`, and ClickHouse credits the latest one.
 
 Details are in flink/README.md.
 
 ### Sessions
 
-A user's events with no gap of 6 hours or more form a session, built by Flink into `analytics.sessions`. A session is written about 7 hours after its last event, so `/ad/:id/sessions` runs that far behind. See flink/README.md § Sessions.
+A user's interactions with no gap of 30 minutes or more form a session: Flink's event-time session window, keyed by (tenant, user), so one user's events meet on one task and its state holds only their open session (`flink/sql/pipelines/03_sessions.sql`). A shopper keeps their visitor UUID when they sign in, so browsing as a visitor and buying signed in is one session.
+
+- **When:** a session is written once the watermark (the newest event time seen, minus 10 minutes) passes its last event + 30 minutes, so about 40 minutes after it. `/ad/:id/sessions` runs that far behind the other metrics.
+- **Late events:** an event older than the watermark is left out of its session (Flink's `numLateRecordsDropped`, alert `LateRecordsDropped`) but still counted everywhere else. Only the session window uses event time: the attribution join drops nothing.
+- **What's counted:** per day of the session's start, store and campaign (`analytics.daily_campaign_sessions_aggregation`): sessions that saw or clicked the campaign, with web or mobile events, and **converted** ones, which added to the cart a product clicked in that campaign in the same session. Distinct session IDs (from tenant, user and start), so a session Flink writes again after a restart counts once.
+- **History:** the history backfill rebuilds sessions from the data lake with the same 30-minute rule, late events included.
 
 ### Where the metrics live
 
@@ -448,10 +453,10 @@ docker compose --profile monitoring up -d   # metrics: Prometheus, Grafana and a
 docker compose --profile logs up -d         # optional logs: Loki and Alloy
 ```
 
-Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's requests per second, 5xx rate and p99 latency (with ingestion and `/ad` against their targets), Node event-loop lag, the Flink job (uptime, restarts, failed checkpoints, records per second), Kafka consumer lag, the newest stored event, the hourly check, the newest backup, and impressions and clicks in the last hour per store. Configuration in `infra/monitoring/`:
+Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's requests per second, 5xx rate and p99 latency (with ingestion and `/ad` against their targets), Node event-loop lag, the Flink job (uptime, restarts, failed checkpoints, records per second, events too late for sessions), Kafka consumer lag, the newest stored event, the hourly check, the newest backup, and impressions and clicks in the last hour per store. Configuration in `infra/monitoring/`:
 
 - **Sources:** every service's `GET /metrics` (`packages/platform/src/metrics.ts`: one request histogram by method, route pattern and status, plus Node's process metrics); Flink's Prometheus reporter (`flink/config.yaml`, ports 9249 and 9250); ClickHouse's own metrics (`:9363`); the pipeline's health read from its tables (`:8123/pipeline-metrics`, a query in `infra/clickhouse/config/prometheus.xml`); `kafka-exporter` for lag.
-- **Alerts** (`alerts.yml`, listed at http://localhost:9090/alerts): a target down, ClickHouse consumers falling behind, the Flink job down or restarting, failing checkpoints, the hourly check failing or stale, no backup for 26 hours, a service answering over 5% 5xx, ingestion p99 over 500 ms and `/ad` p99 over 1 s, and ClickHouse's Kafka tables failing to read or commit (after an overload they can loop on the same messages; `docker compose restart clickhouse` makes them rejoin). No Alertmanager locally: route them to a pager on AWS. `BackupStale` fires until the first nightly backup has run.
+- **Alerts** (`alerts.yml`, listed at http://localhost:9090/alerts): a target down, ClickHouse consumers falling behind, the Flink job down or restarting, failing checkpoints, late events left out of sessions, the hourly check failing or stale, no backup for 26 hours, a service answering over 5% 5xx, ingestion p99 over 500 ms and `/ad` p99 over 1 s, and ClickHouse's Kafka tables failing to read or commit (after an overload they can loop on the same messages; `docker compose restart clickhouse` makes them rejoin). No Alertmanager locally: route them to a pager on AWS. `BackupStale` fires until the first nightly backup has run.
 - **Logs** (profile `logs`): Alloy ships every container's logs to Loki (kept 7 days, `infra/monitoring/{loki.yml,alloy.alloy}`), labelled by `service` and pino's `level` (50 = error). In Grafana: the dashboard's **Logs** row (empty without the profile), or **Explore → Loki**, e.g. `{service="ingestion-service"} | json | tenantId = "…"`.
 - `/metrics` is served on each service's own port, so the gateway's is public on `:8080`. In production, block `/metrics` at the ingress (the gateway chart's ingress passes every path), and let Prometheus scrape the pods inside the cluster.
 - The per-store metric has one series per store with events in the last hour; at many thousands of stores, chart it from ClickHouse instead.
@@ -485,6 +490,7 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's re
 | Shared retail topics and sellers | 1\. ClickHouse: `migrations/004_sellers_and_event_types.sql`, then `01_tables.sql` and `03_kafka.sql` (commands at the top of 004). 2. The archive's new columns: `docker compose exec airflow sh -c 'cd /opt/airflow/jobs && /opt/jobs/bin/python -c "from pyiceberg.catalog import load_catalog; from export_archive import iceberg_table; c = load_catalog(\"archive\"); [iceberg_table(c, \"archive\", t) for t in (\"events\", \"attributed_baskets\", \"sessions\")]"'`. 3. `docker compose up -d --build` (the services' migrations give existing products the first-party seller). 4. Reset Flink's checkpoint (`flink/README.md`): the join's rows changed. 5. Send existing data through the retail API: `docker compose exec product-service node retailer-sim/services/product-service/src/cli.ts republish`, then `docker compose exec campaign-service node retailer-sim/services/campaign-service/src/cli.ts republish` (gives each older campaign its products' seller) |
 | Old per-event topics, 14 days after the above | Delete the `analytics.*.v1` topics, rebuild flink-streaming (its source no longer reads them) and reset its checkpoint: a checkpoint that still lists a deleted topic's partitions keeps the job restarting (`Timeout … before the position for partition … could be determined`) |
 | Retailers integrate through the public API | 1\. ClickHouse: `docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery < infra/clickhouse/migrations/005_campaign_titles.sql` (campaign titles, for `GET /ad/campaigns`). 2. `docker compose up -d --build`: auth-service's migration deletes the `standard-user` accounts (shoppers are the retailer's now) and their sign-ins. 3. The simulated retailer: `pnpm keys` in `../retailer-sim` (its own token and secrets keys), then `docker compose up -d --build` there; it has its own Postgres. Tenants onboarded before have no API key at the retailer, so connect stores again on the storefront's Stores page |
+| User sessions | 1\. ClickHouse: `docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery < infra/clickhouse/migrations/009_sessions.sql`. 2. `docker compose up -d --build ingestion-service insights-service airflow` (ingestion-service creates `serving.sessions.v1`). 3. `docker compose up -d --build flink-streaming`: the session window changes the job graph, so reset its checkpoint with `KAFKA_STARTUP_MODE=group-offsets` (`flink/README.md`, "Resetting the checkpoint"). 4. Once settled, backfill past days' sessions: `history_backfill` with `--table daily_campaign_sessions_aggregation` |
 | ClickHouse waits for `archive-storage` | Nothing: a ClickHouse started before its cold volume's storage left the tiered tables unloaded; compose now orders them. If it happens, `docker compose restart clickhouse` |
 
 ## Deleting a tenant

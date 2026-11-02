@@ -60,12 +60,13 @@ ARROW = pa.schema([*[pa.field(f"payload_{name}", pa.string()) for name in FIELDS
                    pa.field("_kafka_metadata_timestamp", pa.timestamp("us", tz="UTC")), pa.field("_kafka_metadata_offset", pa.int64())])
 
 
-def event(name: str, at: dt.datetime, *, campaign=None, product=None, user=None, tenant=TENANT, store=STORE, user_type="visitor", event_id=None) -> dict:
+def event(name: str, at: dt.datetime, *, campaign=None, product=None, user=None, tenant=TENANT, store=STORE, user_type="visitor", client="web",
+          event_id=None) -> dict:
     """An interaction as the lake holds it, arriving a minute after it happened."""
     return {
         "payload_eventId": event_id or str(uuid.uuid4()), "payload_eventName": name, "payload_tenantId": tenant, "payload_storeId": store,
         "payload_campaignId": campaign, "payload_productId": product, "payload_userId": user or str(uuid.uuid4()),
-        "payload_userType": user_type, "payload_clientType": "web",
+        "payload_userType": user_type, "payload_clientType": client,
         "payload_timestamp": at.isoformat().replace("+00:00", "Z"), "payload_receivedAt": at.isoformat().replace("+00:00", "Z"),
         "_kafka_metadata_timestamp": at + dt.timedelta(minutes=1), "_kafka_metadata_offset": 0,
     }
@@ -203,6 +204,35 @@ def test_limits_to_tenants_and_rolls_back(lake, ch):
     assert any(name.startswith("previous_") for name in job.tables_in(client, scratch))
     with pytest.raises(ValueError, match="rolled back already"):
         job.rollback(client, database=database, scratch=scratch)
+
+
+def test_recomputes_sessions_that_began_on_the_day(lake, ch):
+    client, database, scratch = ch
+    promo, product, carol, dave, erin = (str(uuid.uuid4()) for _ in range(5))
+    at = lambda hour, minute=0: dt.datetime.combine(DAY, dt.time(hour, minute), dt.UTC)  # noqa: E731
+    lake([
+        # Carol: one session that clicked the promo and added its product to the cart...
+        event("impression", at(9), campaign=promo, product=product, user=carol),
+        event("click", at(9, 10), campaign=promo, product=product, user=carol),
+        event("add_to_cart", at(9, 20), product=product, user=carol),
+        # ...and, 70 minutes later, another that only saw it.
+        event("impression", at(10, 30), campaign=promo, product=product, user=carol),
+        # Dave's session began the day before (20 minutes apart): not one of the day's.
+        event("impression", at(0) - dt.timedelta(minutes=10), campaign=promo, user=dave),
+        event("click", at(0, 10), campaign=promo, product=product, user=dave),
+        # Erin, on the mobile app.
+        event("impression", at(15), campaign=promo, user=erin, client="mobile"),
+    ])
+
+    rows = job.backfill(client, SOURCE, DAY, DAY, [], ["daily_campaign_sessions_aggregation"], database=database, scratch=scratch, today=TODAY)
+
+    assert rows["daily_campaign_sessions_aggregation"] > 0
+    sessions = client.query(
+        f"SELECT uniqCombined64Merge(total_sessions), uniqCombined64Merge(total_web_sessions), uniqCombined64Merge(total_mobile_sessions),"
+        f" uniqCombined64Merge(total_converted_sessions) FROM {database}.daily_campaign_sessions_aggregation"
+        " WHERE tenant_id = {tenant:UUID} AND store_id = {store:UUID} AND campaign_id = {promo:UUID} AND day = {day:Date}",
+        parameters={"tenant": TENANT, "store": STORE, "promo": promo, "day": DAY}).result_rows[0]
+    assert sessions == (3, 2, 1, 1)
 
 
 def test_refuses_days_the_lake_lacks_or_live_events_can_change(lake, ch):

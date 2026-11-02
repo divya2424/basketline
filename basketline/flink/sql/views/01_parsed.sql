@@ -14,5 +14,8 @@ SELECT
   JSON_VALUE(`value`, '$.payload.userType')   AS user_type,
   JSON_VALUE(`value`, '$.payload.clientType') AS client_type,
   TRY_CAST(REPLACE(REPLACE(JSON_VALUE(`value`, '$.payload.timestamp'), 'T', ' '), 'Z', '') AS TIMESTAMP(3)) AS event_time,
-  TRY_CAST(REPLACE(REPLACE(JSON_VALUE(`value`, '$.payload.receivedAt'), 'T', ' '), 'Z', '') AS TIMESTAMP(3)) AS received_at
+  TRY_CAST(REPLACE(REPLACE(JSON_VALUE(`value`, '$.payload.receivedAt'), 'T', ' '), 'Z', '') AS TIMESTAMP(3)) AS received_at,
+  -- The same time as event_time, as the source's time attribute: only the
+  -- session window uses it, since a regular join can't take a time attribute.
+  rowtime
 FROM kafka_events;

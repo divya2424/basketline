@@ -468,6 +468,38 @@
       "description": "Impressions and clicks stored in the last hour, per tenant and store (the 20 busiest). From analytics.events."
     },
     {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Late events left out of sessions",
+      "description": "Events older than the watermark (10 minutes), left out of the session window; still counted in every other metric.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(flink_taskmanager_job_task_operator_numLateRecordsDropped[1h]))",
+          "legendFormat": "per hour"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
       "id": 12,
       "type": "timeseries",
       "title": "Hourly check",
@@ -476,9 +508,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 21,
-        "w": 24,
+        "w": 12,
         "h": 7
       },
       "targets": [

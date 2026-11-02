@@ -13,7 +13,8 @@ SELECT
   CASE WHEN user_type IN ('visitor', 'registered') THEN user_type ELSE 'visitor' END AS user_type,
   CASE WHEN client_type IN ('web', 'mobile') THEN client_type ELSE 'web' END AS client_type,
   event_time,
-  COALESCE(received_at, event_time) AS received_at
+  COALESCE(received_at, event_time) AS received_at,
+  rowtime
 FROM parsed
 WHERE REGEXP(event_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
   AND REGEXP(tenant_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')

@@ -360,6 +360,16 @@ async function insertAttributed(rows: AttributedBasket[]) {
   })
 }
 
+/** A user session as the Flink job writes it, with one campaign seen in no store (so the daily sessions view gets a row). */
+async function insertSession({ tenant_id = TENANT, user_id = randomUUID() }: { tenant_id?: string; user_id?: string }) {
+  await clickhouse.insert({
+    table: 'sessions',
+    format: 'JSONEachRow',
+    clickhouse_settings: { date_time_input_format: 'best_effort' },
+    values: [{ tenant_id, user_id, user_type: 'visitor', session_start: ago(HOUR), session_end: ago(HOUR / 2), events: 2, web: true, mobile: false,
+               campaigns: [`${NO_STORE}:${randomUUID()}`], clicked: [], added: [] }],
+  })
+}
 
 describe('a deleted tenant (TenantDeleted)', () => {
   it("deletes all of its analytics, keeps other tenants', and records it so Kafka replays can't bring it back", async () => {
@@ -371,10 +381,12 @@ describe('a deleted tenant (TenantDeleted)', () => {
       { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID() },
     ])
     await insertAttributed([{ click_event_id: randomUUID(), campaign_id: campaignId, tenant_id: gone }])
+    await insertSession({ tenant_id: gone })
+    await insertSession({})
 
     const count = async (table: string, tenant: string) =>
       Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM ${table} WHERE tenant_id = {t:UUID}`, query_params: { t: tenant }, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
-    const tables = ['events', 'attributed_baskets', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation']
+    const tables = ['events', 'attributed_baskets', 'sessions', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation', 'daily_campaign_sessions_aggregation']
     for (const table of tables) expect(await count(table, gone), table).toBeGreaterThan(0)
     const othersBefore = await Promise.all(tables.map((table) => count(table, TENANT)))
 
@@ -456,14 +468,19 @@ describe("a store's own IDs, its reference data and the event types", () => {
   it("erases a shopper's staged rows on user_deleted, and records it", async () => {
     const [gone, kept] = [randomUUID(), randomUUID()]
     await insert([{ event_name: 'impression', user_id: gone }, { event_name: 'impression', user_id: kept }])
+    await insertSession({ user_id: gone })
+    await insertSession({ user_id: kept })
     const now = new Date().toISOString()
     await handleIdentityEvent(clickhouse, {
       eventId: randomUUID(), eventType: 'AnalyticsEventRecorded', eventVersion: 1, occurredAt: now, producer: 'ingestion-service', aggregateId: gone, aggregateVersion: 1,
       payload: { eventName: 'user_deleted', tenantId: TENANT, userId: gone, receivedAt: now },
     })
-    const count = async (userId: string) => Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM events WHERE user_id = '${userId}'`, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
+    const count = async (userId: string, table = 'events') =>
+      Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM ${table} WHERE user_id = '${userId}'`, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
     expect(await count(gone)).toBe(0)
     expect(await count(kept)).toBe(1)
+    expect(await count(gone, 'sessions')).toBe(0)
+    expect(await count(kept, 'sessions')).toBe(1)
     const deleted = await (await clickhouse.query({ query: `SELECT toString(user_id) AS u FROM deleted_users WHERE user_id = '${gone}'`, format: 'JSONEachRow' })).json()
     expect(deleted).toEqual([{ u: gone }])
   })

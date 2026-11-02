@@ -15,7 +15,7 @@ Basketline is a multi-tenant ads analytics platform for online retailers (tenant
 
 Every retailer (tenant) is kept apart: users, sellers, products, campaigns, events and metrics.
 
-![The Basketline campaign dashboard](frontend/docs/dashboard.png)
+![The Basketline campaign dashboard](basketline/dashboard/docs/dashboard.png)
 
 ```
  retailer site (SDK) ──► gateway :8080 ──► ingestion-service ──► Kafka: retail.interactions.v1, retail.identity-events.v1
@@ -30,7 +30,9 @@ Every retailer (tenant) is kept apart: users, sellers, products, campaigns, even
  Prometheus + Grafana: services (RED), Kafka lag, Flink, ClickHouse, pipeline health
 ```
 
-auth-, product- and campaign-service stand in for a retailer's own systems, so the integration can be shown end to end. The product is the analytics path: ingestion-service (data in), Kafka, Flink, ClickHouse, insights-service (the `/ad` API), Iceberg and Airflow.
+The repo has two folders:
+- **[`basketline/`](basketline/README.md): the product.** The analytics path: ingestion-service (data in), Kafka, Flink, ClickHouse, insights-service (the `/ad` API), Iceberg and Airflow; with the gateway, auth-service and the dashboard.
+- **[`retailer-sim/`](retailer-sim/README.md): a simulated retailer**, so the integration can be shown end to end: product- and campaign-service (its catalog and campaigns, sent to Basketline's retail API) and its storefront (tracking shoppers with the SDK).
 
 **Design documents:**
 - [Platform architecture](docs/platform-architecture.svg): where the platform starts (ingestion) and what the simulated retailer owns.
@@ -62,7 +64,7 @@ auth-, product- and campaign-service stand in for a retailer's own systems, so t
 | Every raw event | Iceberg on S3 | Forever (cheapest tier) |
 | ClickHouse backups | S3 | 35 days |
 
-**Real time vs accuracy:** the dashboard is live (under a minute); totals are corrected by an hourly recount from raw events (duplicates from retries or replays removed), and closed months can be recomputed from the archive. Event counts are exact; unique customers are sketches, within about 1%. Details in [backend/README.md § Where the metrics live](backend/README.md#where-the-metrics-live).
+**Real time vs accuracy:** the dashboard is live (under a minute); totals are corrected by an hourly recount from raw events (duplicates from retries or replays removed), and closed months can be recomputed from the archive. Event counts are exact; unique customers are sketches, within about 1%. Details in [basketline/README.md § Where the metrics live](basketline/README.md#where-the-metrics-live).
 
 ## Quick start
 
@@ -74,31 +76,35 @@ echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' >> ~/.npmrc
 
 export NODE_AUTH_TOKEN=<GitHub token with read:packages>
 
-# Backend: everything in "Local URLs" below
-cd backend
-pnpm install
-pnpm keys                 # JWT signing keys → backend/keys/ (git-ignored)
+pnpm install              # once, at the repo root: one workspace for both folders
+
+# The platform: everything in "Local URLs" below
+cd basketline
+pnpm keys                 # JWT signing keys → basketline/keys/ (git-ignored)
 docker compose up -d --build
 
-# Frontend
-cd ../frontend
-pnpm install
-cp .env.example .env         # points at the gateway, http://localhost:8080/api/v1
-pnpm dev
+# The simulated retailer's services, on the platform's network
+cd ../retailer-sim
+docker compose up -d --build
+
+# The two web apps, each in its own terminal from the repo root
+(cd basketline/dashboard && cp .env.example .env && pnpm dev)     # http://localhost:5173
+(cd retailer-sim/storefront && cp .env.example .env && pnpm dev)  # http://localhost:5174
 ```
 
 Without a GitHub token, `pnpm install` and the image builds fail on the two packages above (`401 Unauthorized`): create a classic token with only `read:packages`.
 
-1. Open http://localhost:5173 and onboard a tenant. It gets an `onboarding` campaign manager and a `seller01` seller manager (password `test`), sample sellers, products and campaigns.
-2. Click **Analytics** on its row to see the dashboard, or **Open store** to shop.
+1. Open the dashboard, http://localhost:5173, and onboard a tenant. It gets an `onboarding` campaign manager and a `seller01` seller manager (password `test`), sample sellers, products and campaigns.
+2. Click **Analytics** on its row to see the dashboard, or **Open store** to shop in the storefront (http://localhost:5174).
 
-To create tenants and users from the command line, see [backend/README.md § Run it](backend/README.md#run-it).
+To create tenants and users from the command line, see [basketline/README.md § Run it](basketline/README.md#run-it).
 
 ## Local URLs
 
 | What | URL | Sign-in |
 |---|---|---|
-| **Storefront and dashboard** | http://localhost:5173 | Onboard a tenant, or sign in from its row |
+| **Dashboard** (Basketline) | http://localhost:5173 | Onboard a tenant, or sign in from its row |
+| **Storefront** (simulated retailer) | http://localhost:5174 | Opened from a tenant's row; visitors need no sign-in |
 | **API gateway** | http://localhost:8080/api/v1 | Tokens from `/auth/login` or `/auth/visitor` |
 | Gateway health | http://localhost:8080/health/ready | — |
 | **Flink** web UI | http://localhost:8081 | — |
@@ -110,18 +116,18 @@ To create tenants and users from the command line, see [backend/README.md § Run
 | **Grafana** (`docker compose --profile monitoring up -d`) | http://localhost:3000 (dashboard "Pipeline") | Viewing: none; editing `admin` / `basketline_dev` |
 | **Prometheus** (same profile) | http://localhost:9090 · alerts http://localhost:9090/alerts | — |
 
-The auth, product, campaign and analytics services (ports 4001–4004) are reached only through the gateway. See [backend/README.md § Services and URLs](backend/README.md#services-and-urls) for each service and its health probe. These are development credentials, for local use only.
+The services (auth 4001, product 4002, campaign 4003, ingestion 4004, insights 4005) are reached only through the gateway. See [basketline/README.md § Services and URLs](basketline/README.md#services-and-urls) for each service and its health probe. These are development credentials, for local use only.
 
-**Docker.** Everything runs as the Compose project `basketline`:
+**Docker.** The platform runs as the Compose project `basketline`, the simulated retailer's services as `retailer-sim` (on the platform's network):
 
 | | Named |
 |---|---|
-| Containers | `basketline-<service>-1`, e.g. `basketline-gateway-1` |
-| Images | `basketline-<service>` |
+| Containers | `basketline-<service>-1`, e.g. `basketline-gateway-1`; `retailer-sim-product-service-1`, `retailer-sim-campaign-service-1` |
+| Images | `basketline-<service>`, `retailer-sim-<service>` |
 | Volumes | `basketline_pgdata`, `basketline_chdata`, `basketline_flink-checkpoints`, `basketline_archive-data` |
 
 ```bash
-cd backend
+cd basketline              # or retailer-sim, for its two services
 docker compose ps                      # every container and its health
 docker compose logs -f gateway         # one service's logs
 docker compose down                    # stop (volumes kept); add -v to delete the data too
@@ -131,21 +137,27 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 
 | Folder | What it is | Docs |
 |---|---|---|
-| [`frontend/`](frontend/) | The storefront, tenant onboarding and the campaign dashboard (React 19, Vite) | [frontend/README.md](frontend/README.md) |
-| [`backend/`](backend/) | The gateway and four services, Kafka contracts, Postgres and ClickHouse schemas | [backend/README.md](backend/README.md) |
-| [`backend/flink/`](backend/flink/) | The Flink SQL job: validation, click→basket attribution, sessions | [flink/README.md](backend/flink/README.md) |
-| [`backend/airflow/`](backend/airflow/) | Nightly sessions export, archive maintenance, ClickHouse backups, tenant and shopper purges, and the Spark history backfill | [airflow/README.md](backend/airflow/README.md) |
-| [`backend/infra/monitoring/`](backend/infra/monitoring/) | Prometheus scrape config and alerts, the Grafana "Pipeline" dashboard | [backend/README.md § Monitoring](backend/README.md#monitoring) |
-| [`backend/loadtest/`](backend/loadtest/) | The k6 load test for the analytics path | [loadtest/README.md](backend/loadtest/README.md) |
-| [`backend/deploy/helm/`](backend/deploy/helm/) | Kubernetes: a Helm chart per service, helmfile | [helm/README.md](backend/deploy/helm/README.md) |
+| [`basketline/`](basketline/) | **The product:** the gateway and four services, Kafka contracts, Postgres and ClickHouse schemas | [basketline/README.md](basketline/README.md) |
+| [`basketline/dashboard/`](basketline/dashboard/) | Tenant onboarding and the campaign dashboard (React 19, Vite) | [dashboard/README.md](basketline/dashboard/README.md) |
+| [`basketline/flink/`](basketline/flink/) | The Flink SQL job: validation, click→basket attribution, sessions | [flink/README.md](basketline/flink/README.md) |
+| [`basketline/airflow/`](basketline/airflow/) | Nightly sessions export, archive maintenance, ClickHouse backups, tenant and shopper purges, and the Spark history backfill | [airflow/README.md](basketline/airflow/README.md) |
+| [`basketline/infra/monitoring/`](basketline/infra/monitoring/) | Prometheus scrape config and alerts, the Grafana "Pipeline" dashboard, Loki and Alloy | [basketline/README.md § Monitoring](basketline/README.md#monitoring) |
+| [`basketline/loadtest/`](basketline/loadtest/) | The k6 load test for the analytics path | [loadtest/README.md](basketline/loadtest/README.md) |
+| [`basketline/deploy/helm/`](basketline/deploy/helm/) | Kubernetes: a Helm chart per service, helmfile | [helm/README.md](basketline/deploy/helm/README.md) |
+| [`retailer-sim/`](retailer-sim/) | **The simulated retailer:** product- and campaign-service, their Compose file and Helm charts | [retailer-sim/README.md](retailer-sim/README.md) |
+| [`retailer-sim/storefront/`](retailer-sim/storefront/) | The retailer's web shop, tracking with the Basketline SDK (React 19, Vite) | [storefront/README.md](retailer-sim/storefront/README.md) |
+
+The root holds the one pnpm workspace (`pnpm-workspace.yaml`, the lockfile and the backend's shared dependencies) and the `Dockerfile` that builds every Node service.
 
 ## Tests
 
 | Command | Covers | Needs |
 |---|---|---|
-| `cd frontend && pnpm test` | The frontend | Nothing |
-| `cd backend && pnpm verify` | Typecheck, architecture check, unit and integration tests | postgres, kafka, clickhouse |
-| `cd backend && pnpm test:e2e` | The full flow through the gateway, with real Kafka | The whole stack |
-| `cd backend && pnpm test:flink` | Click→basket attribution through Kafka → Flink → ClickHouse | The whole stack |
-| `cd backend && pnpm test:airflow` | The Iceberg export job | The stack, and [uv](https://docs.astral.sh/uv/) |
-| `cd backend && pnpm test:backfill` | The history backfill (Spark local mode) | The stack, with a rebuilt `airflow` image |
+| `cd basketline/dashboard && pnpm test` | The dashboard | Nothing |
+| `cd retailer-sim/storefront && pnpm test` | The storefront | Nothing |
+| `cd basketline && pnpm verify` | Typecheck, architecture check (both folders), unit and integration tests | postgres, kafka, clickhouse |
+| `cd retailer-sim && pnpm verify` | The simulated retailer's services | postgres, kafka |
+| `cd basketline && pnpm test:e2e` | The full flow through the gateway, with real Kafka | The whole stack |
+| `cd basketline && pnpm test:flink` | Click→basket attribution through Kafka → Flink → ClickHouse | The whole stack |
+| `cd basketline && pnpm test:airflow` | The Iceberg export job | The stack, and [uv](https://docs.astral.sh/uv/) |
+| `cd basketline && pnpm test:backfill` | The history backfill (Spark local mode) | The stack, with a rebuilt `airflow` image |

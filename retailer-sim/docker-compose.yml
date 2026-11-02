@@ -1,0 +1,58 @@
+# The simulated retailer: its product and campaign services, standing in for a
+# retailer's own systems. Start the platform first (../basketline), then:
+#   docker compose up -d --build
+# They join the platform's network, for its Postgres, Kafka and gateway; the
+# gateway reaches them there by name. The storefront (storefront/) runs with
+# `pnpm dev` on http://localhost:5174.
+name: retailer-sim
+
+x-service-env: &service-env
+  NODE_ENV: production
+  KAFKA_BROKERS: kafka:19092
+  JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
+  LOG_LEVEL: info
+
+services:
+  product-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: retailer-sim/services/product-service }, secrets: [npm_token] }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4002
+      DATABASE_URL: postgres://product_svc:product_svc_dev@postgres:5432/product_db
+      # As every tenant's backend, they send products and campaigns to Basketline's
+      # reference API through the gateway, with integration tokens from auth-service.
+      BASKETLINE_API_URL: http://gateway:8080
+      AUTH_INTERNAL_URL: http://auth-service:4001
+      INTERNAL_INTEGRATION_SECRET: basketline_internal_dev
+    volumes: ["../basketline/keys:/run/keys:ro"]
+
+  campaign-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: retailer-sim/services/campaign-service }, secrets: [npm_token] }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4003
+      DATABASE_URL: postgres://campaign_svc:campaign_svc_dev@postgres:5432/campaign_db
+      # As every tenant's backend, they send products and campaigns to Basketline's
+      # reference API through the gateway, with integration tokens from auth-service.
+      BASKETLINE_API_URL: http://gateway:8080
+      AUTH_INTERNAL_URL: http://auth-service:4001
+      INTERNAL_INTEGRATION_SECRET: basketline_internal_dev
+    volumes: ["../basketline/keys:/run/keys:ro"]
+
+networks:
+  default:
+    name: basketline_default
+    external: true
+
+secrets:
+  # Read access to GitHub Packages, used only while building images (../basketline/docker-compose.yml).
+  npm_token:
+    environment: NODE_AUTH_TOKEN

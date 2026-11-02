@@ -1,0 +1,23 @@
+{
+  "name": "basketline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --exclude test/e2e.kafka.test.ts --exclude test/flink.kafka.test.ts",
+    "test:e2e": "vitest run test/e2e.kafka.test.ts",
+    "test:flink": "vitest run test/flink.kafka.test.ts",
+    "test:airflow": "uv run --with-requirements airflow/requirements.txt --with pytest==8.4.2 pytest -q airflow/tests --ignore airflow/tests/test_history_backfill.py",
+    "test:backfill": "docker compose exec -T airflow sh -c '/opt/jobs/bin/pip install -q pytest==8.4.2 && cd /opt/airflow && /opt/jobs/bin/python -m pytest -q -p no:cacheprovider tests/test_history_backfill.py'",
+    "check:architecture": "node scripts/check-architecture.ts",
+    "keys": "node scripts/generate-keys.ts",
+    "verify": "pnpm lint && pnpm typecheck && pnpm check:architecture && pnpm test",
+    "db:generate": "pnpm --filter './services/*' --if-present db:generate",
+    "seed": "node scripts/seed.ts",
+    "lint": "oxlint"
+  },
+  "devDependencies": {
+    "@basketline/contracts": "workspace:*",
+    "@basketline/platform": "workspace:*"
+  }
+}

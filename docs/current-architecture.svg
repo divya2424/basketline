@@ -94,5 +94,5 @@
 
   <text x="60" y="1020" class="small">Identity note: end-user identifiers are tenant-scoped; the retailer integration supplies catalog/campaign reference state. Operational Postgres databases are per service.</text>
   <text x="60" y="1050" class="small">Scale note: this diagram shows the current single-node local Compose stack. Kafka, Flink, ClickHouse, Postgres, and object storage are not shown as production HA clusters.</text>
-  <text x="60" y="1100" class="small">Source of truth for the diagram: backend/docker-compose.yml, backend/README.md, backend/flink/sql, backend/infra/clickhouse.</text>
+  <text x="60" y="1100" class="small">Source of truth for the diagram: basketline/docker-compose.yml, basketline/README.md, basketline/flink/sql, basketline/infra/clickhouse.</text>
 </svg>

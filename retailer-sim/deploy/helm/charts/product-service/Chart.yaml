@@ -1,0 +1,10 @@
+apiVersion: v2
+name: product-service
+description: The simulated retailer's product-service. The product catalogue.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: basketline-lib
+    version: 0.1.0
+    repository: file://../../../../../basketline/deploy/helm/charts/basketline-lib

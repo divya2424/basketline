@@ -57,6 +57,13 @@ export interface MetricCount {
 export const READ_LIMITS = { max_execution_time: 10, max_threads: 4, max_memory_usage: String(2 * 1024 ** 3) }
 
 /**
+ * The settings of a read for one tenant: the limits, and the tenant, which the
+ * reader user's row policy (infra/clickhouse/04_access.sql) matches every row
+ * against, so the database returns no other tenant's rows whatever the query.
+ */
+export const tenantRead = (tenantId: string) => ({ ...READ_LIMITS, SQL_tenant_id: tenantId })
+
+/**
  * A metric over the days in the scope, in one query per table: event counts
  * summed (from daily_campaign_aggregation, corrected nightly), customers'
  * sketches merged (from daily_campaign_customers_aggregation, so a customer
@@ -76,7 +83,7 @@ export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignIds
                   AND day >= {from:Date} AND day < {to:Date}`,
         query_params: { tenantId, campaignIds, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
         // One tenant's long range can't hold every core or run for long: other tenants' reads share them.
-        clickhouse_settings: READ_LIMITS,
+        clickhouse_settings: tenantRead(tenantId),
         format: 'JSONEachRow',
       })
       const [row = {}] = await result.json<Record<string, string | number | null>>()

@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@divya2424/basketline-kafka": "^0.1.0"
+    "@divya2424/basketline-kafka": "^0.1.2"
   }
 }

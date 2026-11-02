@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@basketline/contracts": "workspace:*",
-    "@divya2424/basketline-kafka": "^0.1.0",
+    "@divya2424/basketline-kafka": "^0.1.2",
     "drizzle-orm": "^0.45.4"
   }
 }

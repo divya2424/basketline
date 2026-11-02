@@ -28,6 +28,9 @@ let visitor: string
 let visitorId: string
 let database: string
 let admin: ClickHouse
+/** The tenant-scoped reader (infra/clickhouse/04_access.sql) the /ad reads use, on this test database. */
+let readClickhouse: ClickHouse
+let readerUser: string
 let clickhouse: ClickHouse
 let bus: MemoryEventBus
 let app: ReturnType<typeof buildAnalyticsApp>
@@ -42,6 +45,18 @@ async function createTestClickHouse() {
     .replace(/--.*$/gm, '')
     .replaceAll(/\banalytics\b/g, database)
   for (const statement of schema.split(';').map((s) => s.trim()).filter(Boolean)) await admin.command({ query: statement })
+  // The real access file, with a reader user of this run's own.
+  readerUser = `reader_${database}`
+  const access = readFileSync(path.join(import.meta.dirname, '../../../infra/clickhouse/04_access.sql'), 'utf8')
+    .replace(/--.*$/gm, '')
+    .replaceAll(/\banalytics\b/g, database)
+    .replaceAll('basketline_reader_dev', 'reader_test_password')
+    .replaceAll(/\bbasketline_reader\b/g, readerUser)
+  for (const statement of access.split(';').map((s) => s.trim()).filter(Boolean)) await admin.command({ query: statement })
+  const readerUrl = new URL(CLICKHOUSE)
+  readerUrl.username = readerUser
+  readerUrl.password = 'reader_test_password'
+  readClickhouse = createClickHouse(`${readerUrl.toString().replace(/\/$/, '')}/${database}`)
   return createClickHouse(`${CLICKHOUSE}/${database}`)
 }
 
@@ -53,11 +68,16 @@ beforeAll(async () => {
   visitorId = visitorToken.sub
   clickhouse = await createTestClickHouse()
   bus = createMemoryEventBus(logger)
-  app = buildAnalyticsApp({ bus, clickhouse, logger, publicKey: keys.publicKey })
+  app = buildAnalyticsApp({ bus, clickhouse, readClickhouse, logger, publicKey: keys.publicKey })
 })
 
 afterAll(async () => {
   await clickhouse.close()
+  await readClickhouse.close()
+  // Row policies outlive their database, so they go one by one.
+  const policies = await (await admin.query({ query: 'SELECT short_name, table FROM system.row_policies WHERE database = {db:String}', query_params: { db: database }, format: 'JSONEachRow' })).json<{ short_name: string; table: string }>()
+  for (const { short_name, table } of policies) await admin.command({ query: `DROP ROW POLICY IF EXISTS ${short_name} ON ${database}.${table}` })
+  await admin.command({ query: `DROP USER IF EXISTS ${readerUser}` })
   await admin.command({ query: `DROP DATABASE IF EXISTS ${database}` })
   await admin.close()
 })
@@ -856,16 +876,33 @@ describe('a deleted tenant (TenantDeleted)', () => {
 
 describe('/ad query limits', () => {
   it("bounds every query's time, threads and memory, so one tenant's long range can't hold every core", async () => {
-    const query = vi.spyOn(clickhouse, 'query')
+    const query = vi.spyOn(readClickhouse, 'query')
     try {
       const res = await request(app).get(`/api/v1/ad/${randomUUID()}/clicks`).set('Authorization', reader)
       expect(res.status).toBe(200)
       const settings = query.mock.calls.map(([params]) => params.clickhouse_settings)
       expect(settings.length).toBeGreaterThan(0)
-      for (const s of settings) expect(s).toEqual({ max_execution_time: 10, max_threads: 4, max_memory_usage: String(2 * 1024 ** 3) })
+      for (const s of settings) expect(s).toEqual({ max_execution_time: 10, max_threads: 4, max_memory_usage: String(2 * 1024 ** 3), SQL_tenant_id: TENANT })
     } finally {
       query.mockRestore()
     }
+  })
+})
+
+describe("ClickHouse's tenant isolation (the reader user's row policy)", () => {
+  it('returns only the named tenant\'s rows, even to a query without a tenant filter, and nothing without a tenant', async () => {
+    const campaignId = randomUUID()
+    await insert([
+      { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID() },
+      { campaign_id: campaignId, event_name: 'impression', user_id: randomUUID(), tenant_id: OTHER_TENANT },
+    ])
+    const tenantsSeen = async (settings: Record<string, string>) =>
+      (await (await readClickhouse.query({ query: `SELECT DISTINCT toString(tenant_id) AS t FROM events WHERE campaign_id = {c:UUID}`, query_params: { c: campaignId }, clickhouse_settings: settings, format: 'JSONEachRow' })).json<{ t: string }>()).map((row) => row.t)
+    expect(await tenantsSeen({ SQL_tenant_id: TENANT })).toEqual([TENANT])
+    expect(await tenantsSeen({ SQL_tenant_id: OTHER_TENANT })).toEqual([OTHER_TENANT])
+    expect(await tenantsSeen({})).toEqual([])
+    // The reader can't write.
+    await expect(readClickhouse.command({ query: `INSERT INTO tenants VALUES (generateUUIDv4(), 'enterprise', 1)` })).rejects.toThrow(/Not enough privileges/)
   })
 })
 

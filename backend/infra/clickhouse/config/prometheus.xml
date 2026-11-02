@@ -3,8 +3,9 @@
   - :9363/metrics: ClickHouse's own metrics, events and asynchronous metrics.
   - :8123/pipeline-metrics: the pipeline's health, read from its tables in the
     Prometheus text format: the newest stored event's age, the hourly check, the
-    newest backup's age, invalid traffic today, and events in the last hour per
-    seller. Asks for a ClickHouse user (Prometheus sends basic auth).
+    newest backup's age, invalid traffic today, events in the last hour per
+    seller, and errors of the Kafka engine tables (e.g. offsets it can't commit,
+    which leave it re-reading the same messages). Asks for a ClickHouse user (Prometheus sends basic auth).
 -->
 <clickhouse>
     <prometheus>
@@ -46,6 +47,11 @@
                                'Events refused today as invalid traffic, per tenant and reason', 'gauge',
                                map('tenant', toString(tenant_id), 'reason', toString(reason))
                         FROM analytics.invalid_traffic_daily WHERE day = today() GROUP BY tenant_id, reason
+                        UNION ALL
+                        SELECT 'basketline_clickhouse_kafka_errors_10m',
+                               toFloat64(arrayCount(t -> t > now() - INTERVAL 10 MINUTE, exceptions.time)),
+                               'Kafka engine errors in the last 10 minutes, per queue table', 'gauge', map('table', table)
+                        FROM system.kafka_consumers WHERE database = 'analytics'
                         UNION ALL
                         SELECT 'basketline_seller_events_last_hour', toFloat64(count()),
                                'Events stored in the last hour, per seller', 'gauge',

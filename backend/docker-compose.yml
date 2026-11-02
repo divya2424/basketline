@@ -62,7 +62,7 @@ services:
     ulimits: { nofile: { soft: 262144, hard: 262144 } }
     volumes:
       # Tables, then materialized views, then the Kafka tables for the Flink job's
-      # serving topics: the files run in name order, on a new volume only.
+      # serving topics, then the tenant-scoped reader: the files run in name order, on a new volume only.
       - ./infra/clickhouse:/docker-entrypoint-initdb.d:ro
       - ./infra/clickhouse/config/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
       - ./infra/clickhouse/config/backup_log.xml:/etc/clickhouse-server/config.d/backup_log.xml:ro
@@ -139,10 +139,16 @@ services:
       PORT: 4004
       # No Postgres: events go to Kafka, metrics are read from ClickHouse.
       CLICKHOUSE_URL: http://basketline:basketline_dev@clickhouse:8123/analytics
+      # /ad reads: the reader user, which sees only the token's tenant (infra/clickhouse/04_access.sql).
+      CLICKHOUSE_READER_URL: http://basketline_reader:basketline_reader_dev@clickhouse:8123/analytics
+      # Each tenant's ingestion budget per minute, by tier (ingestion.service.ts).
+      TENANT_EVENTS_PER_MINUTE_FREE: ${TENANT_EVENTS_PER_MINUTE_FREE:-60000}
+      TENANT_EVENTS_PER_MINUTE_PRO: ${TENANT_EVENTS_PER_MINUTE_PRO:-600000}
+      TENANT_EVENTS_PER_MINUTE_ENTERPRISE: ${TENANT_EVENTS_PER_MINUTE_ENTERPRISE:-6000000}
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { clickhouse: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
-  # Reads every analytics.<eventName>.v1 topic, credits basket additions to clicks,
+  # Reads the retail.interactions.v1 and retail.identity-events.v1 topics, credits basket additions to clicks,
   # and writes both to the serving topics ClickHouse loads (infra/clickhouse/03_kafka.sql).
   flink-streaming:
     build: { context: ./flink }
@@ -266,6 +272,24 @@ services:
     command: [--kafka.server=kafka:19092]
     depends_on: { kafka: { condition: service_healthy } }
 
+  # Central logs: Alloy reads every container's logs and sends them to Loki.
+  loki:
+    image: grafana/loki:3.5.0
+    profiles: [monitoring]
+    command: [-config.file=/etc/loki/loki.yml]
+    volumes:
+      - ./infra/monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.8.3
+    profiles: [monitoring]
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy/data]
+    volumes:
+      - ./infra/monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+
   grafana:
     image: grafana/grafana:12.1.1
     profiles: [monitoring]
@@ -280,10 +304,11 @@ services:
     volumes:
       - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    depends_on: [prometheus]
+    depends_on: [prometheus, loki]
 
 volumes:
   prometheus-data:
+  loki-data:
   pgdata:
   chdata:
   flink-checkpoints:

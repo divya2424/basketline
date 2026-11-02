@@ -23,6 +23,8 @@ import { createReferenceService } from './services/reference.service.ts'
 export interface AnalyticsAppDeps {
   bus: EventBus
   clickhouse: ClickHouse
+  /** The /ad reads' client: ClickHouse's tenant-scoped reader user (04_access.sql). Default: clickhouse. */
+  readClickhouse?: ClickHouse
   logger: Logger
   publicKey: CryptoKey
   /** Events one sender may send per minute (default MAX_EVENTS_PER_SENDER_PER_MINUTE). */
@@ -39,6 +41,7 @@ export interface AnalyticsAppDeps {
 export function buildAnalyticsApp({
   bus,
   clickhouse,
+  readClickhouse = clickhouse,
   logger,
   publicKey,
   maxEventsPerMinute,
@@ -50,7 +53,7 @@ export function buildAnalyticsApp({
   const app = createBaseApp({ name: 'analytics-service', logger, health })
 
   const ingestion = createIngestionController(createIngestionService({ bus, clickhouse, logger, maxEventsPerMinute, tenantEventsPerMinute }))
-  const metrics = createMetricsController(createMetricsService({ clickhouse, cacheMs: metricsCacheMs }))
+  const metrics = createMetricsController(createMetricsService({ clickhouse: readClickhouse, cacheMs: metricsCacheMs }))
 
   app.use('/api/v1/analytics', analyticsRoutes(ingestion, authenticateEvents(publicKey)))
   app.use('/api/v1/ad', adMetricRoutes(metrics, authenticate(publicKey)))

@@ -15,6 +15,14 @@ groups:
         for: 10m
         annotations: { summary: "{{ $labels.consumergroup }} is {{ $value }} messages behind and falling further" }
 
+      # A Kafka engine table that can't commit its offsets re-reads the same messages
+      # forever and stores nothing new; its lag only grows once new events arrive.
+      # Seen after an overload: restarting ClickHouse makes it rejoin its group.
+      - alert: ClickHouseKafkaErrors
+        expr: basketline_clickhouse_kafka_errors_10m > 0
+        for: 5m
+        annotations: { summary: "ClickHouse's {{ $labels.table }} keeps failing to read or commit from Kafka; if it persists, restart ClickHouse" }
+
       - alert: FlinkJobDown
         expr: absent(flink_jobmanager_job_uptime) or max(flink_jobmanager_job_uptime) == 0
         for: 2m

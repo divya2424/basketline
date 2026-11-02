@@ -46,6 +46,10 @@ const heartbeat = setInterval(() => {
   bus.publish([{ topic: WATERMARK_HEARTBEAT_TOPIC, key: 'heartbeat', envelope }]).catch((error) => logger.warn({ err: error }, 'watermark heartbeat failed'))
 }, 30_000)
 const clickhouse = createClickHouse(requireEnv('CLICKHOUSE_URL'))
+// /ad reads as the tenant-scoped reader user (infra/clickhouse/04_access.sql), when configured.
+const readerUrl = process.env.CLICKHOUSE_READER_URL
+const readClickhouse = readerUrl ? createClickHouse(readerUrl) : clickhouse
+if (!readerUrl) logger.warn('CLICKHOUSE_READER_URL is not set: /ad reads use the main ClickHouse user, without row policies')
 // The retailer's reference data (this service's copies of sellers, products and
 // campaigns), erasures (user_deleted), and deleted tenants. Applying an event twice
 // is harmless.
@@ -67,7 +71,7 @@ const tenantEventsPerMinute = {
   pro: intEnv('TENANT_EVENTS_PER_MINUTE_PRO', TENANT_EVENTS_PER_MINUTE.pro!),
   enterprise: intEnv('TENANT_EVENTS_PER_MINUTE_ENTERPRISE', TENANT_EVENTS_PER_MINUTE.enterprise!),
 }
-const app = buildAnalyticsApp({ bus, clickhouse, logger, health, metricsCacheMs, tenantEventsPerMinute, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+const app = buildAnalyticsApp({ bus, clickhouse, readClickhouse, logger, health, metricsCacheMs, tenantEventsPerMinute, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4004)
 const server = app.listen(port, () => {
   health.markStarted()
@@ -82,5 +86,6 @@ handleShutdown({
     { name: 'watermark heartbeat timer', close: () => clearInterval(heartbeat) },
     { name: 'kafka', close: () => bus.close() },
     { name: 'clickhouse', close: () => clickhouse.close() },
+    ...(readClickhouse === clickhouse ? [] : [{ name: 'clickhouse reader', close: () => readClickhouse.close() }]),
   ],
 })

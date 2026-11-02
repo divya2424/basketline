@@ -240,8 +240,8 @@ importers:
   packages/contracts:
     dependencies:
       '@divya2424/basketline-kafka':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.1.2
+        version: 0.1.2
 
   packages/platform:
     dependencies:
@@ -249,8 +249,8 @@ importers:
         specifier: workspace:*
         version: link:../contracts
       '@divya2424/basketline-kafka':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.1.2
+        version: 0.1.2
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
@@ -321,8 +321,8 @@ packages:
     resolution: {integrity: sha512-1kjKJ4uuD4J9JlRU4CpwEGfecstvtoGreBorhh7CxgB7r7PL54DCLD6gajKZhLCri84XlyD3CUxEm6rYkKC+dA==}
     engines: {node: '>=20'}
 
-  '@divya2424/basketline-kafka@0.1.0':
-    resolution: {integrity: sha512-JdiItfQo5Rj2N7yaKJN9S5VXSQLGMW5Ae0yJr/Z+kJ+JE28v/IzY3Jkfm6miivlndIS5yrcQWx2zfr06QiL2bA==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-kafka/0.1.0/927373498ca199c1f5fde3edf0b3e1afda93a0b8}
+  '@divya2424/basketline-kafka@0.1.2':
+    resolution: {integrity: sha512-TX69xUcGHzuS4C0GRcjvdSWXiQ5X1o+m5RGg2Q+LzwEggAumbc4nGqPLlCbLNH7y3PPihUh5cFqbqZy114zitw==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-kafka/0.1.2/d7f6ff5b9ab2f7d56deb632024b7ab66a39090fd}
     engines: {node: '>=24'}
 
   '@drizzle-team/brocli@0.10.2':
@@ -2359,7 +2359,7 @@ snapshots:
 
   '@clickhouse/client@1.24.1': {}
 
-  '@divya2424/basketline-kafka@0.1.0':
+  '@divya2424/basketline-kafka@0.1.2':
     dependencies:
       '@platformatic/kafka': 2.14.0
     transitivePeerDependencies:

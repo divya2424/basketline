@@ -3,6 +3,7 @@ import { AppError, isOneOf, serviceUnavailable, type BusMessage, type EventBus, 
 import type { ClickHouse } from '../clickhouse.ts'
 import { findActiveCampaigns } from '../repositories/campaign.repository.ts'
 import { findProductSellers } from '../repositories/product.repository.ts'
+import { findTenantTier } from '../repositories/tenant.repository.ts'
 import type { IncomingEvent } from '../validators/analytics.validator.ts'
 
 const MINUTE = 60_000
@@ -17,6 +18,15 @@ export const MAX_EVENT_AGE_MS = 5 * 24 * HOUR
 export const MAX_CLOCK_SKEW_MS = 5 * MINUTE
 /** Events one user or visitor may send per minute (per instance); more is not a shopper. */
 export const MAX_EVENTS_PER_SENDER_PER_MINUTE = 300
+/**
+ * Events one tenant may send per minute, by its account tier (per instance, like
+ * the sender limit: across N instances a tenant gets N times this). A busy
+ * tenant is held to its share, so the others' events keep flowing. A tenant
+ * whose tier isn't known yet counts as free.
+ */
+export const TENANT_EVENTS_PER_MINUTE: Record<string, number> = { free: 60_000, pro: 600_000, enterprise: 6_000_000 }
+/** How long a tenant's tier is cached. */
+const TIER_CACHE_MS = 60_000
 /** How long a campaign's active flag is cached; a new campaign counts within about this long. */
 const CAMPAIGN_CACHE_MS = 10_000
 /**
@@ -44,15 +54,19 @@ export function createIngestionService({
   clickhouse,
   logger,
   maxEventsPerMinute = MAX_EVENTS_PER_SENDER_PER_MINUTE,
+  tenantEventsPerMinute = TENANT_EVENTS_PER_MINUTE,
 }: {
   bus: EventBus
   clickhouse: ClickHouse
   logger: Logger
   maxEventsPerMinute?: number
+  tenantEventsPerMinute?: Record<string, number>
 }) {
   const campaignCache = new Map<string, { active: boolean; until: number }>()
   const sellerCache = new Map<string, { sellerId: string | null; until: number }>()
+  const tierCache = new Map<string, { tier: string; until: number }>()
   let window = { start: 0, counts: new Map<string, number>() }
+  let tenantWindow = { start: 0, counts: new Map<string, number>() }
 
   /** Fixed one-minute windows per sender. */
   function assertWithinLimit(sender: EventSender, count: number, now: number) {
@@ -63,6 +77,27 @@ export function createIngestionService({
       throw new AppError(429, 'TOO_MANY_EVENTS', `At most ${maxEventsPerMinute} events per minute`, undefined, retryAfter)
     }
     window.counts.set(sender.userId, used + count)
+  }
+
+  async function tierOf(tenantId: string, now: number): Promise<string> {
+    const cached = tierCache.get(tenantId)
+    if (cached && cached.until > now) return cached.tier
+    const tier = (await findTenantTier(clickhouse, tenantId)) ?? 'free'
+    if (tierCache.size >= CAMPAIGN_CACHE_MAX) tierCache.clear()
+    tierCache.set(tenantId, { tier, until: now + TIER_CACHE_MS })
+    return tier
+  }
+
+  /** Fixed one-minute windows per tenant, sized by its tier. */
+  async function assertTenantWithinBudget(tenantId: string, count: number, now: number) {
+    const budget = tenantEventsPerMinute[await tierOf(tenantId, now)] ?? tenantEventsPerMinute.free!
+    if (now - tenantWindow.start >= MINUTE) tenantWindow = { start: now, counts: new Map() }
+    const used = tenantWindow.counts.get(tenantId) ?? 0
+    if (used + count > budget) {
+      const retryAfter = Math.ceil((tenantWindow.start + MINUTE - now) / 1000)
+      throw new AppError(429, 'TENANT_RATE_LIMITED', `This store may send at most ${budget} events per minute`, undefined, retryAfter)
+    }
+    tenantWindow.counts.set(tenantId, used + count)
   }
 
   /** Cached per tenant and campaign: a campaign is active only for its own tenant. */
@@ -163,6 +198,7 @@ export function createIngestionService({
         return events.map((event) => ({ eventId: event.eventId, status: 'rejected', reason: 'INVALID_TRAFFIC' }))
       }
       assertWithinLimit(sender, events.length, now)
+      await assertTenantWithinBudget(sender.tenantId, events.length, now)
       const receivedAt = new Date(now).toISOString()
       const isMetric = (event: IncomingEvent) => isOneOf(event.eventName, METRIC_EVENT_NAMES)
       const active = await activeCampaigns(

@@ -10,6 +10,7 @@ export * from './inbox.ts'
 export * from './jwt.ts'
 export * from './lifecycle.ts'
 export * from './logger.ts'
+export * from './metrics.ts'
 // What the services use of the event bus, which is its own package.
 export { createKafkaEventBus, createMemoryEventBus, ensureTopics, type BusMessage, type EventBus, type MemoryEventBus } from '@divya2424/basketline-kafka'
 export * from './pagination.ts'

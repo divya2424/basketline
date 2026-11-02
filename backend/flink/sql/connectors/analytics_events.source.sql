@@ -16,10 +16,9 @@ CREATE TABLE kafka_events (
   WATERMARK FOR rowtime AS rowtime - INTERVAL '1' HOUR
 ) WITH (
   'connector' = 'kafka',
-  -- analytics.<eventName>.v1: the per-event topics before retail.interactions.v1;
-  -- a replay still reads them until they expire (14 days after the switch), then
-  -- this branch goes (backend/README.md, upgrades).
-  'topic-pattern' = '^__TOPIC_PREFIX__(retail\.interactions\.v1|retail\.identity-events\.v1|retail\.heartbeat\.v1|analytics\..+\.v1)$',
+  -- A deleted topic that a checkpoint still lists stops the source (it can't
+  -- find the partition's position): reset the checkpoint after deleting one.
+  'topic-pattern' = '^__TOPIC_PREFIX__(retail\.interactions\.v1|retail\.identity-events\.v1|retail\.heartbeat\.v1)$',
   'properties.bootstrap.servers' = '__KAFKA_BOOTSTRAP_SERVERS__',
   'properties.group.id' = '__KAFKA_GROUP_ID__',
   -- Topics created after the job started are picked up within this interval.

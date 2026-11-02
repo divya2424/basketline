@@ -13,7 +13,24 @@ const TENANT_TABLES = [
   'products',
   'invalid_traffic_daily',
   'deleted_users',
+  'tenants',
 ]
+
+/** The tenant's account tier (TenantOnboarded), which sizes its ingestion budget. */
+export async function upsertTenantTier(clickhouse: ClickHouse, tenant: { tenantId: string; tier: string }, version: number) {
+  await clickhouse.insert({ table: 'tenants', values: [{ tenant_id: tenant.tenantId, tier: tenant.tier, version }], format: 'JSONEachRow' })
+}
+
+/** The tenant's tier, or null before its TenantOnboarded arrived. */
+export async function findTenantTier(clickhouse: ClickHouse, tenantId: string): Promise<string | null> {
+  const result = await clickhouse.query({
+    query: 'SELECT argMax(tier, version) AS tier FROM tenants WHERE tenant_id = {tenantId:UUID} GROUP BY tenant_id',
+    query_params: { tenantId },
+    format: 'JSONEachRow',
+  })
+  const [row] = await result.json<{ tier: string }>()
+  return row?.tier ?? null
+}
 
 /**
  * Records the tenant as deleted first (so the Kafka queue views drop any of its

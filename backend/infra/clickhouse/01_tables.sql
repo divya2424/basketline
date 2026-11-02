@@ -163,6 +163,17 @@ CREATE TABLE IF NOT EXISTS analytics.deleted_users
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, user_id);
 
+-- Each tenant's account tier (TenantOnboarded, from analytics-service), which sizes
+-- its ingestion budget (ingestion.service.ts). A tenant without a row counts as free.
+CREATE TABLE IF NOT EXISTS analytics.tenants
+(
+    tenant_id UUID,
+    tier      LowCardinality(String),
+    version   UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY tenant_id;
+
 -- Deleted tenants (TenantDeleted, from analytics-service): their rows are
 -- deleted from every table here, and 03_kafka.sql's queue views drop any that a
 -- replay from Kafka would bring back (Kafka keeps raw events up to 14 days).

@@ -22,8 +22,9 @@ function metricOf(req: Request<{ metric: string }>): MetricName {
 export function createMetricsController(service: MetricsService) {
   async function respond(req: Request, res: Response, campaignIds: string[], metric: MetricName, scope: object) {
     const { count, customers, columns, period } = await service.count(req.auth!.tid, campaignIds, metric, queryString(req.query.from), queryString(req.query.to))
-    // count is the total and customers the people behind it; the columns split
-    // them (e.g. total_web_clicks, customers_registered_clicks).
+    // customers is what the API's spec asks for ("the number of customers who
+    // clicked"); count is the event total, for rates such as CTR. The columns
+    // split both (e.g. total_web_clicks, customers_registered_clicks).
     res.json({ ...scope, metric, count, ...(customers === undefined ? {} : { customers }), ...columns, period: { from: period.from.toISOString(), to: period.to.toISOString() } })
   }
 

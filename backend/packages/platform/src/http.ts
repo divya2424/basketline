@@ -11,6 +11,7 @@ import type { Role } from '@basketline/contracts'
 import { isUuid } from './checks.ts'
 import { AppError, badRequest, forbidden, unauthorized } from './errors.ts'
 import { healthRoutes, type Health } from './health.ts'
+import { createHttpMetrics } from './metrics.ts'
 import { verifyAccessToken, verifyEventToken, verifyIntegrationToken, type AccessTokenClaims, type EventSender, type IntegrationTokenClaims } from './jwt.ts'
 import type { Logger } from './logger.ts'
 
@@ -28,8 +29,8 @@ declare global {
 }
 
 /**
- * express() with request IDs, request logging, health probes (see health.ts)
- * and, unless parseJson is false (the gateway streams bodies through), JSON body parsing.
+ * express() with request IDs, request logging, health probes (see health.ts),
+ * request metrics at GET /metrics (metrics.ts) and, unless parseJson is false (the gateway streams bodies through), JSON body parsing.
  */
 export function createBaseApp({
   name,
@@ -57,7 +58,10 @@ export function createBaseApp({
       autoLogging: { ignore: (req) => req.url?.startsWith('/health') ?? false },
     }),
   )
+  const metrics = createHttpMetrics(name)
+  app.use(metrics.middleware)
   app.use(healthRoutes(name, health))
+  app.use(metrics.routes)
   if (parseJson) app.use(express.json({ limit: '100kb' }))
   return app
 }

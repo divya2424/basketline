@@ -80,6 +80,8 @@ services:
     build: { context: ., dockerfile: Dockerfile, args: { SERVICE: auth-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
     environment:
       <<: *service-env
       PORT: 4001
@@ -94,6 +96,8 @@ services:
     build: { context: ., dockerfile: Dockerfile, args: { SERVICE: product-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
     environment:
       <<: *service-env
       PORT: 4002
@@ -110,6 +114,8 @@ services:
     build: { context: ., dockerfile: Dockerfile, args: { SERVICE: campaign-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
     environment:
       <<: *service-env
       PORT: 4003
@@ -126,6 +132,8 @@ services:
     build: { context: ., dockerfile: Dockerfile, args: { SERVICE: analytics-service }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
     environment:
       <<: *service-env
       PORT: 4004
@@ -218,6 +226,8 @@ services:
     build: { context: ., dockerfile: Dockerfile, args: { SERVICE: gateway }, secrets: [npm_token] }
     # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
     stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
     environment:
       <<: *service-env
       PORT: 8080

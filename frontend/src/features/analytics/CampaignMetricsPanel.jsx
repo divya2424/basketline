@@ -1,13 +1,15 @@
 import { formatDuration } from '../../utils/format.js'
 import { METRICS, METRIC_LABELS } from './analyticsService.js'
 import { calculateClickToBasketRate, calculateCtr } from './metricMath.js'
-import { Customers, FunnelRate, MetricCard, ProgressStat, SplitBar } from './MetricCard.jsx'
+import { EventTotal, FunnelRate, MetricCard, ProgressStat, SplitBar } from './MetricCard.jsx'
 import { useCampaignMetrics } from './useCampaignMetrics.js'
 
+// The funnel cards count customers, as the API's spec defines these metrics; the
+// event totals are under them, and the rates between the cards are of events.
 const HINTS = {
-  impressions: 'Times the ad was seen',
-  clicks: 'Clicks on the ad',
-  clickToBasket: 'Added to cart within 7 days of clicking that product in the ad',
+  impressions: 'Customers who saw the ad',
+  clicks: 'Customers who clicked the ad',
+  clickToBasket: 'Customers who added a product to their cart within 7 days of clicking it in the ad',
   uniqueCustomers: 'People who saw or clicked the ad, each counted once',
   sessions: 'Visits that saw the ad; a visit ends after 6 hours without activity',
 }
@@ -54,18 +56,26 @@ export function CampaignMetricsPanel({ api, campaignId, campaignTitle, period })
   const { metrics, retry } = useCampaignMetrics(api, campaignId, period)
   const { clicks, impressions, clickToBasket, uniqueCustomers, sessions } = metrics
   const pendingCount = METRICS.filter((metric) => metrics[metric].status === 'loading').length
-  const card = (metric, children, tone) => (
-    <MetricCard label={METRIC_LABELS[metric]} hint={HINTS[metric]} state={metrics[metric]} onRetry={() => retry(metric)} tone={tone}>
+  const card = (metric, children, tone, value) => (
+    <MetricCard label={METRIC_LABELS[metric]} hint={HINTS[metric]} state={metrics[metric]} value={value} onRetry={() => retry(metric)} tone={tone}>
       {children}
     </MetricCard>
   )
-  const eventDetails = (state) => (
-    <>
-      <Customers value={state.customers} />
-      {platform(state, 'By platform')}
-      {userTypes(state)}
-    </>
-  )
+  // A funnel step: its customers first (the event count if a response has none), then its events.
+  const funnelCard = (metric, noun, tone) => {
+    const state = metrics[metric]
+    const hasCustomers = state.customers != null
+    return card(
+      metric,
+      <>
+        {hasCustomers ? <EventTotal value={state.value} noun={noun} /> : null}
+        {platform(state, 'Events by platform')}
+        {userTypes(state)}
+      </>,
+      tone,
+      hasCustomers ? state.customers : state.value,
+    )
+  }
 
   return (
     <div className="metrics-panel">
@@ -81,23 +91,23 @@ export function CampaignMetricsPanel({ api, campaignId, campaignTitle, period })
         </div>
       </div>
       <div className="funnel">
-        {card('impressions', eventDetails(impressions), 'step1')}
+        {funnelCard('impressions', 'impressions', 'step1')}
         <FunnelRate
           label="Click-through rate (CTR)"
           short="click-through"
-          formula="Clicks ÷ impressions × 100"
+          formula="Click events ÷ impression events × 100"
           value={calculateCtr(clicks.value, impressions.value)}
           loading={clicks.status === 'loading' || impressions.status === 'loading'}
         />
-        {card('clicks', eventDetails(clicks), 'step2')}
+        {funnelCard('clicks', 'clicks', 'step2')}
         <FunnelRate
           label="Click-to-basket rate"
           short="add to cart"
-          formula="Click-to-basket ÷ clicks × 100"
+          formula="Credited basket additions ÷ click events × 100"
           value={calculateClickToBasketRate(clickToBasket.value, clicks.value)}
           loading={clicks.status === 'loading' || clickToBasket.status === 'loading'}
         />
-        {card('clickToBasket', eventDetails(clickToBasket), 'step3')}
+        {funnelCard('clickToBasket', 'basket additions', 'step3')}
       </div>
 
       <div className="section-head">

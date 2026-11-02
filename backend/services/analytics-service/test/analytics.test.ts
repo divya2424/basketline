@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import request from 'supertest'
 import { decodeJwt } from 'jose'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { CATALOG_TOPIC, externalId, IDENTITY_TOPIC, INTERACTIONS_TOPIC } from '@basketline/contracts'
 import { createLogger, createMemoryEventBus, signIntegrationToken, signShopperToken, type EventBus, type MemoryEventBus } from '@basketline/platform'
 import { createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
@@ -297,6 +297,34 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(Number(over.headers['retry-after'])).toBeGreaterThan(0)
     // Other senders have their own allowance.
     expect((await send([{ eventName: 'home_view' }], visitor, capped)).status).toBe(200)
+  })
+
+  it("holds a busy tenant to its tier's budget, across its senders, while other tenants' events keep flowing", async () => {
+    const budgeted = buildAnalyticsApp({ bus, clickhouse, logger, publicKey: keys.publicKey, tenantEventsPerMinute: { free: 3, pro: 6, enterprise: 100 } })
+    const busy = randomUUID()
+    const pro = randomUUID()
+    // The tier comes with TenantOnboarded (auth.tenant.v1); a tenant without one counts as free.
+    await handleTenantEvent(clickhouse, {
+      eventId: randomUUID(),
+      eventType: 'TenantOnboarded',
+      eventVersion: 1,
+      occurredAt: new Date().toISOString(),
+      producer: 'auth-service',
+      aggregateId: pro,
+      aggregateVersion: 1,
+      payload: { tenantId: pro, name: 'Pro Store', tier: 'pro', onboardedBy: randomUUID(), seed: { productIds: [], sellers: [], campaigns: [] } },
+    })
+    const two = [{ eventName: 'home_view' }, { eventName: 'home_view' }] as const
+
+    expect((await send([...two], (await visitorTokenFor(keys, busy)).header, budgeted)).status).toBe(200)
+    // Another of the same tenant's visitors: the budget is the tenant's, not the sender's.
+    const over = await send([...two], (await visitorTokenFor(keys, busy)).header, budgeted)
+    expect(over.status).toBe(429)
+    expect(over.body.error.code).toBe('TENANT_RATE_LIMITED')
+    expect(Number(over.headers['retry-after'])).toBeGreaterThan(0)
+
+    expect((await send([{ eventName: 'home_view' }], (await visitorTokenFor(keys, OTHER_TENANT)).header, budgeted)).status).toBe(200)
+    expect((await send([...two, ...two], (await visitorTokenFor(keys, pro)).header, budgeted)).status).toBe(200)
   })
 
   it('rejects malformed batches, and events outside the time window without publishing them', async () => {
@@ -823,6 +851,21 @@ describe('a deleted tenant (TenantDeleted)', () => {
     expect(await Promise.all(tables.map((table) => count(table, TENANT)))).toEqual(othersBefore)
     const recorded = await (await clickhouse.query({ query: 'SELECT name, archive_purged_at FROM deleted_tenants FINAL WHERE tenant_id = {t:UUID}', query_params: { t: gone }, format: 'JSONEachRow' })).json()
     expect(recorded).toEqual([{ name: 'Gone Store', archive_purged_at: null }])
+  })
+})
+
+describe('/ad query limits', () => {
+  it("bounds every query's time, threads and memory, so one tenant's long range can't hold every core", async () => {
+    const query = vi.spyOn(clickhouse, 'query')
+    try {
+      const res = await request(app).get(`/api/v1/ad/${randomUUID()}/clicks`).set('Authorization', reader)
+      expect(res.status).toBe(200)
+      const settings = query.mock.calls.map(([params]) => params.clickhouse_settings)
+      expect(settings.length).toBeGreaterThan(0)
+      for (const s of settings) expect(s).toEqual({ max_execution_time: 10, max_threads: 4, max_memory_usage: String(2 * 1024 ** 3) })
+    } finally {
+      query.mockRestore()
+    }
   })
 })
 

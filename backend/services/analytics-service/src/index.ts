@@ -6,6 +6,7 @@ import { createClickHouse } from './clickhouse.ts'
 import { handleIdentityEvent } from './events/identity.consumer.ts'
 import { handleReferenceEvent } from './events/reference.consumer.ts'
 import { handleTenantEvent } from './events/tenant.consumer.ts'
+import { TENANT_EVENTS_PER_MINUTE } from './services/ingestion.service.ts'
 
 const logger = createLogger('analytics-service')
 const health = createHealth()
@@ -60,7 +61,13 @@ await bus.subscribe({
 
 // Dashboards refresh every 20 s; reusing a count for 15 s keeps their cost flat as viewers grow.
 const metricsCacheMs = intEnv('METRICS_CACHE_MS', 15_000)
-const app = buildAnalyticsApp({ bus, clickhouse, logger, health, metricsCacheMs, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+// Each tenant's ingestion budget per instance, by tier (ingestion.service.ts).
+const tenantEventsPerMinute = {
+  free: intEnv('TENANT_EVENTS_PER_MINUTE_FREE', TENANT_EVENTS_PER_MINUTE.free!),
+  pro: intEnv('TENANT_EVENTS_PER_MINUTE_PRO', TENANT_EVENTS_PER_MINUTE.pro!),
+  enterprise: intEnv('TENANT_EVENTS_PER_MINUTE_ENTERPRISE', TENANT_EVENTS_PER_MINUTE.enterprise!),
+}
+const app = buildAnalyticsApp({ bus, clickhouse, logger, health, metricsCacheMs, tenantEventsPerMinute, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4004)
 const server = app.listen(port, () => {
   health.markStarted()

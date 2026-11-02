@@ -2,11 +2,11 @@ import { Button } from '../../components/common/Button.jsx'
 import { formatCount, formatPercent } from '../../utils/format.js'
 
 /**
- * Count card for one API metric: a label with a short hint, the headline number,
- * and below it whatever the metric adds (children: customers, split bars, …),
- * with loading (skeleton), error and retry states.
+ * Count card for one API metric: a label with a short hint, the headline number
+ * (`value`, by default the metric's count), and below it whatever the metric adds
+ * (children: the event total, split bars, …), with loading (skeleton), error and retry states.
  */
-export function MetricCard({ label, hint, state, onRetry, children, tone = 'default' }) {
+export function MetricCard({ label, hint, state, value = state.value, onRetry, children, tone = 'default' }) {
   return (
     <article className={`metric-card metric-card--${tone} metric-card--${state.status}`} aria-busy={state.status === 'loading'}>
       <header className="metric-card__head">
@@ -31,7 +31,7 @@ export function MetricCard({ label, hint, state, onRetry, children, tone = 'defa
       ) : (
         <>
           <p className="metric-card__value" data-testid={`metric-${label}`}>
-            {formatCount(state.value)}
+            {formatCount(value)}
           </p>
           <div className="metric-card__body">{children}</div>
         </>
@@ -62,11 +62,11 @@ export function FunnelRate({ label, short, formula, value, loading }) {
   )
 }
 
-/** "1,240 customers", the people behind an event count. */
-export function Customers({ value }) {
+/** "1,240 clicks in total": the events behind a customer count. */
+export function EventTotal({ value, noun }) {
   return value == null ? null : (
     <p className="metric-card__customers">
-      <strong>{formatCount(value)}</strong> {value === 1 ? 'customer' : 'customers'}
+      <strong>{formatCount(value)}</strong> {noun} in total
     </p>
   )
 }

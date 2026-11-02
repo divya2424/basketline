@@ -27,6 +27,8 @@ export interface AnalyticsAppDeps {
   publicKey: CryptoKey
   /** Events one sender may send per minute (default MAX_EVENTS_PER_SENDER_PER_MINUTE). */
   maxEventsPerMinute?: number
+  /** Events one tenant may send per minute, by tier (default TENANT_EVENTS_PER_MINUTE). */
+  tenantEventsPerMinute?: Record<string, number>
   /** How long an /ad count is reused, in ms (default 0: every request queries ClickHouse). */
   metricsCacheMs?: number
   /** Probe state from index.ts; tests get one that's already started. */
@@ -34,11 +36,20 @@ export interface AnalyticsAppDeps {
 }
 
 /** Builds the Express app: services → controllers → routes. */
-export function buildAnalyticsApp({ bus, clickhouse, logger, publicKey, maxEventsPerMinute, metricsCacheMs, health = createHealth({ started: true }) }: AnalyticsAppDeps) {
+export function buildAnalyticsApp({
+  bus,
+  clickhouse,
+  logger,
+  publicKey,
+  maxEventsPerMinute,
+  tenantEventsPerMinute,
+  metricsCacheMs,
+  health = createHealth({ started: true }),
+}: AnalyticsAppDeps) {
   health.addCheck('clickhouse', () => pingClickHouse(clickhouse))
   const app = createBaseApp({ name: 'analytics-service', logger, health })
 
-  const ingestion = createIngestionController(createIngestionService({ bus, clickhouse, logger, maxEventsPerMinute }))
+  const ingestion = createIngestionController(createIngestionService({ bus, clickhouse, logger, maxEventsPerMinute, tenantEventsPerMinute }))
   const metrics = createMetricsController(createMetricsService({ clickhouse, cacheMs: metricsCacheMs }))
 
   app.use('/api/v1/analytics', analyticsRoutes(ingestion, authenticateEvents(publicKey)))

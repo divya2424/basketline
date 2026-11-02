@@ -20,6 +20,11 @@ scrape_configs:
     basic_auth: { username: basketline, password: basketline_dev }
     static_configs: [{ targets: ["clickhouse:8123"] }]
 
+  # The services' request metrics (RED) and Node process metrics (packages/platform/src/metrics.ts).
+  - job_name: services
+    static_configs:
+      - targets: ["gateway:8080", "auth-service:4001", "product-service:4002", "campaign-service:4003", "analytics-service:4004"]
+
   # Consumer group lag, per topic.
   - job_name: kafka
     static_configs: [{ targets: ["kafka-exporter:9308"] }]

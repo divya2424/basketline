@@ -164,7 +164,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 | Method | Path | Who | What |
 |---|---|---|---|
 | GET | `/products`, `/products/:id` | anyone | One tenant's catalog; `?category&includeInactive&limit&offset` |
-| GET | `/sellers` | anyone | The tenant's sellers: `{items: [{id, name}]}` |
+| GET | `/sellers` | anyone | The tenant's sellers: `{sellers: [{sellerId, name}]}` |
 | POST / PATCH | `/products`, `/products/:id` | campaign manager | `{sellerId, name, description, price, image?, category?}`; `sellerId` (one of the tenant's sellers) on create only, it never changes; price > 0, 2 decimals |
 | DELETE | `/products/:id` | campaign manager | Deactivates (never hard-deleted) |
 | GET | `/campaigns`, `/campaigns/:id` | anyone | One tenant's campaigns, with `productIds`; `?status&includeArchived&limit&offset` |
@@ -192,12 +192,14 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 - **Identity check on events:** the batch's tenant, user and user type must match its token (`registered` for an access token, `visitor` for a visitor token). Any difference, or a `tenant_id` header for another tenant, rejects the whole batch with `403 IDENTITY_MISMATCH`.
 - **Event errors:** `429 TOO_MANY_EVENTS` past 300 events per sender per minute; `503 EVENTS_NOT_DELIVERED` when Kafka is down.
+- **What answers the spec:** "the number of customers who clicked / viewed / added to cart after clicking" is **`customers`** on `/ad/:id/clicks`, `impressions` and `clickToBasket`; the dashboard shows it as the headline. `count` is the number of events (one customer can click many times), kept for rates such as CTR. `customers` is a `uniqCombined64` sketch: exact up to a few thousand, within about 1% above; `count` is exact.
 - **`/ad` columns:** `count` is the event total and `customers` the people behind it. The columns split them:
   - `total_web_clicks`, `total_mobile_clicks`;
   - `customers_clicks`, and its `_web_`, `_mobile_`, `_registered_` and `_visitor_` variants;
   - the same pattern for impressions and click-to-basket.
 - **`/ad` period:** the default is the last 30 days, at most 366, counted in whole UTC days: `from` rounds down to midnight and `to` up to the next one. The response's `period` shows the rounded bounds.
 - **`/ad` tenant:** counts cover the token's tenant only (a `tenant_id` header is ignored). An unknown campaign has `count: 0`.
+- **`/ad` limits:** each query is bounded to 10 s, 4 threads and 2 GB, so one tenant's long range can't hold ClickHouse's cores (daily-table reads take milliseconds).
 - **`/ad` for a seller manager:** another seller's campaign is 404 (its existence isn't revealed), another seller's totals 403.
 - **The retail API** is how a retailer's backend tells Basketline what exists: its sellers, their products and campaigns, and server-side identity. The SDK's server entry (`@divya2424/basketline-sdk/server`) wraps it. Each update is the record's full state; `updatedAt` (default now) orders them, so the newest wins and retries or reordering are safe. IDs may be the retailer's own (a SKU, a code: letters, digits, `._:/-`, up to 128) or UUIDs; the API maps an own ID to a stable UUIDv5 of (tenant, kind, ID), the same in `/analytics/events`. A product without a seller is the tenant's first-party seller's. A campaign whose products aren't known yet, or belong to another seller, is kept and flagged in `analytics.campaigns.issues`.
 
@@ -212,7 +214,7 @@ Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properti
   - the sender: a batch whose `User-Agent` is a bot's (crawlers, headless browsers, uptime checkers) is refused as `INVALID_TRAFFIC` and counted in `analytics.invalid_traffic_daily` (per day, tenant and reason). Generic HTTP clients aren't on the list, since mobile apps send them;
   - the format: a known `eventName`, campaign and product IDs as UUIDs or the retailer's own IDs (mapped as in the retail API), and a `properties.campaignId` on metric events;
   - the timestamp: at most 5 days old, at most 5 minutes ahead;
-  - the rate: 300 events per sender per minute, per instance;
+  - the rate: 300 events per sender per minute, and a budget per tenant set by its account tier (free 60k, pro 600k, enterprise 6M events per minute), each per instance. A tenant over its budget gets `429 TENANT_RATE_LIMITED` with `Retry-After` for the whole batch, so one busy tenant can't crowd out the others. The tier comes from `TenantOnboarded` (`analytics.tenants`); a tenant without one counts as free. See [docs/platform-design.md](../docs/platform-design.md);
   - for metric events, an active, unarchived campaign of the sender's tenant (else `CAMPAIGN_NOT_ACTIVE`). The check reads `analytics.campaigns`, built from `retail.campaign-events.v1` and cached for 10 s.
 - **What's added:** each event gets its `eventType` (`interaction` or `identity`, from its name) and the `sellerId` of its product, from the catalog copy (`analytics.products`, cached). An event without a product, or for one the catalog hasn't sent yet, has none; seller reports go through the campaign, which always has a seller.
 
@@ -244,6 +246,7 @@ A user's events with no gap of 6 hours or more form a session, built by Flink in
 | `analytics.daily_campaign_sessions_aggregation` | Sessions, converted sessions and average duration per day | `/ad/:id/sessions` |
 | `analytics.sellers`, `products`, `campaigns` | The retail API's reference data, the latest state per ID (`ReplacingMergeTree(version)`): each product's and campaign's seller, a campaign's status and `issues` | Ingestion (campaign check, seller stamping), seller-manager access, `/ad/sellers/…` |
 | `analytics.invalid_traffic_daily`, `deleted_users` | Refused bot traffic per day; erased shoppers | Monitoring; the Kafka queue views and the archive purge |
+| `analytics.tenants` | Each tenant's account tier, from `TenantOnboarded` | The per-tenant ingestion budget |
 
 - **Daily tables:** one row per UTC day (when the user acted, not when the event was stored), **kept forever**, partitioned by month, sorted by `(tenant_id, campaign_id, day)`. Any period is one small range read.
 - **Counting rules:**
@@ -297,7 +300,7 @@ Every event has the envelope `{eventId, eventType, eventVersion, occurredAt, pro
 
 - **Retention:** analytics-service sets it when it creates a topic. Flink keeps clicks for 13 days, so the interaction topics' 14 days let a replay rebuild all of it. Other topics keep Kafka's default of 7 days.
 - **Why shared topics:** every tenant's events of one domain share its topic (keyed and filtered by tenant). A domain gets a topic of its own only when its retention, access, throughput or processing differ: reference data is compacted, identity carries erasures, interactions are the volume. So adding retailers or event names adds no topics.
-- **The old `analytics.<eventName>.v1` topics** (one per event name, before the shared ones) are still read by Flink's source pattern, so a replay in the 14 days after the upgrade reaches them. Remove that branch and the topics after that (see [Upgrading](#upgrading-an-existing-setup)).
+- **The old `analytics.<eventName>.v1` topics** (one per event name, before the shared ones) are no longer read; delete them (see [Upgrading](#upgrading-an-existing-setup)).
 - **Consumers:**
   - the gateway records each `eventId` in `processed_events`, so a redelivery applies once;
   - campaign-service skips an event older than the version it holds;
@@ -331,6 +334,7 @@ Compose and the Helm charts use a 35 s grace period.
 | `DATABASE_URL` | all but analytics-service | The service's own database |
 | `CLICKHOUSE_URL` | analytics-service, airflow | e.g. `http://basketline:basketline_dev@clickhouse:8123/analytics` |
 | `METRICS_CACHE_MS` | analytics-service | How long an `/ad` count is reused (default 15000; 0 turns it off) |
+| `TENANT_EVENTS_PER_MINUTE_FREE`, `_PRO`, `_ENTERPRISE` | analytics-service | Each tenant's ingestion budget per instance, by tier (defaults 60000, 600000, 6000000). Across N instances a tenant gets N times this |
 | `KAFKA_BROKERS` | all | e.g. `kafka:19092` |
 | `KAFKA_TOPIC_PREFIX`, `KAFKA_REPLICATION` | all | Environment isolation; the replication factor of created topics (default 1) |
 | `JWT_PUBLIC_KEY_FILE` / `JWT_PRIVATE_KEY_FILE` | all / auth-service | Verify / sign tokens |
@@ -422,10 +426,11 @@ Everything after the backup comes back from Kafka. Days older than the replay ke
 docker compose --profile monitoring up -d   # Prometheus, Grafana and a Kafka lag exporter
 ```
 
-Grafana's **Pipeline** dashboard (http://localhost:3000) shows the Flink job (uptime, restarts, failed checkpoints, records per second, late events), Kafka consumer lag, the newest stored event, the hourly check, the newest backup, invalid traffic per tenant, and events in the last hour per seller. Configuration in `infra/monitoring/`:
+Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's requests per second, 5xx rate and p99 latency (with ingestion and `/ad` against their targets), Node event-loop lag, the Flink job (uptime, restarts, failed checkpoints, records per second, late events), Kafka consumer lag, the newest stored event, the hourly check, the newest backup, invalid traffic per tenant, and events in the last hour per seller. Configuration in `infra/monitoring/`:
 
-- **Sources:** Flink's Prometheus reporter (`flink/config.yaml`, ports 9249 and 9250); ClickHouse's own metrics (`:9363`); the pipeline's health read from its tables (`:8123/pipeline-metrics`, a query in `infra/clickhouse/config/prometheus.xml`); `kafka-exporter` for lag.
-- **Alerts** (`alerts.yml`, listed at http://localhost:9090/alerts): a target down, ClickHouse consumers falling behind, the Flink job down or restarting, failing checkpoints, late events dropped, the hourly check failing or stale, no backup for 26 hours, and an invalid-traffic spike. No Alertmanager locally: route them to a pager on AWS. `BackupStale` fires until the first nightly backup has run.
+- **Sources:** every service's `GET /metrics` (`packages/platform/src/metrics.ts`: one request histogram by method, route pattern and status, plus Node's process metrics); Flink's Prometheus reporter (`flink/config.yaml`, ports 9249 and 9250); ClickHouse's own metrics (`:9363`); the pipeline's health read from its tables (`:8123/pipeline-metrics`, a query in `infra/clickhouse/config/prometheus.xml`); `kafka-exporter` for lag.
+- **Alerts** (`alerts.yml`, listed at http://localhost:9090/alerts): a target down, ClickHouse consumers falling behind, the Flink job down or restarting, failing checkpoints, late events dropped, the hourly check failing or stale, no backup for 26 hours, an invalid-traffic spike, a service answering over 5% 5xx, ingestion p99 over 500 ms and `/ad` p99 over 1 s. No Alertmanager locally: route them to a pager on AWS. `BackupStale` fires until the first nightly backup has run.
+- `/metrics` is served on each service's own port, so the gateway's is public on `:8080`. In production, block `/metrics` at the ingress (the gateway chart's ingress passes every path), and let Prometheus scrape the pods inside the cluster.
 - The per-seller metric has one series per seller with events in the last hour; at many thousands of sellers, chart it from ClickHouse instead.
 
 ### Looking at the data
@@ -455,7 +460,7 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows the Flink job (up
 | `auth_db` → `identity_db` | `docker compose stop auth-service`, then `docker compose exec postgres psql -U postgres -c 'ALTER DATABASE auth_db RENAME TO identity_db' -c 'ALTER ROLE auth_svc RENAME TO identity_svc' -c "ALTER ROLE identity_svc PASSWORD 'identity_svc_dev'"`, then `docker compose up -d --build auth-service` |
 | Unused `analytics_db` | `docker compose exec postgres psql -U postgres -c 'DROP DATABASE analytics_db'` |
 | Shared retail topics and sellers | 1. ClickHouse: `migrations/004_sellers_and_event_types.sql`, then `01_tables.sql` and `03_kafka.sql` (commands at the top of 004). 2. The archive's new columns: `docker compose exec airflow sh -c 'cd /opt/airflow/jobs && /opt/jobs/bin/python -c "from pyiceberg.catalog import load_catalog; from export_archive import iceberg_table; c = load_catalog(\"archive\"); [iceberg_table(c, \"archive\", t) for t in (\"events\", \"attributed_baskets\", \"sessions\")]"'`. 3. `docker compose up -d --build` (the services' migrations give existing products the first-party seller). 4. Reset Flink's checkpoint (`flink/README.md`): the join's rows changed. 5. Send existing data through the retail API: `docker compose exec product-service node services/product-service/src/cli.ts republish`, then `docker compose exec campaign-service node services/campaign-service/src/cli.ts republish` (gives each older campaign its products' seller) |
-| Old per-event topics, 14 days after the above | Drop `\|analytics\..+\.v1` from `flink/sql/connectors/analytics_events.source.sql`, rebuild flink-streaming, then delete the `analytics.*.v1` topics |
+| Old per-event topics, 14 days after the above | Delete the `analytics.*.v1` topics, rebuild flink-streaming (its source no longer reads them) and reset its checkpoint: a checkpoint that still lists a deleted topic's partitions keeps the job restarting (`Timeout … before the position for partition … could be determined`) |
 | ClickHouse waits for `archive-storage` | Nothing: a ClickHouse started before its cold volume's storage left the tiered tables unloaded; compose now orders them. If it happens, `docker compose restart clickhouse` |
 
 ## Deleting a tenant

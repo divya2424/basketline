@@ -45,3 +45,22 @@ groups:
       - alert: InvalidTrafficSpike
         expr: sum by (tenant) (delta(basketline_invalid_traffic_today[1h])) > 1000
         annotations: { summary: "Tenant {{ $labels.tenant }}: {{ $value }} invalid-traffic events in the last hour" }
+
+  # The services' RED metrics. The targets match loadtest/README.md: ingestion p99 < 500 ms, reads p99 < 1 s.
+  - name: services
+    rules:
+      - alert: HighErrorRate
+        expr: sum by (service) (rate(http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+          / sum by (service) (rate(http_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        annotations: { summary: "{{ $labels.service }}: {{ $value | humanizePercentage }} of requests fail (5xx)" }
+
+      - alert: SlowIngestion
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="analytics-service", route="/api/v1/analytics/events"}[5m]))) > 0.5
+        for: 10m
+        annotations: { summary: "Event ingestion p99 is {{ $value | humanizeDuration }} (target 500 ms)" }
+
+      - alert: SlowAdReads
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="analytics-service", route=~"/api/v1/ad/.*"}[5m]))) > 1
+        for: 10m
+        annotations: { summary: "/ad p99 is {{ $value | humanizeDuration }} (target 1 s)" }

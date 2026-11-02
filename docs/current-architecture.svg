@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Basketline current project architecture</title>
+  <desc id="desc">Current local Compose architecture: frontend and retailer SDK through gateway and services, Kafka, Flink, ClickHouse, Iceberg on S3-compatible storage, Airflow, and monitoring.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    <style>
+      text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#172033}
+      .title{font-size:34px;font-weight:750}.sub{font-size:16px;fill:#475569}
+      .head{font-size:18px;font-weight:700}.body{font-size:14px;fill:#334155}.small{font-size:12px;fill:#475569}
+      .box{rx:14;stroke-width:2}.infra{fill:#f8fafc;stroke:#cbd5e1}.svc{fill:#eff6ff;stroke:#60a5fa}.kafka{fill:#fff7ed;stroke:#fb923c}.proc{fill:#f5f3ff;stroke:#a78bfa}.db{fill:#ecfdf5;stroke:#34d399}.archive{fill:#f0fdfa;stroke:#2dd4bf}.ops{fill:#fdf2f8;stroke:#f472b6}
+      .arrow{fill:none;stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}.bluearrow{fill:none;stroke:#2563eb;stroke-width:2.5;marker-end:url(#arrowBlue)}
+      .dashed{stroke-dasharray:7 6}
+    </style>
+  </defs>
+  <rect width="1800" height="1180" fill="#ffffff"/>
+  <text x="60" y="62" class="title">Basketline — current project architecture</text>
+  <text x="60" y="92" class="sub">Reflects the repository’s current local Docker Compose implementation (not a proposed production deployment).</text>
+
+  <!-- Entry points -->
+  <rect x="60" y="145" width="260" height="105" class="box infra"/>
+  <text x="85" y="180" class="head">Retailer storefront</text><text x="85" y="207" class="body">Basketline SDK / browser</text><text x="85" y="229" class="small">Events + dashboard requests</text>
+  <rect x="60" y="285" width="260" height="120" class="box infra"/>
+  <text x="85" y="322" class="head">Retailer backend</text><text x="85" y="350" class="body">Catalog, sellers, campaigns,</text><text x="85" y="372" class="body">server identity integration</text><text x="85" y="393" class="small">In repo: product + campaign services</text>
+
+  <!-- Gateway and services -->
+  <rect x="390" y="175" width="270" height="115" class="box svc"/>
+  <text x="420" y="211" class="head">Gateway :8080</text><text x="420" y="240" class="body">JWT / tenant authorization</text><text x="420" y="263" class="body">Rate limits · routes · CORS</text>
+  <rect x="740" y="135" width="270" height="120" class="box svc"/>
+  <text x="770" y="171" class="head">Auth service :4001</text><text x="770" y="200" class="body">Tenants, accounts, sessions,</text><text x="770" y="222" class="body">API keys and tokens</text><text x="770" y="243" class="small">Postgres: identity_db</text>
+  <rect x="740" y="285" width="270" height="120" class="box svc"/>
+  <text x="770" y="321" class="head">Product service :4002</text><text x="770" y="350" class="body">Retailer-side seller/catalog</text><text x="770" y="372" class="body">reference implementation</text><text x="770" y="393" class="small">Postgres: product_db</text>
+  <rect x="740" y="435" width="270" height="120" class="box svc"/>
+  <text x="770" y="471" class="head">Campaign service :4003</text><text x="770" y="500" class="body">Campaigns and product membership</text><text x="770" y="522" class="body">reference implementation</text><text x="770" y="543" class="small">Postgres: campaign_db</text>
+  <rect x="740" y="585" width="270" height="120" class="box svc"/>
+  <text x="770" y="621" class="head">Analytics service :4004</text><text x="770" y="650" class="body">Event validation / ingestion</text><text x="770" y="672" class="body">Reference sync · insights API</text><text x="770" y="693" class="small">No Postgres; queries ClickHouse</text>
+
+  <!-- Kafka -->
+  <rect x="1090" y="140" width="335" height="565" class="box kafka"/>
+  <text x="1120" y="178" class="head">Kafka :19092</text>
+  <text x="1120" y="214" class="body">Reference / identity topics</text>
+  <text x="1135" y="243" class="small">retail.catalog-events.v1 (compacted)</text>
+  <text x="1135" y="266" class="small">retail.campaign-events.v1 (compacted)</text>
+  <text x="1135" y="289" class="small">retail.identity-events.v1</text>
+  <text x="1135" y="312" class="small">auth.tenant.v1</text>
+  <text x="1120" y="357" class="body">Interaction event topics</text>
+  <text x="1135" y="386" class="small">retail.interactions.v1 (shared, all tenants)</text>
+  <text x="1135" y="409" class="small">analytics.&lt;eventName&gt;.v1 (old, read until it expires)</text>
+  <text x="1135" y="432" class="small">14-day retention; Flink pattern subscribes</text>
+  <text x="1120" y="477" class="body">Flink → ClickHouse serving topics</text>
+  <text x="1135" y="506" class="small">serving.events.v1</text>
+  <text x="1135" y="529" class="small">serving.attributed_baskets.v1</text>
+  <text x="1135" y="552" class="small">serving.sessions.v1</text>
+  <text x="1120" y="600" class="body">retail.heartbeat.v1</text>
+  <text x="1120" y="628" class="small">Watermark progress during idle periods</text>
+  <text x="1120" y="670" class="small">Serving topics retained 48 hours</text>
+
+  <!-- Flink and CH -->
+  <rect x="1480" y="175" width="260" height="205" class="box proc"/>
+  <text x="1510" y="213" class="head">Flink SQL :8081</text><text x="1510" y="244" class="body">Event-time processing</text><text x="1510" y="269" class="body">Click → basket attribution</text><text x="1510" y="294" class="body">Session windows</text><text x="1510" y="326" class="small">Also appends raw events and</text><text x="1510" y="347" class="small">attributed baskets to Iceberg</text>
+  <rect x="1480" y="455" width="260" height="250" class="box db"/>
+  <text x="1510" y="493" class="head">ClickHouse</text><text x="1510" y="524" class="body">Kafka engine → materialized views</text><text x="1510" y="550" class="body">Raw events · attributed baskets</text><text x="1510" y="576" class="body">Sessions · daily aggregates</text><text x="1510" y="602" class="body">Tenant / seller / product / campaign</text><text x="1510" y="640" class="small">Insights API reads counts and reports</text><text x="1510" y="665" class="small">Reference data is a reporting projection</text>
+
+  <!-- Archive and operations -->
+  <rect x="390" y="790" width="380" height="155" class="box archive"/>
+  <text x="420" y="830" class="head">Iceberg archive on S3-compatible storage</text><text x="420" y="862" class="body">Local: SeaweedFS :8333</text><text x="420" y="888" class="body">Tables: events · attributed baskets · sessions</text><text x="420" y="918" class="small">Iceberg catalog metadata in Postgres</text>
+  <rect x="840" y="790" width="340" height="155" class="box ops"/>
+  <text x="870" y="830" class="head">Airflow :8082</text><text x="870" y="862" class="body">Nightly session archive export</text><text x="870" y="888" class="body">Archive compaction · backfill · tenant purge</text><text x="870" y="918" class="small">Spark local batch job for historical backfills</text>
+  <rect x="1250" y="790" width="490" height="155" class="box infra"/>
+  <text x="1280" y="830" class="head">Observability (optional Compose profile)</text><text x="1280" y="862" class="body">Prometheus scrapes Kafka / Flink / ClickHouse metrics</text><text x="1280" y="888" class="body">Grafana dashboard + Prometheus alert rules</text><text x="1280" y="918" class="small">Application logs are emitted by services to container logs</text>
+
+  <!-- Main flows -->
+  <path d="M320 195 H390" class="arrow"/><text x="325" y="184" class="small">HTTP</text>
+  <path d="M320 337 H350 V247 H390" class="arrow"/><text x="326" y="326" class="small">HTTP</text>
+  <path d="M660 220 H705 V195 H740" class="arrow"/>
+  <path d="M660 230 H700 V345 H740" class="arrow"/>
+  <path d="M660 240 H690 V495 H740" class="arrow"/>
+  <path d="M660 252 H680 V645 H740" class="arrow"/>
+  <path d="M1010 345 H1050 V245 H1090" class="arrow"/><text x="1018" y="334" class="small">product events</text>
+  <path d="M1010 495 H1060 V267 H1090" class="arrow"/><text x="1018" y="484" class="small">campaign events</text>
+  <path d="M1010 645 H1040 V385 H1090" class="bluearrow"/><text x="1018" y="634" class="small">interaction events</text>
+  <path d="M1010 655 H1060 V300 H1090" class="arrow"/><text x="1018" y="675" class="small">identity events</text>
+  <path d="M1010 625 H1045 V490 H1090" class="arrow"/><text x="1018" y="615" class="small">publish reference updates</text>
+  <path d="M1090 520 H1070 V720 H1025 V680 H1010" class="arrow"/><text x="1028" y="742" class="small">consume reference topics → ClickHouse projection</text>
+  <path d="M1425 391 H1450 V278 H1480" class="bluearrow"/><text x="1434" y="382" class="small">consume event stream</text>
+  <path d="M1480 325 H1450 V505 H1425" class="arrow"/><text x="1432" y="450" class="small">serving outputs</text>
+  <path d="M1425 505 H1480" class="arrow"/>
+  <path d="M1480 680 H1460 V750 H1025 V680 H1010" class="arrow"/><text x="1190" y="744" class="small">Insights API reads ClickHouse</text>
+  <path d="M1480 300 H1448 V790 H580 V790" class="arrow"/><text x="1185" y="776" class="small">Flink checkpointed archive writes</text>
+  <path d="M1480 610 H1440 V865 H1180" class="arrow dashed"/><text x="1210" y="855" class="small">sessions export / repair</text>
+  <path d="M840 850 H770" class="arrow"/><text x="775" y="838" class="small">Airflow manages archive</text>
+  <path d="M1260 705 V765 H1495 V790" class="arrow dashed"/>
+  <path d="M1425 190 H1450 V155 H1470" class="arrow dashed"/>
+
+  <text x="60" y="1020" class="small">Identity note: end-user identifiers are tenant-scoped; the retailer integration supplies catalog/campaign reference state. Operational Postgres databases are per service.</text>
+  <text x="60" y="1050" class="small">Scale note: this diagram shows the current single-node local Compose stack. Kafka, Flink, ClickHouse, Postgres, and object storage are not shown as production HA clusters.</text>
+  <text x="60" y="1100" class="small">Source of truth for the diagram: backend/docker-compose.yml, backend/README.md, backend/flink/sql, backend/infra/clickhouse.</text>
+</svg>

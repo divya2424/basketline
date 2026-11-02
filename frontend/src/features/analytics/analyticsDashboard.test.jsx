@@ -119,23 +119,27 @@ describe('AnalyticsPage', () => {
 
     await resolveAll('campaign_001', {
       impressions: 12450,
-      clicks: { count: 1240, byClientType: { web: 1000, mobile: 240 } },
+      clicks: { count: 1240, customers: 1100, byClientType: { web: 1000, mobile: 240 } },
       clickToBasket: { count: 312, customers: 280, byUserType: { registered: 200, visitor: 90 } },
       uniqueCustomers: { count: 4870, byClientType: { web: 3000, mobile: 2200, both: 330 }, byUserType: { registered: 1200, visitor: 3900 } },
       sessions: { count: 5600, sessionStats: { converted: 900, averageDurationMs: 12 * 60_000 } },
     })
     expect(card('Ad impressions')).toHaveTextContent('12,450')
     expect(card('Unique customers')).toHaveTextContent('4,870')
-    expect(card('Ad clicks')).toHaveTextContent(/By platform\s*Web 1,000\s*Mobile 240/)
+    expect(card('Ad clicks')).toHaveTextContent(/Events by platform\s*Web 1,000\s*Mobile 240/)
     expect(card('Ad impressions')).not.toHaveTextContent('Web')
     // Web only, both, mobile only: 3,000 − 330 and 2,200 − 330.
     expect(card('Unique customers')).toHaveTextContent(/Web only 2,670\s*Both 330\s*Mobile only 1,870/)
     expect(card('Unique customers')).toHaveTextContent(/Registered 1,200\s*Visitors 3,900/)
-    expect(card('Ad clicks')).toHaveTextContent('1,240')
-    expect(card('Click-to-basket')).toHaveTextContent('312')
-    expect(card('Click-to-basket')).toHaveTextContent('280 customers')
+    // The funnel's headline is customers, as the API's spec defines the metrics; the event total is under it.
+    expect(screen.getByTestId('metric-Ad clicks')).toHaveTextContent('1,100')
+    expect(card('Ad clicks')).toHaveTextContent('1,240 clicks in total')
+    expect(screen.getByTestId('metric-Click-to-basket')).toHaveTextContent('280')
+    expect(card('Click-to-basket')).toHaveTextContent('312 basket additions in total')
+    // Without customers in the response (impressions here), the event count leads.
+    expect(screen.getByTestId('metric-Ad impressions')).toHaveTextContent('12,450')
     expect(card('Click-to-basket')).toHaveTextContent(/Registered 200\s*Visitors 90/)
-    expect(card('Ad impressions')).not.toHaveTextContent('customers')
+    expect(card('Ad impressions')).not.toHaveTextContent('in total')
     expect(card('Sessions')).toHaveTextContent('5,600')
     // 900 of 5,600 sessions converted.
     expect(card('Sessions')).toHaveTextContent(/Converted 900\s*· 16.07%/)

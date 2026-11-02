@@ -15,6 +15,8 @@ CREATE USER IF NOT EXISTS basketline_reader
     SETTINGS readonly = 2, SQL_tenant_id = '';
 
 GRANT SELECT ON analytics.* TO basketline_reader;
+-- Backfill runs name every tenant they covered.
+REVOKE SELECT ON analytics.backfill_runs FROM basketline_reader;
 
 CREATE ROW POLICY IF NOT EXISTS tenant_isolation ON
     analytics.events, analytics.attributed_baskets,

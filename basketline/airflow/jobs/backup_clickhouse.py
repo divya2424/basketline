@@ -9,6 +9,7 @@ days, which a replay of Kafka (14 days) rebuilds. These can't be rebuilt:
   deleted_tenants    which tenants were deleted (auth.tenant.v1 keeps 7 days,
                      and the tenant is gone from Postgres), and their lake purges
   deleted_users      which shoppers were erased, and their lake purges
+  backfill_runs      the history backfills, what each recomputed
 
 The backup goes to CLICKHOUSE_BACKUP_S3_URL/<day>, with BACKUP_S3_ACCESS_KEY_ID
 and BACKUP_S3_SECRET_ACCESS_KEY locally and ClickHouse's IAM role on AWS. A day already backed up is left as it is, so a retry is safe.
@@ -27,6 +28,7 @@ TABLES = [
     "daily_campaign_customers_aggregation",
     "deleted_tenants",
     "deleted_users",
+    "backfill_runs",
 ]
 
 

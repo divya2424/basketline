@@ -40,6 +40,9 @@ env:
   - { name: PYICEBERG_CATALOG__LAKE__S3__REGION, value: us-east-1 }
   - { name: PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID, value: archive }
   - { name: PYICEBERG_CATALOG__LAKE__S3__SECRET_ACCESS_KEY, value: archive_dev }
+  # The lake's interactions table as ClickHouse reaches it, for history backfills.
+  # On AWS: https://<bucket>.s3.<region>.amazonaws.com/lake/interactions/, and ClickHouse's IAM role.
+  - { name: LAKE_INTERACTIONS_URL, value: "http://archive-storage:8333/basketline-pipeline/lake/interactions/" }
   # ClickHouse's backups, as ClickHouse reaches the bucket. On AWS:
   # https://<bucket>.s3.<region>.amazonaws.com/clickhouse-backups, and ClickHouse's IAM role.
   - { name: CLICKHOUSE_BACKUP_S3_URL, value: "http://archive-storage:8333/ad-insights-archive/clickhouse-backups" }

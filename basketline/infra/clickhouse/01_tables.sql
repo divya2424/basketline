@@ -183,3 +183,22 @@ CREATE TABLE IF NOT EXISTS analytics.daily_campaign_customers_aggregation
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
 ORDER BY (tenant_id, store_id, campaign_id, day);
+
+-- Each history backfill (airflow/jobs/backfill_daily.py): the days and tenants it
+-- recomputed from the data lake, the daily tables it replaced and their recomputed
+-- rows. Not for the tenant-scoped reader (04_access.sql).
+CREATE TABLE IF NOT EXISTS analytics.backfill_runs
+(
+    run_id      UUID,
+    started_at  DateTime64(3, 'UTC'),
+    finished_at DateTime64(3, 'UTC'),
+    from_day    Date,
+    to_day      Date,
+    -- Empty: every tenant.
+    tenants     Array(UUID),
+    tables      Array(String),
+    rows        Map(String, UInt64),
+    rolled_back Bool DEFAULT false
+)
+ENGINE = MergeTree
+ORDER BY started_at;

@@ -1,6 +1,7 @@
 """Deletes deleted tenants' and erased shoppers' rows from the data lake's Iceberg tables.
 
     python purge_tenants.py
+    python purge_tenants.py --tenant <uuid>   # one tenant's rows now, e.g. the load test's (loadtest/cleanup.sql)
 
 Kafka Connect (basketline/connect) appends each topic to its table in the lake
 namespace, its payload flattened into columns, partitioned by tenant
@@ -19,6 +20,7 @@ until compaction), so a replay of the connector would append them again. A run
 with nothing to delete only reads table metadata. Safe to run again.
 """
 
+import argparse
 import datetime as dt
 import os
 
@@ -50,8 +52,14 @@ def purge(catalog, field: str, ids: list[str], tables: list[str]) -> dict[str, i
 
 
 def main() -> None:
-    clickhouse = clickhouse_connect.get_client(dsn=os.environ["CLICKHOUSE_URL"])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--tenant", help="delete this tenant's rows only, without it being deleted on the platform")
+    tenant = parser.parse_args().tenant
     catalog = load_catalog("lake")
+    if tenant:
+        print(f"purged tenant {tenant} from the lake: {purge(catalog, 'payload_tenantId', [tenant.lower()], LAKE_TABLES)}")
+        return
+    clickhouse = clickhouse_connect.get_client(dsn=os.environ["CLICKHOUSE_URL"])
     now = dt.datetime.now(dt.UTC)
 
     tenants = clickhouse.query("SELECT toString(tenant_id), name, deleted_at, lake_purged_at FROM deleted_tenants FINAL").result_rows

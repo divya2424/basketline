@@ -1,0 +1,8 @@
+# The image needs only Airflow's files and the ClickHouse schema (Dockerfile).
+*
+!airflow/requirements.txt
+!airflow/jobs
+!airflow/dags
+!infra/clickhouse/01_tables.sql
+!infra/clickhouse/02_materialized_views.sql
+**/__pycache__

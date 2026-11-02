@@ -199,7 +199,7 @@ services:
   # Runs the batch jobs (airflow/dags): the data lake's tenant and shopper purges,
   # and ClickHouse's backups. UI at http://localhost:8082, no login (local only).
   airflow:
-    build: { context: ./airflow }
+    build: { context: ., dockerfile: airflow/Dockerfile }
     command: standalone
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -215,6 +215,9 @@ services:
       PYICEBERG_CATALOG__LAKE__S3__REGION: us-east-1
       PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID: archive
       PYICEBERG_CATALOG__LAKE__S3__SECRET_ACCESS_KEY: archive_dev
+      # The lake's interactions table as ClickHouse reaches it, for history backfills
+      # (jobs/backfill_daily.py), read with the catalog's S3 keys above.
+      LAKE_INTERACTIONS_URL: http://archive-storage:8333/basketline-pipeline/lake/interactions/
       # ClickHouse's backups (jobs/backup_clickhouse.py), as ClickHouse reaches the bucket.
       CLICKHOUSE_BACKUP_S3_URL: http://archive-storage:8333/ad-insights-archive/clickhouse-backups
       BACKUP_S3_ACCESS_KEY_ID: archive
@@ -224,6 +227,7 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
       - ./airflow/jobs:/opt/airflow/jobs:ro
+      - ./infra/clickhouse:/opt/airflow/clickhouse:ro
     depends_on:
       postgres: { condition: service_healthy }
       clickhouse: { condition: service_healthy }

@@ -1,0 +1,79 @@
+import { isNonEmptyString, isOneOf, isPlainObject, isUuid, unknownKeys } from '@basketline/platform'
+
+export interface VisitorInput {
+  /** The client's UUID for the visitor; it stays the person's ID when the store vouches for them (shopper-token). */
+  userId?: string
+  clientType?: 'web' | 'mobile'
+}
+
+export interface ShopperTokenInput {
+  /** The vendor's own ID for its signed-in customer. */
+  customerId: string
+  /** The SDK's visitor UUID for this browser: the customer keeps it, so they stay one person. */
+  visitorId?: string
+  clientType?: 'web' | 'mobile'
+}
+
+export interface LoginInput {
+  username: string
+  password: string
+  clientType: 'web' | 'mobile'
+}
+
+export function validateLogin(body: unknown): string[] {
+  if (!isPlainObject(body)) return ['body must be a JSON object']
+  const errors = unknownKeys(body, ['username', 'password', 'clientType']).map((key) => `unknown field "${key}"`)
+  if (!isNonEmptyString(body.username, 100)) errors.push('username is required')
+  if (typeof body.password !== 'string' || body.password.length === 0 || body.password.length > 256) errors.push('password is required')
+  if (!isOneOf(body.clientType, ['web', 'mobile'])) errors.push('clientType must be "web" or "mobile"')
+  return errors
+}
+
+/** A name for a new API key, e.g. "Production web". */
+export function validateApiKey(body: unknown): string[] {
+  if (!isPlainObject(body)) return ['body must be a JSON object']
+  const errors = unknownKeys(body, ['name']).map((key) => `unknown field "${key}"`)
+  if (!isNonEmptyString(body.name, 100)) errors.push('name must be a string (max 100 characters)')
+  return errors
+}
+
+export function validateShopperToken(body: unknown): string[] {
+  if (!isPlainObject(body)) return ['body must be a JSON object']
+  const errors = unknownKeys(body, ['customerId', 'visitorId', 'clientType']).map((key) => `unknown field "${key}"`)
+  if (!isNonEmptyString(body.customerId, 200)) errors.push('customerId must be a string (max 200 characters)')
+  if (body.visitorId !== undefined && !isUuid(body.visitorId)) errors.push('visitorId must be a UUID')
+  if (body.clientType !== undefined && !isOneOf(body.clientType, ['web', 'mobile'])) errors.push('clientType must be "web" or "mobile"')
+  return errors
+}
+
+/** The body is optional: without a userId the visitor gets a random one; the client type defaults to web. */
+export function validateVisitor(body: unknown): string[] {
+  if (!isPlainObject(body)) return ['body must be a JSON object']
+  const errors = unknownKeys(body, ['userId', 'clientType']).map((key) => `unknown field "${key}"`)
+  if (body.userId !== undefined && !isUuid(body.userId)) errors.push('userId must be a UUID')
+  if (body.clientType !== undefined && !isOneOf(body.clientType, ['web', 'mobile'])) errors.push('clientType must be "web" or "mobile"')
+  return errors
+}
+
+export const MAX_ALLOWED_ORIGINS = 20
+
+/** A website's origin: http(s), a host, maybe a port; no path, query or credentials. */
+function isOrigin(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length > 200) return false
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.pathname === '/' && !url.search && !url.hash && !url.username && !url.password && !value.includes('*')
+  } catch {
+    return false
+  }
+}
+
+export function validateAllowedOrigins(body: unknown): string[] {
+  if (!isPlainObject(body) || !Array.isArray(body.origins)) return ['body must be { "origins": ["https://shop.example", ...] }']
+  const errors = unknownKeys(body, ['origins']).map((key) => `unknown field "${key}"`)
+  if (body.origins.length > MAX_ALLOWED_ORIGINS) errors.push(`origins must have at most ${MAX_ALLOWED_ORIGINS} items`)
+  body.origins.forEach((origin, index) => {
+    if (!isOrigin(origin)) errors.push(`origins[${index}] must be a website origin like https://shop.example (no path)`)
+  })
+  return errors
+}

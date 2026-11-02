@@ -1,0 +1,319 @@
+import { randomUUID } from 'node:crypto'
+import type { AddressInfo, Server } from 'node:net'
+import express from 'express'
+import request from 'supertest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { EventEnvelope } from '@basketline/contracts'
+import { closeDb, createLogger, idempotentHandler, signShopperToken } from '@basketline/platform'
+import { createTestDatabase, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
+import { buildGateway } from '../src/app.ts'
+import { createGatewayDb, migrateGatewayDb, type Db } from '../src/db/client.ts'
+import { handleAccessEvent } from '../src/events/access.consumer.ts'
+
+interface Hit {
+  service: string
+  method: string
+  url: string
+  headers: Record<string, unknown>
+  body: unknown
+}
+
+let testDb: Awaited<ReturnType<typeof createTestDatabase>>
+let db: Db
+let keys: TestKeys
+let gateway: ReturnType<typeof buildGateway>['app']
+let hits: Hit[] = []
+const upstreams: Server[] = []
+let apply: (envelope: EventEnvelope) => Promise<void>
+
+/** A fake service that records every request and echoes it back. */
+async function fakeService(name: string): Promise<string> {
+  const app = express()
+  app.use(express.json())
+  app.use((req, res) => {
+    const hit = { service: name, method: req.method, url: req.originalUrl, headers: req.headers, body: req.body }
+    hits.push(hit)
+    res.status(200).json({ from: name, url: req.originalUrl })
+  })
+  const server = await new Promise<Server>((resolve) => {
+    const s = app.listen(0, () => resolve(s))
+  })
+  upstreams.push(server)
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+}
+
+beforeAll(async () => {
+  testDb = await createTestDatabase()
+  db = createGatewayDb(testDb.url)
+  await migrateGatewayDb(db)
+  keys = await createTestKeys()
+  const services = {
+    auth: await fakeService('auth'),
+    ingestion: await fakeService('ingestion'),
+    insights: await fakeService('insights'),
+  }
+  gateway = buildGateway({ db, logger: createLogger('gateway-test'), publicKey: keys.publicKey, services, corsOrigins: ['http://localhost:5173'] }).app
+  const handler = idempotentHandler(db, handleAccessEvent)
+  apply = (envelope) => handler(envelope, { topic: 'auth.session.v1', partition: 0, offset: '0' })
+})
+
+afterAll(async () => {
+  await Promise.all(upstreams.map((server) => new Promise((resolve) => server.close(resolve))))
+  await closeDb(db)
+  await testDb.drop()
+})
+
+beforeEach(() => {
+  hits = []
+})
+
+function authEvent(eventType: string, userId: string, version: number, payload: object): EventEnvelope {
+  return {
+    eventId: randomUUID(),
+    eventType,
+    eventVersion: 1,
+    occurredAt: new Date().toISOString(),
+    producer: 'auth-service',
+    aggregateId: userId,
+    aggregateVersion: version,
+    payload: { userId, ...payload },
+  }
+}
+
+describe('routing', () => {
+  it('sends each path prefix to exactly one service, keeping the full path', async () => {
+    const user = await tokenFor(keys, 'campaign-manager')
+    const cases: [string, string][] = [
+      ['/api/v1/auth/me', 'auth'],
+      ['/api/v1/ad/campaigns', 'insights'],
+      ['/api/v1/ad/abc/clicks?from=2026-10-01T00:00:00Z', 'insights'],
+      ['/api/v1/analytics/campaigns/abc/timeseries?metric=clicks', 'ingestion'],
+    ]
+    for (const [url, service] of cases) {
+      hits = []
+      const res = await request(gateway).get(url).set('Authorization', user.header)
+      expect(res.body, url).toEqual({ from: service, url })
+      expect(hits).toHaveLength(1)
+    }
+  })
+
+  it('passes request bodies through unchanged', async () => {
+    const res = await request(gateway)
+      .post('/api/v1/auth/login')
+      .send({ username: 'maya', password: 'correct horse battery', clientType: 'web' })
+    expect(res.status).toBe(200)
+    expect(hits[0]).toMatchObject({ service: 'auth', method: 'POST', body: { username: 'maya', clientType: 'web' } })
+  })
+
+  it('returns 404 for paths no service exposes, without forwarding', async () => {
+    expect((await request(gateway).get('/api/v1/orders')).status).toBe(404)
+    expect((await request(gateway).delete('/api/v1/analytics/events')).status).toBe(404)
+    expect(hits).toHaveLength(0)
+  })
+})
+
+describe('permissions', () => {
+  it('lets anyone log in and get a visitor token; shopper and integration tokens go to auth-service, which checks the API key', async () => {
+    for (const url of ['/api/v1/auth/login', '/api/v1/auth/visitor', '/api/v1/auth/shopper-token', '/api/v1/auth/integration-token']) {
+      expect((await request(gateway).post(url).send({})).status, url).toBe(200)
+    }
+    // Basketline's users are dashboard users, created by an operator: no sign-up.
+    hits = []
+    expect((await request(gateway).post('/api/v1/auth/register').send({})).status).toBe(401)
+    expect(hits).toHaveLength(0)
+  })
+
+  it('lets anyone list and onboard tenants (auth-service), and nothing else on /accounts', async () => {
+    hits = []
+    expect((await request(gateway).get('/api/v1/accounts')).body).toEqual({ from: 'auth', url: '/api/v1/accounts' })
+    expect((await request(gateway).post('/api/v1/accounts').send({ name: 'Acme' })).body).toEqual({ from: 'auth', url: '/api/v1/accounts' })
+    expect(hits).toHaveLength(2)
+    expect((await request(gateway).delete('/api/v1/accounts')).status).toBe(404)
+    expect((await request(gateway).get('/api/v1/accounts/abc')).status).toBe(404)
+    expect(hits).toHaveLength(2)
+  })
+
+  it('takes analytics events with an access or a visitor token, never without one', async () => {
+    const events = (auth?: string) => {
+      const req = request(gateway).post('/api/v1/analytics/events')
+      if (auth) req.set('Authorization', auth)
+      return req.send({ events: [] })
+    }
+    expect((await events((await visitorTokenFor(keys)).header)).status).toBe(200)
+    expect((await events((await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
+    // A vendor's shopper (events-only, registered).
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
+    expect((await events(`Bearer ${shopper.token}`)).status).toBe(200)
+    // Events-only tokens open nothing else.
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', `Bearer ${shopper.token}`)).status).toBe(401)
+    hits = []
+    expect((await events()).status).toBe(401)
+    expect((await events('Bearer nonsense')).status).toBe(401)
+    expect((await events((await visitorTokenFor(await createTestKeys())).header)).status).toBe(401)
+    expect(hits).toHaveLength(0)
+  })
+
+  it("limits a tenant's API keys to its campaign managers", async () => {
+    const visitor = (await visitorTokenFor(keys)).header
+    const manager = (await tokenFor(keys, 'campaign-manager')).header
+    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', visitor)).status).toBe(401)
+    expect((await request(gateway).delete('/api/v1/auth/api-keys/bl_sk_abc').set('Authorization', visitor)).status).toBe(401)
+    expect((await request(gateway).get('/api/v1/auth/api-keys')).status).toBe(401)
+    expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', manager)).body).toEqual({ from: 'auth', url: '/api/v1/auth/api-keys' })
+  })
+
+  it('limits campaign metrics to campaign managers, never events-only tokens', async () => {
+    const path = '/api/v1/ad/abc/clicks'
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
+    expect((await request(gateway).get(path)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', (await visitorTokenFor(keys)).header)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', `Bearer ${shopper.token}`)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
+  })
+
+  it("doesn't route a retailer's own APIs: its catalog and campaigns are its business", async () => {
+    const manager = await tokenFor(keys, 'campaign-manager')
+    hits = []
+    for (const path of ['/api/v1/products', '/api/v1/campaigns', '/api/v1/sellers']) {
+      expect((await request(gateway).get(path).set('Authorization', manager.header)).status, path).toBe(404)
+      expect((await request(gateway).post(path).set('Authorization', manager.header).send({})).status, path).toBe(404)
+    }
+    expect(hits).toHaveLength(0)
+  })
+
+  it('sets user_id from the token and drops a client-supplied one; passes tenant_id through', async () => {
+    const user = await tokenFor(keys, 'campaign-manager')
+    await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header).set('user_id', 'spoofed').set('tenant_id', 'tenant_acme')
+    expect(hits[0]!.headers).toMatchObject({ user_id: user.sub, tenant_id: 'tenant_acme' })
+    const visitor = await visitorTokenFor(keys)
+    await request(gateway).post('/api/v1/analytics/events').set('Authorization', visitor.header).set('user_id', 'spoofed').send({ events: [] })
+    expect(hits[1]!.headers.user_id).toBeUndefined()
+  })
+})
+
+describe('revocation (from auth events, no calls to the auth service)', () => {
+  it('rejects a token once its session is revoked', async () => {
+    const user = await tokenFor(keys, 'campaign-manager')
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)).status).toBe(200)
+    await apply(authEvent('SessionRevoked', user.sub, 1, { sessionId: user.sid, revokedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 1_800_000).toISOString() }))
+    const res = await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)
+    expect(res.status).toBe(401)
+    expect(res.body.error.code).toBe('SESSION_REVOKED')
+    // A revoked user can't send events with that token either.
+    const events = await request(gateway).post('/api/v1/analytics/events').set('Authorization', user.header).send({ events: [] })
+    expect(events.body.error.code).toBe('SESSION_REVOKED')
+  })
+
+  it("rejects every token of a deleted tenant, including visitors' and shoppers'; lets anyone ask to delete one", async () => {
+    const tenant = randomUUID()
+    const user = await tokenFor(keys, 'campaign-manager', { tid: tenant })
+    const visitor = await visitorTokenFor(keys, tenant)
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: tenant, userId: randomUUID() })
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)).status).toBe(200)
+    await apply({ ...authEvent('TenantDeleted', tenant, 2, {}), aggregateId: tenant, payload: { tenantId: tenant, name: 'Gone', deletedAt: new Date().toISOString() } })
+    const me = await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)
+    expect(me.status).toBe(401)
+    expect(me.body.error.code).toBe('TENANT_DELETED')
+    for (const header of [visitor.header, `Bearer ${shopper.token}`]) {
+      expect((await request(gateway).post('/api/v1/analytics/events').set('Authorization', header).send({ events: [] })).status).toBe(401)
+    }
+    // Deleting goes to auth-service, which checks the typed name; nothing else on /accounts/:id.
+    expect((await request(gateway).delete(`/api/v1/accounts/${tenant}`).send({ confirmName: 'Gone' })).body).toEqual({ from: 'auth', url: `/api/v1/accounts/${tenant}` })
+    expect((await request(gateway).get(`/api/v1/accounts/${tenant}`)).status).toBe(404)
+  })
+
+  it("lets a browser send a tenant's events only from its allowed websites, once it lists any", async () => {
+    const tenant = randomUUID()
+    const visitor = await visitorTokenFor(keys, tenant)
+    const shopper = await signShopperToken(keys.privateKey, { tenantId: tenant, userId: randomUUID() })
+    const events = (origin: string | null, auth = visitor.header) => {
+      const req = request(gateway).post('/api/v1/analytics/events').set('Authorization', auth)
+      return (origin ? req.set('Origin', origin) : req).send({ events: [] })
+    }
+    const visitorToken = (origin: string) => request(gateway).post('/api/v1/auth/visitor').set('Origin', origin).set('tenant_id', tenant).send({})
+    // No list yet: any website.
+    expect((await events('https://anywhere.example')).status).toBe(200)
+
+    const allow = (origins: string[], version: number) =>
+      apply({ ...authEvent('TenantOriginsChanged', tenant, version, {}), aggregateId: tenant, payload: { tenantId: tenant, origins, version, changedAt: new Date().toISOString() } })
+    await allow(['https://shop.example'], 1)
+    expect((await events('https://shop.example')).status).toBe(200)
+    expect((await events('https://shop.example', `Bearer ${shopper.token}`)).status).toBe(200)
+    expect((await visitorToken('https://shop.example')).status).toBe(200)
+    for (const res of [await events('https://copycat.example'), await events('https://copycat.example', `Bearer ${shopper.token}`), await visitorToken('https://copycat.example')]) {
+      expect(res.status).toBe(403)
+      expect(res.body.error.code).toBe('ORIGIN_NOT_ALLOWED')
+    }
+    // Basketline's own apps, and callers that aren't browsers (no Origin), aren't held to the list.
+    expect((await events('http://localhost:5173')).status).toBe(200)
+    expect((await events(null)).status).toBe(200)
+
+    // An older list arriving late doesn't replace a newer one; an empty list allows any website again.
+    await allow(['https://old.example'], 0)
+    expect((await events('https://shop.example')).status).toBe(200)
+    await allow([], 2)
+    expect((await events('https://copycat.example')).status).toBe(200)
+    // Managers read and set the list; the gateway only routes it.
+    const manager = await tokenFor(keys, 'campaign-manager', { tid: tenant })
+    expect((await request(gateway).put('/api/v1/auth/allowed-origins').set('Authorization', manager.header).send({ origins: [] })).body).toEqual({ from: 'auth', url: '/api/v1/auth/allowed-origins' })
+    expect((await request(gateway).get('/api/v1/auth/allowed-origins').set('Authorization', (await visitorTokenFor(keys, tenant)).header)).status).toBe(401)
+  })
+
+  it('rejects all tokens of a disabled user', async () => {
+    const user = await tokenFor(keys, 'campaign-manager')
+    await apply(authEvent('UserDisabled', user.sub, 2, { disabledAt: new Date().toISOString() }))
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', user.header)).body.error.code).toBe('ACCOUNT_DISABLED')
+  })
+
+  it('rejects tokens issued before a role change, but accepts new ones', async () => {
+    const userId = randomUUID()
+    const old = await tokenFor(keys, 'campaign-manager', { sub: userId, issuedAt: new Date(Date.now() - 60_000) })
+    await apply(authEvent('UserRoleChanged', userId, 2, { role: 'campaign-manager', previousRole: 'campaign-manager', changedAt: new Date(Date.now() - 30_000).toISOString() }))
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', old.header)).body.error.code).toBe('TOKEN_STALE')
+    const fresh = await tokenFor(keys, 'campaign-manager', { sub: userId })
+    expect((await request(gateway).get('/api/v1/auth/me').set('Authorization', fresh.header)).status).toBe(200)
+  })
+})
+
+describe('edge protection', () => {
+  it('answers CORS preflight for the dashboard, allowing tenant_id and user_id', async () => {
+    const res = await request(gateway)
+      .options('/api/v1/ad/campaigns')
+      .set('Origin', 'http://localhost:5173')
+      .set('Access-Control-Request-Method', 'GET')
+      .set('Access-Control-Request-Headers', 'authorization,tenant_id')
+    expect(res.status).toBe(204)
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+    expect(res.headers['access-control-allow-headers']).toContain('tenant_id')
+  })
+
+  it("lets the SDK on any vendor's site send events and get visitor tokens; other routes keep the allowlist", async () => {
+    const preflight = (path: string, origin: string) =>
+      request(gateway).options(path).set('Origin', origin).set('Access-Control-Request-Method', 'POST').set('Access-Control-Request-Headers', 'authorization,content-type')
+    for (const path of ['/api/v1/analytics/events', '/api/v1/auth/visitor']) {
+      expect((await preflight(path, 'https://shop.example.com')).headers['access-control-allow-origin'], path).toBe('https://shop.example.com')
+    }
+    for (const path of ['/api/v1/ad/campaigns', '/api/v1/auth/login', '/api/v1/auth/shopper-token']) {
+      expect((await preflight(path, 'https://shop.example.com')).headers['access-control-allow-origin'], path).toBeUndefined()
+    }
+  })
+
+  it('rejects oversized bodies before forwarding', async () => {
+    const res = await request(gateway).post('/api/v1/analytics/events').set('Content-Type', 'application/json').send('x'.repeat(200 * 1024))
+    expect(res.status).toBe(413)
+    expect(hits).toHaveLength(0)
+  })
+
+  it('returns 502 when a service is down', async () => {
+    const down = buildGateway({
+      db,
+      logger: createLogger('gateway-test'),
+      publicKey: keys.publicKey,
+      services: { auth: 'http://127.0.0.1:1', ingestion: 'http://127.0.0.1:1', insights: 'http://127.0.0.1:1' },
+      corsOrigins: [],
+    }).app
+    const res = await request(down).post('/api/v1/auth/login').send({})
+    expect(res.status).toBe(502)
+    expect(res.body.error.code).toBe('BAD_GATEWAY')
+  })
+})

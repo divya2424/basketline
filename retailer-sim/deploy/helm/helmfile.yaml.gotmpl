@@ -1,0 +1,22 @@
+# The simulated retailer's services, each its own Helm release, next to the
+# platform's (../../../basketline/deploy/helm) in the same namespace, where its
+# gateway reaches them by name. Deploy the platform first.
+#
+#   helmfile -e local apply
+environments:
+  local: {}
+---
+helmDefaults:
+  wait: true
+  atomic: true
+  timeout: 600
+  createNamespace: true
+
+releases:
+{{- range list "retailer-auth-service" "product-service" "campaign-service" }}
+  - name: {{ . }}
+    namespace: basketline
+    chart: ./charts/{{ . }}
+    values:
+      - environments/{{ $.Environment.Name }}/{{ . }}.yaml
+{{- end }}

@@ -1,6 +1,0 @@
-dependencies:
-- name: basketline-lib
-  repository: file://../basketline-lib
-  version: 0.1.0
-digest: sha256:ce2d1003b21a090c638ca50f07af2e3c2b3e23bc5e0b6a40aaa41c36b5103784
-generated: "2026-10-30T04:42:12.79395355Z"

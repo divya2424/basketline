@@ -1,0 +1,69 @@
+import { lazy, Suspense } from 'react'
+import { Link, Navigate, Route, Routes } from 'react-router-dom'
+import { Header } from '../components/layout/Header.jsx'
+import { Footer } from '../components/layout/Footer.jsx'
+import { ToastProvider } from '../components/common/Toast.jsx'
+import { Spinner } from '../components/common/Spinner.jsx'
+import { AuthProvider } from '../features/auth/AuthContext.jsx'
+import { RequireRole } from '../features/auth/RequireRole.jsx'
+import { RequireTenant } from '../features/auth/RequireTenant.jsx'
+import { ROLES } from '../features/auth/authService.js'
+import { CatalogProvider } from '../features/catalog/CatalogContext.jsx'
+import { OnboardingPage } from '../features/onboarding/OnboardingPage.jsx'
+
+// The dashboard isn't needed for the first paint of the tenants page.
+const AnalyticsPage = lazy(() => import('../features/analytics/AnalyticsPage.jsx').then((m) => ({ default: m.AnalyticsPage })))
+
+const pageFallback = (
+  <div className="container page page-loading" role="status">
+    <Spinner size="lg" />
+    <p className="muted">Loading page…</p>
+  </div>
+)
+
+export function App({ authProps, catalogProps, onboardingProps }) {
+  return (
+    <AuthProvider {...authProps}>
+      <CatalogProvider {...catalogProps}>
+        <ToastProvider>
+          <a href="#main" className="skip-link">
+            Skip to content
+          </a>
+          <Header />
+          <main id="main" className="site-main">
+            <Suspense fallback={pageFallback}>
+              <Routes>
+                {/* The platform starts at the tenants page; a tenant's dashboard opens after signing in to it. */}
+                <Route path="/" element={<OnboardingPage {...onboardingProps} />} />
+                <Route path="/onboarding" element={<Navigate to="/" replace />} />
+                <Route
+                  path="/analytics"
+                  element={
+                    <RequireTenant>
+                      <RequireRole role={ROLES.CAMPAIGN_MANAGER}>
+                        <AnalyticsPage />
+                      </RequireRole>
+                    </RequireTenant>
+                  }
+                />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </main>
+          <Footer />
+        </ToastProvider>
+      </CatalogProvider>
+    </AuthProvider>
+  )
+}
+
+function NotFound() {
+  return (
+    <div className="container page empty-state">
+      <h1>Page not found</h1>
+      <Link className="btn btn--primary" to="/">
+        Back to the tenants
+      </Link>
+    </div>
+  )
+}

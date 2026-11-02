@@ -1,0 +1,5 @@
+# The jobs' environment (/opt/jobs in the image), kept apart from Airflow's
+# own, so these pins never conflict with Airflow's constraints.
+pyiceberg[pyarrow,sql-postgres,glue,pyiceberg-core]==0.12.0
+pyarrow==26.0.0
+clickhouse-connect==1.10.1

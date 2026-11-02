@@ -1,0 +1,326 @@
+name: basketline
+
+x-service-env: &service-env
+  NODE_ENV: production
+  KAFKA_BROKERS: kafka:19092
+  JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.9.1
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:19092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly by services (see platform/kafka.ts).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.44
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: basketline
+      CLICKHOUSE_PASSWORD: basketline_dev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      # The cold volume of the raw tables (infra/clickhouse/config/storage.xml).
+      CLICKHOUSE_COLD_S3_ENDPOINT: http://archive-storage:8333/ad-insights-archive/clickhouse-cold/
+      CLICKHOUSE_COLD_S3_ACCESS_KEY_ID: archive
+      CLICKHOUSE_COLD_S3_SECRET_ACCESS_KEY: archive_dev
+      CLICKHOUSE_COLD_S3_USE_ENV_CREDENTIALS: "false"
+    ports: ["8123:8123"]
+    ulimits: { nofile: { soft: 262144, hard: 262144 } }
+    volumes:
+      # Tables, then materialized views, then the Kafka tables for the Flink job's
+      # serving topics, then the tenant-scoped reader: the files run in name order, on a new volume only.
+      - ./infra/clickhouse:/docker-entrypoint-initdb.d:ro
+      - ./infra/clickhouse/config/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+      - ./infra/clickhouse/config/backup_log.xml:/etc/clickhouse-server/config.d/backup_log.xml:ro
+      - ./infra/clickhouse/config/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
+      - chdata:/var/lib/clickhouse
+    # Tables with parts on the cold volume fail to load if its storage isn't up yet.
+    depends_on: { archive-storage: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user basketline --password basketline_dev --query 'SELECT 1' >/dev/null"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  auth-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: basketline/services/auth-service }, secrets: [npm_token] }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4001
+      DATABASE_URL: postgres://identity_svc:identity_svc_dev@postgres:5432/identity_db
+      JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  # The write path: SDK events and the retail API, published to Kafka; the
+  # reference copies in ClickHouse.
+  ingestion-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: basketline/services/ingestion-service }, secrets: [npm_token] }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4004
+      # No Postgres: events go to Kafka; the reference copies are kept in ClickHouse.
+      CLICKHOUSE_URL: http://basketline:basketline_dev@clickhouse:8123/analytics
+      # Each tenant's ingestion budget per minute, by tier (ingestion.service.ts).
+      TENANT_EVENTS_PER_MINUTE_FREE: ${TENANT_EVENTS_PER_MINUTE_FREE:-60000}
+      TENANT_EVENTS_PER_MINUTE_PRO: ${TENANT_EVENTS_PER_MINUTE_PRO:-600000}
+      TENANT_EVENTS_PER_MINUTE_ENTERPRISE: ${TENANT_EVENTS_PER_MINUTE_ENTERPRISE:-6000000}
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { clickhouse: { condition: service_healthy }, kafka: { condition: service_healthy } }
+
+  # The read path: the insights API (/ad). ClickHouse only, as the reader user,
+  # which sees only the token's tenant (infra/clickhouse/04_access.sql); no Kafka.
+  insights-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: basketline/services/insights-service }, secrets: [npm_token] }
+    stop_grace_period: 35s
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
+      LOG_LEVEL: info
+      PORT: 4005
+      CLICKHOUSE_READER_URL: http://basketline_reader:basketline_reader_dev@clickhouse:8123/analytics
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { clickhouse: { condition: service_healthy } }
+
+  # Reads the retail.interactions.v1 topic, credits basket additions to clicks, and writes ad
+  # impressions, clicks and credited basket additions to the serving topics ClickHouse loads
+  # (infra/clickhouse/03_kafka.sql).
+  flink-streaming:
+    build: { context: ./flink }
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_GROUP_ID: events-to-clickhouse
+      # Only when there is no checkpoint yet (flink/README.md).
+      KAFKA_STARTUP_MODE: ${KAFKA_STARTUP_MODE:-earliest-offset}
+      CHECKPOINT_DIR: /checkpoints
+    # The Flink web UI: job graph, checkpoints, backpressure.
+    ports: ["8081:8081"]
+    volumes: ["flink-checkpoints:/checkpoints"]
+    restart: unless-stopped
+    depends_on:
+      kafka: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      # It creates the retail and serving topics.
+      ingestion-service: { condition: service_healthy }
+
+  # Writes Basketline's topics to Iceberg tables in the data lake (connect/): one
+  # table per topic, a commit an hour. Its REST API (connector status) at :8083.
+  connect:
+    build: { context: ./connect }
+    environment:
+      LAKE_CATALOG_URI: jdbc:postgresql://postgres:5432/iceberg_catalog_db
+      LAKE_CATALOG_USER: iceberg_svc
+      LAKE_CATALOG_PASSWORD: iceberg_svc_dev
+      LAKE_S3_ENDPOINT: http://archive-storage:8333
+      LAKE_S3_ACCESS_KEY_ID: archive
+      LAKE_S3_SECRET_ACCESS_KEY: archive_dev
+    ports: ["8083:8083"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/connectors"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      archive-storage: { condition: service_healthy }
+      # They create the topics it reads.
+      ingestion-service: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+
+  # Registers (or updates) the lake sink connector once Connect is up.
+  connect-init:
+    image: curlimages/curl:8.11.1
+    command: ["-fsS", "-X", "PUT", "-H", "Content-Type: application/json", "--data-binary", "@/lake-sink.json", "http://connect:8083/connectors/lake-sink/config"]
+    volumes: ["./connect/lake-sink.json:/lake-sink.json:ro"]
+    depends_on: { connect: { condition: service_healthy } }
+
+  # S3 locally (S3 itself on AWS): the data lake's bucket (basketline-pipeline) and
+  # the ClickHouse backups' (ad-insights-archive). SeaweedFS, because MinIO no
+  # longer publishes images. Its admin UI browses the buckets.
+  archive-storage:
+    image: chrislusf/seaweedfs:4.48
+    command: mini -dir=/data -bucket=ad-insights-archive,basketline-pipeline
+    environment:
+      AWS_ACCESS_KEY_ID: archive
+      AWS_SECRET_ACCESS_KEY: archive_dev
+    ports: ["8333:8333", "23646:23646"]
+    volumes: ["archive-data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8333/"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  # Runs the batch jobs (airflow/dags): the data lake's tenant and shopper purges,
+  # and ClickHouse's backups. UI at http://localhost:8082, no login (local only).
+  airflow:
+    build: { context: ., dockerfile: airflow/Dockerfile }
+    command: standalone
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_svc:airflow_svc_dev@postgres:5432/airflow_db
+      CLICKHOUSE_URL: http://basketline:basketline_dev@clickhouse:8123/analytics
+      # The data lake's catalog, as Kafka Connect writes it (connect/lake-sink.json).
+      PYICEBERG_CATALOG__LAKE__TYPE: sql
+      PYICEBERG_CATALOG__LAKE__URI: postgresql+psycopg2://iceberg_svc:iceberg_svc_dev@postgres:5432/iceberg_catalog_db
+      PYICEBERG_CATALOG__LAKE__WAREHOUSE: s3://basketline-pipeline
+      PYICEBERG_CATALOG__LAKE__S3__ENDPOINT: http://archive-storage:8333
+      PYICEBERG_CATALOG__LAKE__S3__REGION: us-east-1
+      PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID: archive
+      PYICEBERG_CATALOG__LAKE__S3__SECRET_ACCESS_KEY: archive_dev
+      # The lake's interactions table as ClickHouse reaches it, for history backfills
+      # (jobs/backfill_daily.py), read with the catalog's S3 keys above.
+      LAKE_INTERACTIONS_URL: http://archive-storage:8333/basketline-pipeline/lake/interactions/
+      # ClickHouse's backups (jobs/backup_clickhouse.py), as ClickHouse reaches the bucket.
+      CLICKHOUSE_BACKUP_S3_URL: http://archive-storage:8333/ad-insights-archive/clickhouse-backups
+      BACKUP_S3_ACCESS_KEY_ID: archive
+      BACKUP_S3_SECRET_ACCESS_KEY: archive_dev
+    ports: ["127.0.0.1:8082:8080"]
+    # Also baked into the image; mounted so edits apply without a rebuild.
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - ./airflow/jobs:/opt/airflow/jobs:ro
+      - ./infra/clickhouse:/opt/airflow/clickhouse:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      archive-storage: { condition: service_healthy }
+
+  gateway:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: basketline/services/gateway }, secrets: [npm_token] }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 8080
+      DATABASE_URL: postgres://gateway_svc:gateway_svc_dev@postgres:5432/gateway_db
+      AUTH_SERVICE_URL: http://auth-service:4001
+      INGESTION_SERVICE_URL: http://ingestion-service:4004
+      INSIGHTS_SERVICE_URL: http://insights-service:4005
+      # The dashboard (dashboard/). Retailers' sites call only the SDK's routes, open to any origin.
+      CORS_ORIGINS: http://localhost:5173
+      # Per client IP. Raised only for load tests (loadtest/README.md).
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
+      EVENTS_RATE_LIMIT_PER_MINUTE: ${EVENTS_RATE_LIMIT_PER_MINUTE:-120}
+      VISITOR_RATE_LIMIT_PER_MINUTE: ${VISITOR_RATE_LIMIT_PER_MINUTE:-10}
+    ports: ["8080:8080"]
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on:
+      auth-service: { condition: service_healthy }
+      ingestion-service: { condition: service_healthy }
+      insights-service: { condition: service_healthy }
+
+  # Monitoring (infra/monitoring/), only with: docker compose --profile monitoring up -d
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=15d]
+    ports: ["9090:9090"]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    profiles: [monitoring]
+    command: [--kafka.server=kafka:19092]
+    depends_on: { kafka: { condition: service_healthy } }
+
+  # Central logs: Alloy reads every container's logs and sends them to Loki.
+  # Only with: docker compose --profile logs up -d
+  loki:
+    image: grafana/loki:3.5.0
+    profiles: [logs]
+    command: [-config.file=/etc/loki/loki.yml]
+    volumes:
+      - ./infra/monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.8.3
+    profiles: [logs]
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy/data]
+    volumes:
+      - ./infra/monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [monitoring]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: basketline_dev
+      # Viewing needs no sign-in locally.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline.json
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+
+volumes:
+  prometheus-data:
+  loki-data:
+  pgdata:
+  chdata:
+  flink-checkpoints:
+  archive-data:
+
+secrets:
+  # Read access to GitHub Packages for @divya2424/basketline-kafka, used only while building images:
+  # export NODE_AUTH_TOKEN=<token with read:packages> before `docker compose build` / `up --build`.
+  npm_token:
+    environment: NODE_AUTH_TOKEN

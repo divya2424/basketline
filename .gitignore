@@ -160,7 +160,7 @@ __pycache__/
 *.py[cod]
 .venv/
 
-# Private keys (the JWT keys live in backend/keys/, ignored there)
+# Private keys (the JWT keys live in basketline/keys/, ignored there)
 *.pem
 
 # Claude Code: personal settings (a shared .claude/settings.json stays tracked)

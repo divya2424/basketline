@@ -1,0 +1,34 @@
+"""Daily: deletes deleted tenants' and erased shoppers' rows from the data lake (jobs/purge_tenants.py).
+
+Deleting a tenant on the platform removes its data from every service and from
+ClickHouse at once; its rows in the lake's Iceberg tables are deleted here, and
+again on every run, in case a replay of Kafka appended them again (purge_tenants.py).
+Trigger it by hand to purge sooner.
+"""
+
+from datetime import timedelta
+
+import pendulum
+from airflow.sdk import dag, task
+
+JOBS_PYTHON = "/opt/jobs/bin/python"
+
+
+@dag(
+    schedule="0 2 * * *",
+    start_date=pendulum.datetime(2026, 10, 1, tz="UTC"),
+    catchup=False,
+    max_active_runs=1,
+    is_paused_upon_creation=False,
+    default_args={"retries": 3, "retry_delay": timedelta(minutes=10)},
+    tags=["lake"],
+)
+def tenant_purge():
+    @task.bash
+    def purge() -> str:
+        return f"{JOBS_PYTHON} /opt/airflow/jobs/purge_tenants.py"
+
+    purge()
+
+
+tenant_purge()

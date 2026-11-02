@@ -1,0 +1,63 @@
+<!--
+  Metrics for Prometheus (infra/monitoring/prometheus.yml):
+  - :9363/metrics: ClickHouse's own metrics, events and asynchronous metrics.
+  - :8123/pipeline-metrics: the pipeline's health, read from its tables in the
+    Prometheus text format: the newest stored event's age, the hourly check, the
+    newest backup's age, events in the last hour per store, and errors of the Kafka engine tables (e.g. offsets it can't commit,
+    which leave it re-reading the same messages). Asks for a ClickHouse user (Prometheus sends basic auth).
+-->
+<clickhouse>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+
+    <http_handlers>
+        <rule>
+            <url>/pipeline-metrics</url>
+            <methods>GET</methods>
+            <handler>
+                <type>predefined_query_handler</type>
+                <query>
+                    SELECT name, value, help, type, labels FROM (
+                        SELECT 'basketline_newest_event_age_seconds' AS name,
+                               toFloat64(dateDiff('second', max(ingested_at), now64(3))) AS value,
+                               'Seconds since ClickHouse last stored an event' AS help, 'gauge' AS type,
+                               CAST(map(), 'Map(String, String)') AS labels
+                        FROM analytics.events
+                        UNION ALL
+                        SELECT 'basketline_hourly_check_failed', toFloat64(ifNull(exception, '') != ''),
+                               '1 when the last run of an hourly check failed', 'gauge', map('view', view)
+                        FROM system.view_refreshes WHERE database = 'analytics'
+                        UNION ALL
+                        SELECT 'basketline_hourly_check_age_seconds', toFloat64(dateDiff('second', ifNull(last_success_time, toDateTime(0)), now())),
+                               'Seconds since an hourly check last succeeded', 'gauge', map('view', view)
+                        FROM system.view_refreshes WHERE database = 'analytics'
+                        UNION ALL
+                        SELECT 'basketline_backup_age_seconds', toFloat64(dateDiff('second', max(event_time), now())),
+                               'Seconds since the newest completed backup (a very large value: none yet)', 'gauge',
+                               CAST(map(), 'Map(String, String)')
+                        FROM system.backup_log WHERE status = 'BACKUP_CREATED'
+                        UNION ALL
+                        SELECT 'basketline_clickhouse_kafka_errors_10m',
+                               toFloat64(arrayCount(t -> t > now() - INTERVAL 10 MINUTE, exceptions.time)),
+                               'Kafka engine errors in the last 10 minutes, per queue table', 'gauge', map('table', table)
+                        FROM system.kafka_consumers WHERE database = 'analytics'
+                        UNION ALL
+                        SELECT 'basketline_store_events_last_hour', toFloat64(count()),
+                               'Impressions and clicks stored in the last hour, per store', 'gauge',
+                               map('tenant', toString(tenant_id), 'store', toString(store_id))
+                        FROM analytics.events
+                        WHERE ingested_at > now() - INTERVAL 1 HOUR
+                        GROUP BY tenant_id, store_id
+                    ) ORDER BY name
+                    FORMAT Prometheus
+                </query>
+            </handler>
+        </rule>
+        <defaults/>
+    </http_handlers>
+</clickhouse>

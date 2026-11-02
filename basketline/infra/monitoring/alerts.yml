@@ -1,0 +1,70 @@
+# Shown in Prometheus (http://localhost:9090/alerts) and Grafana. No Alertmanager
+# here: on AWS, route them to the team's pager.
+groups:
+  - name: pipeline
+    rules:
+      - alert: ScrapeTargetDown
+        expr: up == 0
+        for: 5m
+        annotations: { summary: "{{ $labels.job }} ({{ $labels.instance }}) can't be scraped" }
+
+      # ClickHouse reads the serving topics; a lag that keeps growing means it stopped storing.
+      - alert: ClickHouseConsumerLagGrowing
+        expr: sum by (consumergroup) (kafka_consumergroup_lag_sum{consumergroup=~"clickhouse-.*"}) > 1000
+          and sum by (consumergroup) (deriv(kafka_consumergroup_lag_sum{consumergroup=~"clickhouse-.*"}[10m])) > 0
+        for: 10m
+        annotations: { summary: "{{ $labels.consumergroup }} is {{ $value }} messages behind and falling further" }
+
+      # A Kafka engine table that can't commit its offsets re-reads the same messages
+      # forever and stores nothing new; its lag only grows once new events arrive.
+      # Seen after an overload: restarting ClickHouse makes it rejoin its group.
+      - alert: ClickHouseKafkaErrors
+        expr: basketline_clickhouse_kafka_errors_10m > 0
+        for: 5m
+        annotations: { summary: "ClickHouse's {{ $labels.table }} keeps failing to read or commit from Kafka; if it persists, restart ClickHouse" }
+
+      - alert: FlinkJobDown
+        expr: absent(flink_jobmanager_job_uptime) or max(flink_jobmanager_job_uptime) == 0
+        for: 2m
+        annotations: { summary: "The Flink job isn't running" }
+
+      - alert: FlinkJobRestarting
+        expr: increase(flink_jobmanager_job_numRestarts[10m]) > 0
+        annotations: { summary: "The Flink job restarted {{ $value }} times in 10 minutes" }
+
+      - alert: FlinkCheckpointsFailing
+        expr: increase(flink_jobmanager_job_numberOfFailedCheckpoints[15m]) > 0
+        annotations: { summary: "Flink checkpoints are failing: a restart would replay more" }
+
+      # Events older than the watermark (10 minutes) are left out of sessions (still counted elsewhere).
+      - alert: LateRecordsDropped
+        expr: sum(increase(flink_taskmanager_job_task_operator_numLateRecordsDropped[1h])) > 0
+        annotations: { summary: "{{ $value }} late events were left out of sessions in the last hour" }
+
+      - alert: HourlyCheckFailing
+        expr: basketline_hourly_check_failed == 1 or basketline_hourly_check_age_seconds > 3 * 3600
+        annotations: { summary: "The hourly check {{ $labels.view }} failed or hasn't run for 3 hours" }
+
+      # The backup runs daily at 02:30 (airflow/dags/clickhouse_backup.py).
+      - alert: BackupStale
+        expr: basketline_backup_age_seconds > 26 * 3600
+        annotations: { summary: "No ClickHouse backup for {{ $value | humanizeDuration }}" }
+
+  # The services' RED metrics. The targets match loadtest/README.md: ingestion p99 < 500 ms, reads p99 < 1 s.
+  - name: services
+    rules:
+      - alert: HighErrorRate
+        expr: sum by (service) (rate(http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+          / sum by (service) (rate(http_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        annotations: { summary: "{{ $labels.service }}: {{ $value | humanizePercentage }} of requests fail (5xx)" }
+
+      - alert: SlowIngestion
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="ingestion-service", route="/api/v1/analytics/events"}[5m]))) > 0.5
+        for: 10m
+        annotations: { summary: "Event ingestion p99 is {{ $value | humanizeDuration }} (target 500 ms)" }
+
+      - alert: SlowAdReads
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service="insights-service", route=~"/api/v1/ad/.*"}[5m]))) > 1
+        for: 10m
+        annotations: { summary: "/ad p99 is {{ $value | humanizeDuration }} (target 1 s)" }

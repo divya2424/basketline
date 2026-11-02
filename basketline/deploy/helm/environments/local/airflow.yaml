@@ -1,0 +1,50 @@
+# The official Apache Airflow chart (https://airflow.apache.org/docs/helm-chart/)
+# with the image from `docker compose build airflow`: the DAGs and jobs are baked in.
+# Every component and task pod uses it.
+airflowVersion: "3.3.2"
+defaultAirflowRepository: basketline-airflow
+defaultAirflowTag: latest
+
+# Each task runs in its own pod, so nothing but the scheduler and API server
+# runs between the nightly jobs.
+executor: KubernetesExecutor
+# No deferrable tasks, so no triggerer; no StatsD exporter.
+triggerer:
+  enabled: false
+statsd:
+  enabled: false
+
+# The Postgres from infra/postgres/init.sql (airflow_db), not one the chart installs.
+postgresql:
+  enabled: false
+data:
+  metadataConnection:
+    user: airflow_svc
+    pass: airflow_svc_dev
+    protocol: postgresql
+    host: postgres
+    port: 5432
+    db: airflow_db
+    sslmode: disable
+
+# For the lake purge and ClickHouse backup jobs (airflow/jobs); the task pods get
+# them too. The docker-compose development credentials. On AWS: the Glue catalog
+# (PYICEBERG_CATALOG__LAKE__TYPE=glue, no S3 endpoint or keys) and an IAM role for
+# the service account instead of keys (airflow/README.md).
+env:
+  - { name: CLICKHOUSE_URL, value: "http://basketline:basketline_dev@clickhouse:8123/analytics" }
+  - { name: PYICEBERG_CATALOG__LAKE__TYPE, value: sql }
+  - { name: PYICEBERG_CATALOG__LAKE__URI, value: "postgresql+psycopg2://iceberg_svc:iceberg_svc_dev@postgres:5432/iceberg_catalog_db" }
+  - { name: PYICEBERG_CATALOG__LAKE__WAREHOUSE, value: "s3://basketline-pipeline" }
+  - { name: PYICEBERG_CATALOG__LAKE__S3__ENDPOINT, value: "http://archive-storage:8333" }
+  - { name: PYICEBERG_CATALOG__LAKE__S3__REGION, value: us-east-1 }
+  - { name: PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID, value: archive }
+  - { name: PYICEBERG_CATALOG__LAKE__S3__SECRET_ACCESS_KEY, value: archive_dev }
+  # The lake's interactions table as ClickHouse reaches it, for history backfills.
+  # On AWS: https://<bucket>.s3.<region>.amazonaws.com/lake/interactions/, and ClickHouse's IAM role.
+  - { name: LAKE_INTERACTIONS_URL, value: "http://archive-storage:8333/basketline-pipeline/lake/interactions/" }
+  # ClickHouse's backups, as ClickHouse reaches the bucket. On AWS:
+  # https://<bucket>.s3.<region>.amazonaws.com/clickhouse-backups, and ClickHouse's IAM role.
+  - { name: CLICKHOUSE_BACKUP_S3_URL, value: "http://archive-storage:8333/ad-insights-archive/clickhouse-backups" }
+  - { name: BACKUP_S3_ACCESS_KEY_ID, value: archive }
+  - { name: BACKUP_S3_SECRET_ACCESS_KEY, value: archive_dev }

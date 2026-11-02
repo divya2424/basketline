@@ -1,0 +1,17 @@
+# One workspace for the repo: the Basketline platform and the simulated retailer.
+# The backend's shared dependencies are the root package.json's.
+packages:
+  - basketline
+  - basketline/packages/*
+  - basketline/services/*
+  - basketline/dashboard
+  - retailer-sim
+  - retailer-sim/packages/*
+  - retailer-sim/services/*
+  - retailer-sim/storefront
+allowBuilds:
+  esbuild: false
+# Packages must be a day old before pnpm installs them (minimumReleaseAge), except
+# our own, published from github.com/divya2424 and used as soon as they're out.
+minimumReleaseAgeExclude:
+  - '@divya2424/*'

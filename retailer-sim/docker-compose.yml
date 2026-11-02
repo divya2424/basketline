@@ -1,0 +1,90 @@
+# The simulated retailer: its sign-in, catalog and campaign services, and their
+# own Postgres, standing in for a retailer's own systems. Start the platform
+# first (../basketline), create this folder's keys once (`pnpm keys`), then:
+#   docker compose up -d --build
+# The services join the platform's network for its Kafka (their own topics) and
+# call Basketline only through its public API, at the gateway, with each store's
+# API key. The storefront (storefront/) runs with `pnpm dev` on
+# http://localhost:5174 and reaches these services on the ports published here.
+name: retailer-sim
+
+x-service-env: &service-env
+  NODE_ENV: production
+  KAFKA_BROKERS: kafka:19092
+  LOG_LEVEL: info
+  # The retailer's own token key (retailer-auth-service signs with the private half).
+  JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
+  # Seals the stores' Basketline API keys at rest and on Kafka.
+  RETAILER_SECRETS_KEY_FILE: /run/keys/secrets.key
+  # Basketline's public API: onboarding, shopper and integration tokens, the retail API.
+  BASKETLINE_API_URL: http://gateway:8080/api/v1
+
+services:
+  retailer-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5433:5432"]
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - retailer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The store's logins (customers, staff), connecting stores to Basketline, and
+  # Basketline shopper tokens for signed-in customers.
+  retailer-auth-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: retailer-sim/services/retailer-auth-service }, secrets: [npm_token] }
+    # > SHUTDOWN_DRAIN_MS (5s) + SHUTDOWN_TIMEOUT_MS (25s), so Docker doesn't SIGKILL mid-shutdown.
+    stop_grace_period: 35s
+    # Started again after a crash, as Kubernetes would.
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4006
+      DATABASE_URL: postgres://retailer_auth_svc:retailer_auth_svc_dev@retailer-postgres:5432/retailer_auth_db
+      JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
+    ports: ["127.0.0.1:4006:4006"]
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { retailer-postgres: { condition: service_healthy } }
+
+  product-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: retailer-sim/services/product-service }, secrets: [npm_token] }
+    stop_grace_period: 35s
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4002
+      DATABASE_URL: postgres://product_svc:product_svc_dev@retailer-postgres:5432/product_db
+    ports: ["127.0.0.1:4002:4002"]
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { retailer-postgres: { condition: service_healthy } }
+
+  campaign-service:
+    build: { context: .., dockerfile: Dockerfile, args: { SERVICE: retailer-sim/services/campaign-service }, secrets: [npm_token] }
+    stop_grace_period: 35s
+    restart: unless-stopped
+    environment:
+      <<: *service-env
+      PORT: 4003
+      DATABASE_URL: postgres://campaign_svc:campaign_svc_dev@retailer-postgres:5432/campaign_db
+    ports: ["127.0.0.1:4003:4003"]
+    volumes: ["./keys:/run/keys:ro"]
+    depends_on: { retailer-postgres: { condition: service_healthy } }
+
+volumes:
+  retailer-pgdata:
+
+networks:
+  default:
+    name: basketline_default
+    external: true
+
+secrets:
+  # Read access to GitHub Packages, used only while building images (../basketline/docker-compose.yml).
+  npm_token:
+    environment: NODE_AUTH_TOKEN

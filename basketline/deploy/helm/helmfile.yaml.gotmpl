@@ -1,0 +1,37 @@
+# Every service is its own Helm release: each one installs, upgrades and rolls
+# back on its own, and none waits for another (they retry until their
+# dependencies answer, and stay unready until then).
+#
+#   all services:  helmfile -e local apply
+#   one service:   helmfile -e local -l name=gateway apply
+#
+# An environment is a folder of per-release values under environments/.
+environments:
+  local: {}
+---
+helmDefaults:
+  # Wait for the rollout, and roll back a release whose pods never become ready.
+  wait: true
+  atomic: true
+  timeout: 600
+  createNamespace: true
+
+repositories:
+  - name: apache-airflow
+    url: https://airflow.apache.org
+
+releases:
+{{- range list "gateway" "auth-service" "ingestion-service" "insights-service" "flink-streaming" }}
+  - name: {{ . }}
+    namespace: basketline
+    chart: ./charts/{{ . }}
+    values:
+      - environments/{{ $.Environment.Name }}/{{ . }}.yaml
+{{- end }}
+  # The batch jobs (basketline/airflow), on the official chart.
+  - name: airflow
+    namespace: basketline
+    chart: apache-airflow/airflow
+    version: 1.22.0
+    values:
+      - environments/{{ .Environment.Name }}/airflow.yaml

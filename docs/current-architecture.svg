@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="900" viewBox="0 0 1800 900" role="img" aria-labelledby="title desc">
+  <title id="title">Basketline local architecture (Docker Compose)</title>
+  <desc id="desc">What runs locally: the retailer simulation (its own compose project) calls Basketline's gateway, which routes to auth-, ingestion- and insights-service; Kafka; the Flink job; ClickHouse; Kafka Connect writing Iceberg tables to SeaweedFS with the catalog in Postgres; Airflow; and the optional monitoring and logs profiles.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker><marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker><marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/></marker><marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ea580c"/></marker>
+    <style>
+      text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#172033}
+      .title{font-size:34px;font-weight:750}.sub{font-size:16px;fill:#475569}
+      .zone{font-size:15px;font-weight:700;letter-spacing:.06em}
+      .head{font-size:18px;font-weight:700}.body{font-size:14px;fill:#334155}.small{font-size:12px;fill:#475569}
+      .tag{font-size:12px;font-weight:700;fill:#1d4ed8}
+      .infra{fill:#f8fafc;stroke:#cbd5e1;stroke-width:2}.svc{fill:#eff6ff;stroke:#60a5fa;stroke-width:2}
+      .kafka{fill:#fff7ed;stroke:#fb923c;stroke-width:2}.proc{fill:#f5f3ff;stroke:#a78bfa;stroke-width:2}
+      .db{fill:#ecfdf5;stroke:#34d399;stroke-width:2}.archive{fill:#f0fdfa;stroke:#2dd4bf;stroke-width:2}
+      .ops{fill:#fdf2f8;stroke:#f472b6;stroke-width:2}.client{fill:#ffffff;stroke:#94a3b8;stroke-width:2}
+      .retailer{fill:#fafafa;stroke:#94a3b8;stroke-width:2;stroke-dasharray:9 7}
+      .platform{fill:#f8fbff;stroke:#2563eb;stroke-width:3}
+      .region{fill:#fbfdff;stroke:#0f766e;stroke-width:2.5;stroke-dasharray:10 6}
+      .pool{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5}
+      .arrow{fill:none;stroke:#64748b;stroke-width:2.2;marker-end:url(#arrow)}
+      .live{fill:none;stroke:#2563eb;stroke-width:2.6;marker-end:url(#arrowBlue)}
+      .batch{fill:none;stroke:#0d9488;stroke-width:2.2;stroke-dasharray:7 6;marker-end:url(#arrowTeal)}
+      .ref{fill:none;stroke:#ea580c;stroke-width:2.2;marker-end:url(#arrowOrange)}
+      .lbl{font-size:12px;fill:#334155}
+    </style>
+  </defs>
+  <rect width="1800" height="900" fill="#ffffff"/>
+  <text x="40" y="58" class="title">Basketline — local architecture (Docker Compose)</text>
+  <text x="40" y="88" class="sub">basketline/docker-compose.yml and retailer-sim/docker-compose.yml on one machine: single-node Kafka, Flink, ClickHouse and S3-compatible storage, not HA.</text>
+  <rect x="30" y="120" width="300" height="640" rx="20" class="retailer"/>
+  <text x="50" y="150" class="zone" fill="#64748b">RETAILER-SIM (own compose)</text>
+  <rect x="50" y="170" width="260" height="120" rx="14" class="client"/>
+  <text x="66" y="198" class="head">Storefront :5174</text>
+  <text x="66" y="222" class="body">Vite dev server</text>
+  <text x="66" y="242" class="body">Basketline SDK in the page</text>
+  <rect x="50" y="310" width="260" height="120" rx="14" class="client"/>
+  <text x="66" y="338" class="head">retailer-auth :4006</text>
+  <text x="66" y="362" class="body">Shopper logins</text>
+  <text x="66" y="382" class="body">Asks Basketline for tokens</text>
+  <rect x="50" y="450" width="260" height="140" rx="14" class="client"/>
+  <text x="66" y="478" class="head">product, campaign</text>
+  <text x="66" y="502" class="body">services :4002, :4003</text>
+  <text x="66" y="522" class="body">catalog, campaigns, products</text>
+  <text x="66" y="542" class="body">→ /retail/* · Postgres :5433</text>
+  <rect x="50" y="610" width="260" height="130" rx="14" class="client"/>
+  <text x="66" y="638" class="head">Dashboard :5173</text>
+  <text x="66" y="662" class="body">pnpm dev in</text>
+  <text x="66" y="682" class="body">basketline/dashboard</text>
+  <text x="66" y="702" class="body">/ad metrics per campaign</text>
+  <rect x="350" y="120" width="1430" height="650" rx="22" class="platform"/>
+  <text x="370" y="150" class="zone" fill="#2563eb">BASKETLINE (basketline/docker-compose.yml)</text>
+  <rect x="380" y="170" width="180" height="420" rx="14" class="svc"/>
+  <text x="396" y="198" class="head">gateway :8080</text>
+  <text x="396" y="222" class="body">JWT check</text>
+  <text x="396" y="242" class="body">routes to one</text>
+  <text x="396" y="262" class="body">service per request</text>
+  <text x="396" y="282" class="body">CORS per tenant</text>
+  <text x="396" y="302" class="body">per-IP rate limits</text>
+  <rect x="590" y="170" width="230" height="120" rx="14" class="svc"/>
+  <text x="606" y="198" class="head">auth-service :4001</text>
+  <text x="606" y="222" class="body">tenants, keys, tokens</text>
+  <text x="606" y="242" class="body">Postgres identity_db</text>
+  <rect x="590" y="310" width="230" height="150" rx="14" class="svc"/>
+  <text x="606" y="338" class="head">ingestion-service :4004</text>
+  <text x="606" y="362" class="body">/analytics/events</text>
+  <text x="606" y="382" class="body">/retail/* (reference)</text>
+  <text x="606" y="402" class="body">erasure, tenant deletion</text>
+  <rect x="590" y="480" width="230" height="110" rx="14" class="svc"/>
+  <text x="606" y="508" class="head">insights-service :4005</text>
+  <text x="606" y="532" class="body">/ad/{campaign}/{metric}</text>
+  <text x="606" y="552" class="body">as basketline_reader</text>
+  <rect x="850" y="170" width="260" height="420" rx="14" class="kafka"/>
+  <text x="866" y="198" class="head">Kafka :9092 (KRaft)</text>
+  <text x="866" y="222" class="body">retail.interactions.v1</text>
+  <text x="866" y="242" class="small">  3 partitions · 14 days</text>
+  <text x="866" y="262" class="body">retail.identity-events.v1</text>
+  <text x="866" y="282" class="body">retail.catalog-events.v1</text>
+  <text x="866" y="302" class="body">retail.campaign-events.v1</text>
+  <text x="866" y="322" class="body">retail.campaign-products.v1</text>
+  <text x="866" y="342" class="body">auth.tenant.v1</text>
+  <text x="866" y="362" class="small">  compacted reference topics</text>
+  <text x="866" y="382" class="body">serving.events.v1</text>
+  <text x="866" y="402" class="body">serving.attributed_baskets.v1</text>
+  <text x="866" y="422" class="body">serving.sessions.v1</text>
+  <text x="866" y="442" class="small">  48 hours</text>
+  <text x="866" y="462" class="body">lake-sink.control (Connect)</text>
+  <rect x="1140" y="170" width="260" height="200" rx="14" class="proc"/>
+  <text x="1156" y="198" class="head">flink-streaming :8081</text>
+  <text x="1156" y="222" class="body">One job, parallelism 2</text>
+  <text x="1156" y="242" class="body">Ad events</text>
+  <text x="1156" y="262" class="body">Attribution: 7-day join</text>
+  <text x="1156" y="282" class="body">Sessions: 30-min window</text>
+  <text x="1156" y="302" class="body">RocksDB, checkpoints 60 s</text>
+  <rect x="1140" y="390" width="260" height="200" rx="14" class="archive"/>
+  <text x="1156" y="418" class="head">connect :8083</text>
+  <text x="1156" y="442" class="body">Kafka Connect, Iceberg</text>
+  <text x="1156" y="462" class="body">sink 1.12: every topic</text>
+  <text x="1156" y="482" class="body">flattened, typed columns</text>
+  <text x="1156" y="502" class="body">commits hourly</text>
+  <rect x="1430" y="170" width="330" height="200" rx="14" class="db"/>
+  <text x="1446" y="198" class="head">ClickHouse :8123</text>
+  <text x="1446" y="222" class="body">Kafka engine tables → staging</text>
+  <text x="1446" y="242" class="body">(3 days) → materialized views →</text>
+  <text x="1446" y="262" class="body">daily tables (forever)</text>
+  <text x="1446" y="282" class="body">hourly check (refreshable view)</text>
+  <text x="1446" y="302" class="body">row policy for the reader</text>
+  <rect x="1430" y="390" width="330" height="200" rx="14" class="archive"/>
+  <text x="1446" y="418" class="head">archive-storage :8333</text>
+  <text x="1446" y="442" class="body">SeaweedFS (S3 API)</text>
+  <text x="1446" y="462" class="body">basketline-pipeline/lake/:</text>
+  <text x="1446" y="482" class="small">  Iceberg data and metadata</text>
+  <text x="1446" y="502" class="body">ClickHouse backups</text>
+  <rect x="380" y="640" width="440" height="110" rx="14" class="ops"/>
+  <text x="396" y="668" class="head">Monitoring (profiles)</text>
+  <text x="396" y="692" class="body">monitoring: Prometheus :9090, Grafana :3000,</text>
+  <text x="396" y="712" class="body">kafka-exporter · logs: Loki, Alloy</text>
+  <rect x="850" y="640" width="550" height="110" rx="14" class="ops"/>
+  <text x="866" y="668" class="head">airflow :8082</text>
+  <text x="866" y="692" class="body">history_backfill (lake → daily tables, icebergS3)</text>
+  <text x="866" y="712" class="body">clickhouse_backup · tenant_purge (lake)</text>
+  <rect x="1430" y="640" width="330" height="110" rx="14" class="db"/>
+  <text x="1446" y="668" class="head">postgres :5432</text>
+  <text x="1446" y="692" class="body">identity_db · airflow_db</text>
+  <text x="1446" y="712" class="body">iceberg_catalog_db (the lake's catalog)</text>
+  <path d="M310,230 H378" class="live"/>
+  <text x="318" y="222" class="lbl">events</text>
+  <path d="M310,370 H378" class="arrow"/>
+  <path d="M310,520 H378" class="ref"/>
+  <path d="M310,675 L378,570" class="arrow"/>
+  <path d="M560,230 H588" class="arrow"/>
+  <path d="M560,385 H588" class="live"/>
+  <path d="M560,535 H588" class="arrow"/>
+  <path d="M820,385 H848" class="live"/>
+  <text x="815" y="376" class="lbl">publish</text>
+  <path d="M1110,260 H1138" class="live"/>
+  <path d="M1400,270 H1428" class="live"/>
+  <path d="M1110,490 H1138" class="batch"/>
+  <path d="M1400,490 H1428" class="batch"/>
+  <path d="M1595,390 V372" class="batch"/>
+  <path d="M1400,670 H1415 V320 H1428" class="batch"/>
+  <path d="M820,560 H835 V610 H1775 V300 H1762" class="arrow"/>
+  <text x="1000" y="604" class="lbl">/ad reads</text>
+  <path d="M380,820 H430" class="live"/>
+  <text x="442" y="825" class="body">Live path</text>
+  <path d="M720,820 H770" class="ref"/>
+  <text x="782" y="825" class="body">Reference data</text>
+  <path d="M1060,820 H1110" class="batch"/>
+  <text x="1122" y="825" class="body">Lake and batch</text>
+  <path d="M1400,820 H1450" class="arrow"/>
+  <text x="1462" y="825" class="body">Tokens, reads</text>
+  <text x="380" y="865" class="small">Source of truth: basketline/docker-compose.yml, flink/sql, infra/clickhouse, connect/. Flink reads only retail.interactions.v1; Connect reads every topic.</text>
+</svg>

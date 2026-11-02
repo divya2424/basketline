@@ -1,0 +1,113 @@
+import type { Request, Response } from 'express'
+import { ACCESS_TOKEN_TTL_SECONDS, badRequest, INTEGRATION_TOKEN_TTL_SECONDS, notFound, page, readPagination, SHOPPER_TOKEN_TTL_SECONDS, tenantHeader, VISITOR_TOKEN_TTL_SECONDS } from '@basketline/platform'
+import type { Session } from '../repositories/session.repository.ts'
+import type { User } from '../repositories/user.repository.ts'
+import type { AccountService } from '../services/account.service.ts'
+import type { AuthService } from '../services/auth.service.ts'
+import type { ShopperService } from '../services/shopper.service.ts'
+
+/** Public user shape. Never includes the password hash. */
+const toPublicUser = ({ id, username, role, tenantId }: User) => ({ id, username, role, tenantId })
+
+/** Dates become ISO strings in res.json. */
+const toPublicSession = ({ id, clientType, sessionStartTime, expiresAt, sessionEndTime }: Session) => ({
+  id,
+  clientType,
+  sessionStartTime,
+  expiresAt,
+  sessionEndTime,
+})
+
+/** The storefront's tenant, for requests made before the user has a token. */
+function requireTenant(req: Request): string {
+  const tenantId = tenantHeader(req)
+  if (!tenantId) throw badRequest('TENANT_REQUIRED', 'The tenant_id header must be a UUID')
+  return tenantId
+}
+
+function sessionStatus(session: Session, now: number) {
+  if (session.sessionEndTime) return 'ended'
+  return session.expiresAt.getTime() <= now ? 'expired' : 'active'
+}
+
+export function createAuthController(service: AuthService, shoppers: ShopperService, accounts: AccountService) {
+  return {
+    async visitor(req: Request, res: Response) {
+      const { token, visitorId } = await service.visitor(requireTenant(req), req.body ?? {})
+      res.status(201).json({ visitorToken: token, tokenType: 'Bearer', expiresIn: VISITOR_TOKEN_TTL_SECONDS, userId: visitorId })
+    },
+
+    async listApiKeys(req: Request, res: Response) {
+      const keys = await shoppers.listApiKeys(req.auth!.tid)
+      res.json({ items: keys.map(({ prefix, name, createdAt, revokedAt }) => ({ prefix, name, createdAt, revokedAt })) })
+    },
+
+    /** The key is in this response only: it is stored hashed. */
+    async createApiKey(req: Request, res: Response) {
+      const { key, prefix, name, createdAt } = await shoppers.createApiKey(req.auth!.tid, req.body.name.trim())
+      res.status(201).json({ key, prefix, name, createdAt })
+    },
+
+    async revokeApiKey(req: Request<{ prefix: string }>, res: Response) {
+      const revoked = await shoppers.revokeApiKey(req.auth!.tid, req.params.prefix)
+      if (revoked === 0) throw notFound('API_KEY_NOT_FOUND', 'No active API key with this prefix')
+      res.status(204).end()
+    },
+
+    async allowedOrigins(req: Request, res: Response) {
+      res.json({ origins: await accounts.allowedOrigins(req.auth!.tid) })
+    },
+
+    async setAllowedOrigins(req: Request, res: Response) {
+      res.json({ origins: await accounts.setAllowedOrigins(req.auth!.tid, req.body.origins) })
+    },
+
+    async shopperToken(req: Request, res: Response) {
+      const { token, userId } = await shoppers.shopperToken(requireTenant(req), req.headers.authorization, req.body)
+      res.status(201).json({ shopperToken: token, tokenType: 'Bearer', expiresIn: SHOPPER_TOKEN_TTL_SECONDS, userId })
+    },
+
+    async integrationToken(req: Request, res: Response) {
+      const { token } = await shoppers.integrationToken(requireTenant(req), req.headers.authorization)
+      res.status(201).json({ integrationToken: token, tokenType: 'Bearer', expiresIn: INTEGRATION_TOKEN_TTL_SECONDS })
+    },
+
+    async login(req: Request, res: Response) {
+      const { accessToken, user, session } = await service.login(req.body, requireTenant(req), { ip: req.ip, log: req.log })
+      res.json({
+        accessToken,
+        tokenType: 'Bearer',
+        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+        user: toPublicUser(user),
+        session: toPublicSession(session),
+      })
+    },
+
+    async logout(req: Request, res: Response) {
+      const session = await service.logout(req.auth!)
+      res.json({ session: toPublicSession(session) })
+    },
+
+    async me(req: Request, res: Response) {
+      const user = await service.me(req.auth!)
+      res.json({
+        user: { ...toPublicUser(user), isActive: user.isActive, createdAt: user.createdAt, lastLoginAt: user.lastLoginAt },
+        sessionId: req.auth!.sid,
+      })
+    },
+
+    async sessions(req: Request, res: Response) {
+      const { limit, offset } = readPagination(req.query)
+      const { items, total } = await service.sessions(req.auth!, limit, offset)
+      const now = Date.now()
+      const body = items.map((session) => ({
+        ...toPublicSession(session),
+        status: sessionStatus(session, now),
+        current: session.id === req.auth!.sid,
+      }))
+      res.json(page(body, total, limit, offset))
+    },
+  }
+}
+
+export type AuthController = ReturnType<typeof createAuthController>

@@ -1,0 +1,14 @@
+{
+  "name": "@retailer-sim/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "dependencies": {
+    "@basketline/platform": "workspace:*",
+    "@divya2424/basketline-sdk": "^0.3.0"
+  }
+}

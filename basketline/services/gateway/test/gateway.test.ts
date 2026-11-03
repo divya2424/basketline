@@ -4,7 +4,7 @@ import express from 'express'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { EventEnvelope } from '@basketline/contracts'
-import { closeDb, createLogger, idempotentHandler, signShopperToken } from '@basketline/platform'
+import { closeDb, createLogger, idempotentHandler, signIntegrationToken, signShopperToken } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildGateway } from '../src/app.ts'
 import { createGatewayDb, migrateGatewayDb, type Db } from '../src/db/client.ts'
@@ -169,6 +169,16 @@ describe('permissions', () => {
     expect((await request(gateway).get(path).set('Authorization', (await visitorTokenFor(keys)).header)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', `Bearer ${shopper.token}`)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
+  })
+
+  it("lets a campaign manager or the tenant's backend (integration token) read a campaign's results per product; not other metrics", async () => {
+    const path = '/api/v1/ad/abc/products'
+    const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, randomUUID())).token}`
+    expect((await request(gateway).get(path)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', (await visitorTokenFor(keys)).header)).status).toBe(401)
+    expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
+    expect((await request(gateway).get(path).set('Authorization', backend)).status).toBe(200)
+    expect((await request(gateway).get('/api/v1/ad/abc/clicks').set('Authorization', backend)).status).toBe(401)
   })
 
   it("doesn't route a retailer's own APIs: its catalog and campaigns are its business", async () => {

@@ -1,7 +1,7 @@
 import { badRequest } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 import { listCampaigns } from '../repositories/campaign.repository.ts'
-import { countDaily, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
+import { countDaily, productResults, type MetricCount, type MetricScope } from '../repositories/metrics.repository.ts'
 
 /** API metric names (kept from the frontend contract). */
 export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers', 'sessions'] as const
@@ -65,6 +65,21 @@ export function createMetricsService({ clickhouse, cacheMs = 0 }: { clickhouse: 
       const period = resolvePeriod(from, to)
       const scope = { tenantId, campaignId, storeId, ...period }
       return { ...(await (cacheMs > 0 ? cachedCount(scope, metric) : countDaily(clickhouse, scope, metric))), period }
+    },
+
+    /**
+     * A campaign's results per product over the period, in one store or all: each
+     * product's impressions, clicks and credited add-to-carts, with CTR and
+     * click-to-basket (0 when there is nothing to divide by).
+     */
+    async products(tenantId: string, campaignId: string, { from, to, storeId }: { from?: string; to?: string; storeId?: string } = {}) {
+      const period = resolvePeriod(from, to)
+      const rows = await productResults(clickhouse, { tenantId, campaignId, storeId, ...period })
+      const rate = (part: number, whole: number) => (whole > 0 ? part / whole : 0)
+      return {
+        items: rows.map((row) => ({ ...row, ctr: rate(row.clicks, row.impressions), clickToBasket: rate(row.addToCarts, row.clicks) })),
+        period,
+      }
     },
 
     /** The tenant's campaigns with activity, per store, for the dashboard. */

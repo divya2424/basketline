@@ -201,13 +201,13 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect(res.body).toMatchObject({ accepted: 2, rejected: 0 })
   })
 
-  it("publishes the batch's store with each event: the store's own ID mapped to a UUID, a UUID as is", async () => {
+  it("publishes the batch's store with each event: the store's own ID mapped to a UUID (as a seller's), a UUID as is", async () => {
     const before = bus.published.length
     const uuid = randomUUID()
     const sendFrom = (storeId: unknown) => request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ ...identityOf(visitor), storeId, events: [toWire({ eventName: 'home_view' })] })
     expect((await sendFrom('web')).body).toMatchObject({ accepted: 1 })
     expect((await sendFrom(uuid.toUpperCase())).body).toMatchObject({ accepted: 1 })
-    expect(bus.published.slice(before).map((m) => (m.envelope.payload as { storeId: string }).storeId)).toEqual([externalId(TENANT, 'store', 'web'), uuid])
+    expect(bus.published.slice(before).map((m) => (m.envelope.payload as { storeId: string }).storeId)).toEqual([externalId(TENANT, 'seller', 'web'), uuid])
     const bad = await sendFrom('not a store id!')
     expect(bad.status).toBe(400)
     expect(bad.body.error.details.errors).toEqual([expect.stringContaining('storeId')])
@@ -426,8 +426,20 @@ describe("a store's own IDs, its reference data and the event types", () => {
     expect((await send([{ eventName: 'user_deleted' as never }])).status).toBe(400)
   })
 
-  it("takes reference data only with an integration token, mapping the store's IDs and its first-party seller", async () => {
-    const product = [{ eventName: 'product_upserted', data: { productId: 'SKU-1', storeId: 'web', name: 'Trail shoe' } }]
+  it("publishes each event's own store (its seller), over the batch's", async () => {
+    const before = bus.published.length
+    const res = await request(app)
+      .post('/api/v1/analytics/events')
+      .set('Authorization', visitor)
+      .send({ ...identityOf(visitor), storeId: 'web', events: [{ ...toWire({ eventName: 'impression', campaignId: 'C-1' }), storeId: 'acme' }, toWire({ eventName: 'home_view' })] })
+    expect(res.body).toMatchObject({ accepted: 2 })
+    expect(bus.published.slice(before).map((m) => (m.envelope.payload as { storeId: string }).storeId)).toEqual([externalId(TENANT, 'seller', 'acme'), externalId(TENANT, 'seller', 'web')])
+    const bad = await request(app).post('/api/v1/analytics/events').set('Authorization', visitor).send({ ...identityOf(visitor), events: [{ ...toWire({ eventName: 'home_view' }), storeId: 'no spaces' }] })
+    expect(bad.status).toBe(400)
+  })
+
+  it("takes reference data only with an integration token, mapping the store's IDs, its first-party seller, and a product's store to its seller", async () => {
+    const product = [{ eventName: 'product_upserted', data: { productId: 'SKU-1', name: 'Trail shoe' } }]
     expect((await retail('catalog', product, visitor)).status).toBe(401)
     expect((await retail('catalog', product, reader)).status).toBe(401)
     expect((await retail('campaigns', [{ eventName: 'campaign_upserted', data: { campaignId: 'C-1', title: 'x', status: 'active', productIds: [] } }], await integration())).status).toBe(400)
@@ -439,24 +451,25 @@ describe("a store's own IDs, its reference data and the event types", () => {
     expect(published.every((m) => m.topic === CATALOG_TOPIC)).toBe(true)
     expect(published.map((m) => [m.envelope.eventType, m.envelope.payload])).toEqual([
       ['seller_upserted', expect.objectContaining({ sellerId: firstParty, tenantId: TENANT })],
-      ['product_upserted', expect.objectContaining({ productId: externalId(TENANT, 'product', 'SKU-1'), storeId: externalId(TENANT, 'store', 'web'), sellerId: firstParty, name: 'Trail shoe', isActive: true })],
+      ['product_upserted', expect.objectContaining({ productId: externalId(TENANT, 'product', 'SKU-1'), storeId: firstParty, sellerId: firstParty, name: 'Trail shoe', isActive: true })],
     ])
   })
 
   it("sends a store's campaigns, and the products it adds to them, to their own topics", async () => {
     const before = bus.published.length
     const res = await retail('campaigns', [
-      { eventName: 'campaign_upserted', data: { campaignId: 'C-7', storeId: 'web', sellerId: 'S-1', title: 'Spring', status: 'active', productIds: ['SKU-1'] } },
-      { eventName: 'campaign_product_added', data: { campaignId: 'C-7', productId: 'SKU-1', storeId: 'web', productName: 'Trail shoe', productPrice: 89.5, category: 'shoes' } },
+      { eventName: 'campaign_upserted', data: { campaignId: 'C-7', sellerId: 'S-1', placement: 'spotlight', title: 'Spring', status: 'active', productIds: ['SKU-1'] } },
+      { eventName: 'campaign_product_added', data: { campaignId: 'C-7', productId: 'SKU-1', sellerId: 'S-1', productName: 'Trail shoe', productPrice: 89.5, category: 'shoes' } },
       { eventName: 'campaign_product_removed', data: { campaignId: 'C-7', productId: 'SKU-2' } },
     ], await integration())
     expect(res.status).toBe(202)
     const [campaign, product, sku2] = [externalId(TENANT, 'campaign', 'C-7'), externalId(TENANT, 'product', 'SKU-1'), externalId(TENANT, 'product', 'SKU-2')]
-    const store = externalId(TENANT, 'store', 'web')
+    // Their store is their seller.
+    const store = externalId(TENANT, 'seller', 'S-1')
     expect(bus.published.slice(before).map((m) => [m.topic, m.key, m.envelope.eventType, m.envelope.payload])).toEqual([
-      [CAMPAIGN_TOPIC, campaign, 'campaign_upserted', expect.objectContaining({ campaignId: campaign, storeId: store, tenantId: TENANT, title: 'Spring', productIds: [product] })],
+      [CAMPAIGN_TOPIC, campaign, 'campaign_upserted', expect.objectContaining({ campaignId: campaign, storeId: store, sellerId: store, placement: 'spotlight', tenantId: TENANT, title: 'Spring', productIds: [product] })],
       [CAMPAIGN_PRODUCTS_TOPIC, `${campaign}:${product}`, 'campaign_product_added', {
-        campaignId: campaign, productId: product, storeId: store, sellerId: null, productName: 'Trail shoe', productPrice: 89.5, category: 'shoes', tenantId: TENANT, updatedAt: expect.any(String),
+        campaignId: campaign, productId: product, storeId: store, sellerId: store, productName: 'Trail shoe', productPrice: 89.5, category: 'shoes', tenantId: TENANT, updatedAt: expect.any(String),
       }],
       [CAMPAIGN_PRODUCTS_TOPIC, `${campaign}:${sku2}`, 'campaign_product_removed', { campaignId: campaign, productId: sku2, tenantId: TENANT, updatedAt: expect.any(String) }],
     ])

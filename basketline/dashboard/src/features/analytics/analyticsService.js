@@ -7,6 +7,7 @@
  *   GET {VITE_API_BASE_URL}/ad/{campaignID}/clickToBasket?from&to&storeId
  *   GET {VITE_API_BASE_URL}/ad/{campaignID}/uniqueCustomers?from&to&storeId
  *   GET {VITE_API_BASE_URL}/ad/{campaignID}/sessions?from&to&storeId
+ *   GET {VITE_API_BASE_URL}/ad/{campaignID}/products?from&to&storeId  (results per product)
  *
  * from/to are ISO timestamps (see timeRange.js); without them the backend
  * counts the last 30 days. storeId limits the counts to one store; without it
@@ -106,6 +107,8 @@ export function createAnalyticsApi({ mode = 'live', baseUrl = '' } = {}) {
       mode,
       baseUrl: null,
       fetchMetric: (campaignId, metric, { signal, from, to } = {}) => getMockMetric(campaignId, metric, signal, { from, to }),
+      // The mock has no per-product data.
+      fetchProducts: async () => [],
     }
   }
 
@@ -117,6 +120,13 @@ export function createAnalyticsApi({ mode = 'live', baseUrl = '' } = {}) {
       const url = buildMetricUrl('', campaignId, metric, { from, to, storeId })
       const body = await apiRequest(url, { signal, baseUrl: baseUrl.replace(/\/+$/, '') })
       return parseMetricResponse(body, metric)
+    },
+    /** The campaign's results per product: [{ productId, name, impressions, clicks, ctr, addToCarts, clickToBasket, … }], most impressions first. */
+    async fetchProducts(campaignId, { signal, from, to, storeId } = {}) {
+      const query = new URLSearchParams(Object.entries({ from, to, storeId }).filter(([, value]) => value)).toString()
+      const body = await apiRequest(`/ad/${encodeURIComponent(campaignId)}/products${query ? `?${query}` : ''}`, { signal, baseUrl: baseUrl.replace(/\/+$/, '') })
+      if (!Array.isArray(body?.items)) throw new MetricRequestError('Unexpected response format')
+      return body.items
     },
   }
 }

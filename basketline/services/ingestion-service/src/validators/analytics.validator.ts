@@ -14,10 +14,12 @@ export interface IncomingEvent {
   pageName?: string | null
   featureName?: string | null
   timestamp: string
+  /** The store (seller) it's about; default the batch's. */
+  storeId?: string | null
   properties?: { campaignId?: string | null; productId?: string | null; [key: string]: unknown }
 }
 
-const EVENT_FIELDS = ['eventId', 'eventName', 'pageName', 'featureName', 'timestamp', 'properties']
+const EVENT_FIELDS = ['eventId', 'eventName', 'storeId', 'pageName', 'featureName', 'timestamp', 'properties']
 
 function validateEvent(event: unknown, at: string): string[] {
   if (!isPlainObject(event)) return [`${at} must be an object`]
@@ -26,6 +28,7 @@ function validateEvent(event: unknown, at: string): string[] {
   if (!isUuid(event.eventId)) errors.push(`${at}.eventId must be a UUID`)
   if (!isOneOf(event.eventName, EVENT_NAMES)) errors.push(`${at}.eventName must be one of ${EVENT_NAMES.join(', ')}`)
   if (!isIsoDate(event.timestamp)) errors.push(`${at}.timestamp must be an ISO 8601 date-time`)
+  if (event.storeId != null && !isStoreRecordId(event.storeId)) errors.push(`${at}.storeId must be a store ID (a UUID or your own ID)`)
   for (const field of ['pageName', 'featureName'] as const) {
     if (event[field] != null && !isNonEmptyString(event[field], 100)) errors.push(`${at}.${field} must be a string (max 100 characters)`)
   }

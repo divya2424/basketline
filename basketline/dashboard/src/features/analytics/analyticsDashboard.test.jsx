@@ -14,7 +14,13 @@ import { MANAGER } from '../../test/utils.jsx'
 /** The dashboard as a campaign manager sees it. */
 const AsManager = ({ children }) => <AuthProvider persist={false} initialUser={MANAGER}>{children}</AuthProvider>
 
-/** Fake API whose requests are settled manually from the test. */
+/** A campaign's results per product, as the API client returns them. */
+const PRODUCTS = [
+  { productId: 'p1', name: 'Aurora Earbuds', impressions: 200, clicks: 20, ctr: 0.1, addToCarts: 5, clickToBasket: 0.25 },
+  { productId: 'p2', name: null, impressions: 50, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },
+]
+
+/** Fake API whose requests are settled manually (metrics) from the test; products answer at once. */
 function createDeferredApi(mode = 'live') {
   const pending = []
   const api = {
@@ -26,6 +32,7 @@ function createDeferredApi(mode = 'live') {
           pending.push({ campaignId, metric, period, resolve, reject })
         }),
     ),
+    fetchProducts: vi.fn(async () => PRODUCTS),
   }
   /** Settles the latest matching request, or the one for `period` when given. */
   const settle = async (campaignId, metric, outcome, period) => {
@@ -153,6 +160,18 @@ describe('AnalyticsPage', () => {
     expect(card('Ad impressions')).not.toHaveTextContent('in total')
     expect(card('Click-through rate (CTR)')).toHaveTextContent('9.96%')
     expect(card('Click-to-basket rate')).toHaveTextContent('25.16%')
+  })
+
+  it("shows the campaign's results per product, in the selected store", async () => {
+    const { api } = createDeferredApi()
+    render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
+    const table = await screen.findByTestId('product-results')
+    const rows = within(table).getAllByRole('row').slice(1).map((row) => row.textContent)
+    // A product never named shows its ID; a rate without clicks is —.
+    expect(rows).toEqual(['Aurora Earbuds2002010.00%525.00%', 'p25000.00%0—'])
+    expect(api.fetchProducts).toHaveBeenLastCalledWith('campaign_001', expect.objectContaining({ storeId: undefined }))
+    await userEvent.selectOptions(screen.getByLabelText('Store'), APP_STORE)
+    expect(api.fetchProducts).toHaveBeenLastCalledWith('campaign_002', expect.objectContaining({ storeId: APP_STORE }))
   })
 
   it('shows a loader while requests are in flight and removes it when all finish', async () => {

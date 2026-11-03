@@ -21,6 +21,7 @@ REVOKE SELECT ON analytics.backfill_runs FROM basketline_reader;
 CREATE ROW POLICY IF NOT EXISTS tenant_isolation ON
     analytics.events, analytics.attributed_baskets, analytics.sessions,
     analytics.daily_campaign_aggregation, analytics.daily_campaign_customers_aggregation,
-    analytics.daily_campaign_sessions_aggregation
+    analytics.daily_campaign_sessions_aggregation, analytics.daily_campaign_product_aggregation,
+    analytics.campaign_products
     FOR SELECT USING tenant_id = toUUIDOrZero(getSetting('SQL_tenant_id'))
     TO basketline_reader;

@@ -1,6 +1,7 @@
 import { METRICS, METRIC_LABELS } from './analyticsService.js'
 import { calculateClickToBasketRate, calculateCtr } from './metricMath.js'
 import { EventTotal, FunnelRate, MetricCard, SplitBar } from './MetricCard.jsx'
+import { ProductResults } from './ProductResults.jsx'
 import { useCampaignMetrics } from './useCampaignMetrics.js'
 
 // The funnel cards count customers, as the API's spec defines these metrics; the
@@ -142,6 +143,11 @@ export function CampaignMetricsPanel({ api, campaignId, storeId, period }) {
           </>,
         )}
       </div>
+
+      <div className="section-head">
+        <h2 className="section-head__title">Products</h2>
+      </div>
+      <ProductResults api={api} campaignId={campaignId} storeId={storeId} period={period} />
     </div>
   )
 }

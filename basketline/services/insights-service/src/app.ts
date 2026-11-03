@@ -1,5 +1,5 @@
 import type { CryptoKey } from 'jose'
-import { authenticate, createBaseApp, createHealth, errorHandler, notFoundHandler, type Health, type Logger } from '@basketline/platform'
+import { authenticate, authenticateIntegration, createBaseApp, createHealth, errorHandler, notFoundHandler, type Health, type Logger } from '@basketline/platform'
 import { pingClickHouse, type ClickHouse } from '@basketline/platform/clickhouse'
 import { createMetricsController } from './controllers/metrics.controller.ts'
 import { adMetricRoutes } from './routes/ad.routes.ts'
@@ -25,7 +25,7 @@ export function buildInsightsApp({ clickhouse, logger, publicKey, metricsCacheMs
   health.addCheck('clickhouse', () => pingClickHouse(clickhouse))
   const app = createBaseApp({ name: 'insights-service', logger, health })
   const metrics = createMetricsController(createMetricsService({ clickhouse, cacheMs: metricsCacheMs }))
-  app.use('/api/v1/ad', adMetricRoutes(metrics, authenticate(publicKey)))
+  app.use('/api/v1/ad', adMetricRoutes(metrics, authenticate(publicKey), authenticateIntegration(publicKey)))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

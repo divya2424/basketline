@@ -106,3 +106,54 @@ export async function countDaily(clickhouse: ClickHouse, { tenantId, campaignId,
     columns: counts,
   }
 }
+
+/** One product's results in a campaign over a period, named as its campaign_product_added last sent it (null if never). */
+export interface ProductResult {
+  productId: string
+  name: string | null
+  category: string | null
+  price: number | null
+  impressions: number
+  clicks: number
+  addToCarts: number
+}
+
+/**
+ * A campaign's results per product over the days in the scope (one store's, or
+ * all), most impressions first, in one query: the daily per-product rows summed,
+ * joined to the products' latest names. Products without activity in the period
+ * aren't listed.
+ */
+export async function productResults(clickhouse: ClickHouse, { tenantId, campaignId, storeId, from, to }: MetricScope): Promise<ProductResult[]> {
+  const result = await clickhouse.query({
+    query: `SELECT toString(product_id) AS productId, name, category, price, impressions, clicks, addToCarts
+            FROM (
+              SELECT product_id, sum(impressions) AS impressions, sum(clicks) AS clicks, sum(click_to_basket) AS addToCarts
+              FROM daily_campaign_product_aggregation
+              WHERE tenant_id = {tenantId:UUID} ${storeId ? 'AND store_id = {storeId:UUID}' : ''} AND campaign_id = {campaignId:UUID}
+                AND day >= {from:Date} AND day < {to:Date}
+              GROUP BY product_id
+            ) AS results
+            LEFT JOIN (
+              SELECT product_id, argMax(product_name, updated_at) AS name, argMax(category, updated_at) AS category, argMax(product_price, updated_at) AS price
+              FROM campaign_products
+              WHERE tenant_id = {tenantId:UUID} AND campaign_id = {campaignId:UUID}
+              GROUP BY product_id
+            ) AS names USING product_id
+            ORDER BY impressions DESC, productId`,
+    query_params: { tenantId, storeId, campaignId, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+    // A product never named gets NULLs, not empty values.
+    clickhouse_settings: { ...tenantRead(tenantId), join_use_nulls: 1 },
+    format: 'JSONEachRow',
+  })
+  const rows = await result.json<Record<string, string | number | null>>()
+  return rows.map((row) => ({
+    productId: String(row.productId),
+    name: row.name === null ? null : String(row.name),
+    category: row.category === null ? null : String(row.category),
+    price: row.price === null ? null : Number(row.price),
+    impressions: Number(row.impressions),
+    clicks: Number(row.clicks),
+    addToCarts: Number(row.addToCarts),
+  }))
+}

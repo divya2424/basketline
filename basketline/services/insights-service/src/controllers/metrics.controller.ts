@@ -21,6 +21,15 @@ export function createMetricsController(service: MetricsService) {
       res.json({ items: await service.campaigns(req.auth!.tid) })
     },
 
+    /** GET /ad/:campaignId/products?storeId — the campaign's results per product; for a campaign manager or a store's backend. */
+    async products(req: Request<{ campaignId: string }>, res: Response) {
+      const { campaignId } = req.params
+      const storeId = queryString(req.query.storeId)?.toLowerCase()
+      const tenantId = req.integration?.tid ?? req.auth!.tid
+      const { items, period } = await service.products(tenantId, campaignId, { from: queryString(req.query.from), to: queryString(req.query.to), storeId })
+      res.json({ campaignId, ...(storeId ? { storeId } : {}), items, period: { from: period.from.toISOString(), to: period.to.toISOString() } })
+    },
+
     /** GET /ad/:campaignId/:metric?storeId — response shape preserved from the frontend contract. */
     async metric(req: WithCampaignId, res: Response) {
       const metric = metricOf(req)

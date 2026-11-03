@@ -64,3 +64,15 @@ export function switchTenant(tenantId, tenantName = null) {
   setRequestTenant(tenantId)
   context.tenantName = tenantName
 }
+
+/** Forgets the chosen marketplace (back to the default tenant), now and after a reload. */
+export function leaveTenant() {
+  try {
+    localStorage.removeItem(TENANT_KEY)
+    localStorage.removeItem(TENANT_NAME_KEY)
+  } catch {
+    // Storage unavailable: nothing was kept.
+  }
+  setRequestTenant(import.meta.env.VITE_TENANT_ID)
+  context.tenantName = null
+}

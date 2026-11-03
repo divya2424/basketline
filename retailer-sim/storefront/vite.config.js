@@ -14,6 +14,8 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react()],
+  // Served as installed (plain ESM): a prebundled copy outlives SDK upgrades while the dev server runs.
+  optimizeDeps: { exclude: ['@divya2424/basketline-sdk'] },
   server: { port: 5174, strictPort: true, proxy },
   preview: { port: 5174, strictPort: true, proxy },
   test: {

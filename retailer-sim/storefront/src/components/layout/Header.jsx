@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useCart } from '../../features/cart/CartContext.jsx'
 import { useAuth } from '../../features/auth/AuthContext.jsx'
 import { LoginModal } from '../../features/auth/LoginModal.jsx'
-import { getRequestContext } from '../../api/requestContext.js'
+import { getRequestContext, leaveTenant } from '../../api/requestContext.js'
 import { trackEvent } from '../../analytics/analytics.js'
 import { EVENT_NAMES } from '../../analytics/eventSchema.js'
 import { Button } from '../common/Button.jsx'
@@ -18,11 +18,15 @@ const cartIcon = (
 
 const navClass = ({ isActive }) => (isActive ? 'nav-link nav-link--active' : 'nav-link')
 
-/** The marketplace's name (to its page), Marketplaces, Shop, the seller portal (for sellers), the signed-in user and Logout (or Log in for visitors), and the cart. */
+/**
+ * In a marketplace: its name (to its page), Marketplaces, Shop, the seller portal (for sellers), the
+ * signed-in user and Logout (or Log in for visitors), and the cart. On the Marketplaces page: the app's own.
+ */
 export function Header() {
   const { totalQuantity } = useCart()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const [loginOpen, setLoginOpen] = useState(false)
 
   const { tenantId, tenantName = null } = getRequestContext()
@@ -32,9 +36,24 @@ export function Header() {
     setLoginOpen(true)
     trackEvent({ featureName: 'header', pageName: 'store', eventName: EVENT_NAMES.LOGIN_CLICK, properties: {} })
   }
+  // Signing out leaves the marketplace: back to the Marketplaces page.
   const signOut = async () => {
+    leaveTenant()
     await logout()
-    navigate('/store')
+    navigate('/')
+  }
+
+  if (pathname === '/') {
+    return (
+      <header className="site-header">
+        <div className="container site-header__inner">
+          <Link to="/" className="brand">
+            <span className="brand__mark" aria-hidden="true" />
+            Marketplaces
+          </Link>
+        </div>
+      </header>
+    )
   }
 
   return (

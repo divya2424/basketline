@@ -290,6 +290,8 @@
 .split__segment--both { background: var(--chart-both); }
 .split__segment--registered { background: var(--chart-registered); }
 .split__segment--visitor { background: var(--chart-visitor); }
+.split__segment--converted { background: var(--chart-registered); }
+.split__segment--browsed { background: var(--chart-visitor); }
 
 /* The conversion between two funnel steps: an arrow with the rate on it. */
 .funnel-rate {

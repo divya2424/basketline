@@ -4,7 +4,7 @@ Basketline's web app, a React + Vite app on the platform's gateway (`..`):
 
 - **Tenants page:** every tenant, with its dashboard, its API keys, and its store in the simulated retailer's storefront (`../../retailer-sim/storefront`). Retailers onboard with Basketline's API (`POST /accounts`); the simulated retailer does it from its storefront's Stores page.
 - **Sign-in:** against the auth service, with roles.
-- **Campaign dashboard:** for campaign managers (every seller's campaigns) and seller managers (their own seller's), with the ad funnel, the audience and sessions.
+- **Campaign dashboard:** for campaign managers, per store or across stores, with the ad funnel, the audience and sessions.
 - **Integration:** each tenant's SDK setup and API keys.
 
 ![The campaign dashboard: the ad funnel (impressions → clicks → click-to-basket, with the conversion rate between each step) and the audience (unique customers and sessions)](docs/dashboard.png)
@@ -62,7 +62,7 @@ Set these in `.env`, starting from `.env.example`.
 
 The app opens on the tenants page (`/`), open to everyone.
 
-- **Onboarding** is the retailer's: its backend calls `POST /accounts` (a name, a tier, and optionally seller managers for its sellers) and keeps the first **API key** from the answer. Every tenant gets an `onboarding` campaign manager, and the seller managers the retailer named, all with the password `test`. The simulated retailer onboards from its storefront's Stores page.
+- **Onboarding** is the retailer's: its backend calls `POST /accounts` (a name and a tier) and keeps the first **API key** from the answer. Every tenant gets an `onboarding` campaign manager, with the password `test`. The simulated retailer onboards from its storefront's Stores page.
 - **Tenants list:** every tenant, newest first. Each row has:
   - **Open store:** opens the storefront on that tenant (`/store?tenant=<id>&name=<name>`), as a visitor;
   - **Analytics:** signs in as the tenant's `onboarding` user and opens `/analytics`;
@@ -71,7 +71,7 @@ The app opens on the tenants page (`/`), open to everyone.
 
 `/analytics` requires signing in to that tenant. Signed out, it redirects to `/`. The chosen tenant is remembered in `localStorage` (`basketline:tenant`).
 
-**Header:** inside a tenant it shows the tenant's name, Analytics for campaign and seller managers, the user and **Logout** (back to the tenants page).
+**Header:** inside a tenant it shows the tenant's name, Analytics for campaign managers, the user and **Logout** (back to the tenants page).
 
 ### Sign-in and roles
 
@@ -80,7 +80,7 @@ The app opens on the tenants page (`/`), open to everyone.
 | **Session** | Kept in `sessionStorage` (`basketline:session:v3`: profile, role, token and expiry, tenant; never the password), so it lasts until the tab closes. Switching tenants means signing in again. |
 | **Expiry** | The token lasts 30 minutes, then the app signs out. |
 | **Logout** | Ends the session on the server too. |
-| **Roles** | Only `campaign-manager` and `seller-manager` users see **Analytics**; a seller manager sees only their seller's campaigns (the simulated retailer names `seller01` for its first seller, password `test`) and not the API keys. Anyone else opening `/analytics` sees "Access restricted", and the dashboard code is never downloaded. The API enforces the role on every request regardless. |
+| **Roles** | Only `campaign-manager` users see **Analytics**. Anyone else opening `/analytics` sees "Access restricted", and the dashboard code is never downloaded. The API enforces the role on every request regardless. |
 
 > **Security note:** any script on the page can read `sessionStorage`, so the app must stay free of XSS. An `httpOnly` cookie would avoid this, but needs backend support.
 
@@ -91,7 +91,7 @@ The app opens on the tenants page (`/`), open to everyone.
 | Section | Cards |
 |---|---|
 | **Ad funnel** | **Ad impressions → Ad clicks → Click-to-basket.** Each card shows the event count, the customers behind it, a web/mobile split and a registered/visitors split. The conversion rate between two steps sits on the arrow between them: CTR, then click-to-basket rate. |
-| **Audience** | **Unique customers:** the people who saw or clicked the ad, split into web only / both / mobile only, and registered / visitors. **Sessions:** visits that saw the ad, how many converted, and the average visit. |
+| **Audience** | **Unique customers:** the people who saw or clicked the ad, split into web only / both / mobile only, and registered / visitors. **Sessions:** visits that saw or clicked the ad, how many converted (added a product they clicked in the ad to the cart in the same visit), and web/mobile. |
 
 ![Compare all campaigns: each campaign's counts with their customers, sessions and conversion rates in one table](docs/dashboard-compare.png)
 
@@ -109,7 +109,7 @@ The screenshots use mock data (`VITE_ANALYTICS_MODE=mock`).
   - **click-to-basket rate** = click-to-basket ÷ clicks × 100;
   - both are shown with 2 decimals, or `—` when the divisor is 0.
 - **Overlaps:** someone on both web and mobile counts once in the total. A visitor who later registered counts as both registered and visitor, and once in the total.
-- **Sessions:** a visit ends after 6 hours without activity. Session numbers arrive about 7 hours after a visit ends.
+- **Sessions:** a visit ends after 30 minutes without activity. Session numbers arrive about 40 minutes after a visit ends.
 
 **Time range.**
 - **Options:** the last 7, 30 (the default) or 90 days, the last year, or a custom range of up to 366 days.
@@ -139,8 +139,8 @@ Every request goes through `apiRequest()` (`src/api/httpClient.js`), one [axios]
 |---|---|
 | Tenants | `GET /accounts`, `DELETE /accounts/{tenantId}` |
 | Sign-in | `POST /auth/login` (`clientType: "web"`), `POST /auth/logout` |
-| Campaign list | `GET /ad/campaigns` (the tenant's campaigns, a seller manager's seller's only), once per sign-in |
-| Dashboard | `GET /ad/{campaignId}/impressions \| clicks \| clickToBasket \| uniqueCustomers \| sessions?from&to` |
+| Campaign list | `GET /ad/campaigns` (the tenant's campaigns with activity, per store), once per sign-in |
+| Dashboard | `GET /ad/{campaignId}/impressions \| clicks \| clickToBasket \| uniqueCustomers \| sessions?from&to&storeId` |
 | Integration | `GET\|POST\|DELETE /auth/api-keys`, `GET\|PUT /auth/allowed-origins` |
 
 ## Project layout

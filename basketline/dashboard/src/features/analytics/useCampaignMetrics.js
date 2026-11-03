@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { METRICS } from './analyticsService.js'
 import { sharedRequest } from '../../api/sharedRequest.js'
 
-const loading = { status: 'loading', value: null, byClientType: null, byUserType: null, customers: null, error: null }
+const loading = { status: 'loading', value: null, byClientType: null, byUserType: null, customers: null, converted: null, error: null }
 const loadingState = () => Object.fromEntries(METRICS.map((metric) => [metric, loading]))
 
 /**
@@ -16,7 +16,7 @@ export const REFRESH_MS = 20_000
  * timeRange.js), in one store (storeId) or all: each one's total (value) and its split by client type
  * (byClientType: { web, mobile }, plus both for unique customers, or null), the
  * customers behind it (customers) and their split by user type (byUserType:
- * { registered, visitor }). Each metric is requested independently and in parallel, so one
+ * { registered, visitor }), and for sessions the converted ones (converted). Each metric is requested independently and in parallel, so one
  * failure never hides the others. Responses for a previous campaign or period
  * (or a superseded retry) are discarded.
  *
@@ -37,11 +37,11 @@ export function useCampaignMetrics(api, campaignId, { from, to } = {}, storeId) 
       if (!quiet) setMetrics((current) => ({ ...current, [metric]: loading }))
 
       sharedRequest(api, `${campaignId}/${metric}/${from ?? ''}/${to ?? ''}/${storeId ?? ''}`, () => api.fetchMetric(campaignId, metric, { from, to, storeId })).then(
-        ({ count, byClientType, byUserType = null, customers = null }) => {
+        ({ count, byClientType, byUserType = null, customers = null, converted = null }) => {
           if (requestsRef.current[metric] !== request) return
           setMetrics((current) => ({
             ...current,
-            [metric]: { status: 'success', value: count, byClientType, byUserType, customers, error: null },
+            [metric]: { status: 'success', value: count, byClientType, byUserType, customers, converted, error: null },
           }))
         },
         (error) => {

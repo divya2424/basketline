@@ -1,11 +1,11 @@
 // DEMO DATA ONLY. Used when VITE_ANALYTICS_MODE=mock; the dashboard labels it as
 // mock data. Never used as a fallback when live requests fail.
 const MOCK_COUNTS = {
-  campaign_001: { impressions: 12450, clicks: 1240, clickToBasket: 312, uniqueCustomers: 4870 },
-  campaign_002: { impressions: 8120, clicks: 640, clickToBasket: 96, uniqueCustomers: 3310 },
+  campaign_001: { impressions: 12450, clicks: 1240, clickToBasket: 312, uniqueCustomers: 4870, sessions: 6120 },
+  campaign_002: { impressions: 8120, clicks: 640, clickToBasket: 96, uniqueCustomers: 3310, sessions: 4050 },
   // All zeros, to demonstrate the "—" display for zero denominators.
-  campaign_003: { impressions: 0, clicks: 0, clickToBasket: 0, uniqueCustomers: 0 },
-  campaign_004: { impressions: 4310, clicks: 205, clickToBasket: 41, uniqueCustomers: 1980 },
+  campaign_003: { impressions: 0, clicks: 0, clickToBasket: 0, uniqueCustomers: 0, sessions: 0 },
+  campaign_004: { impressions: 4310, clicks: 205, clickToBasket: 41, uniqueCustomers: 1980, sessions: 2390 },
 }
 
 const MOCK_LATENCY_MS = 350
@@ -29,6 +29,7 @@ function generatedCounts(campaignId) {
     clicks,
     clickToBasket: Math.round(clicks * (0.1 + (hash % 5) / 20)),
     uniqueCustomers: Math.round(impressions * 0.4),
+    sessions: Math.round(impressions * 0.5),
   }
 }
 
@@ -45,7 +46,10 @@ export function getMockMetric(campaignId, metric, signal, period) {
       // A quarter of the customers registered, a tenth of them seen as a visitor first.
       const registered = Math.round(people * 0.25)
       const byUserType = { registered, visitor: people - registered + Math.round(registered * 0.1) }
-      resolve({ count, byClientType: { web, mobile: count - web + both, ...(both ? { both } : {}) }, byUserType, ...customers })
+      const byClientType = { web, mobile: count - web + both, ...(both ? { both } : {}) }
+      // Sessions: no user-type split; about one in twenty converted.
+      if (metric === 'sessions') return resolve({ count, byClientType, converted: Math.round(count * 0.05) })
+      resolve({ count, byClientType, byUserType, ...customers })
     }, MOCK_LATENCY_MS)
     signal?.addEventListener('abort', () => {
       clearTimeout(timer)

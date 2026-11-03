@@ -10,6 +10,7 @@ const HINTS = {
   clicks: 'Customers who clicked the ad',
   clickToBasket: 'Customers who added a product to their cart within 7 days of clicking it in the ad',
   uniqueCustomers: 'People who saw or clicked the ad, each counted once',
+  sessions: 'Visits that saw or clicked the ad (a visit ends after 30 minutes without activity)',
 }
 
 /** Web and mobile, as a split bar (unique customers: web only, both, mobile only). */
@@ -45,14 +46,28 @@ function userTypes(state) {
   )
 }
 
+/** Sessions that added a product they clicked in the ad to the cart, and the rest. */
+function conversions(state) {
+  if (state.converted == null || state.value == null) return null
+  return (
+    <SplitBar
+      title="Added a clicked product to the cart in the same visit"
+      segments={[
+        { label: 'Converted', value: state.converted, tone: 'converted' },
+        { label: 'Other', value: Math.max(state.value - state.converted, 0), tone: 'browsed' },
+      ]}
+    />
+  )
+}
+
 /**
  * One campaign's metrics as a funnel (impressions → clicks → click-to-basket,
  * with the conversion rate between each step) and its audience (unique
- * customers), in one store (storeId) or all.
+ * customers and sessions), in one store (storeId) or all.
  */
 export function CampaignMetricsPanel({ api, campaignId, storeId, period }) {
   const { metrics, retry } = useCampaignMetrics(api, campaignId, period, storeId)
-  const { clicks, impressions, clickToBasket, uniqueCustomers } = metrics
+  const { clicks, impressions, clickToBasket, uniqueCustomers, sessions } = metrics
   const pendingCount = METRICS.filter((metric) => metrics[metric].status === 'loading').length
   const card = (metric, children, tone, value) => (
     <MetricCard label={METRIC_LABELS[metric]} hint={HINTS[metric]} state={metrics[metric]} value={value} onRetry={() => retry(metric)} tone={tone}>
@@ -117,6 +132,13 @@ export function CampaignMetricsPanel({ api, campaignId, storeId, period }) {
           <>
             {platform(uniqueCustomers, 'Where they came from')}
             {userTypes(uniqueCustomers)}
+          </>,
+        )}
+        {card(
+          'sessions',
+          <>
+            {conversions(sessions)}
+            {platform(sessions, 'Visits with events from')}
           </>,
         )}
       </div>

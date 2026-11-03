@@ -23,6 +23,7 @@ export function CampaignComparison({ api, campaigns, storeId, period }) {
             <th scope="col">Clicks</th>
             <th scope="col">Click-to-basket</th>
             <th scope="col">Unique customers</th>
+            <th scope="col">Sessions</th>
             <th scope="col">CTR</th>
             <th scope="col">Click-to-basket rate</th>
           </tr>
@@ -43,7 +44,7 @@ export function CampaignComparison({ api, campaigns, storeId, period }) {
 
 function ComparisonRow({ api, campaign, storeId, period }) {
   const { metrics, retry } = useCampaignMetrics(api, campaign.id, period, storeId)
-  const { clicks, impressions, clickToBasket, uniqueCustomers } = metrics
+  const { clicks, impressions, clickToBasket, uniqueCustomers, sessions } = metrics
   const failed = METRICS.filter((metric) => metrics[metric].status === 'error')
 
   return (
@@ -60,6 +61,7 @@ function ComparisonRow({ api, campaign, storeId, period }) {
       <CountCell state={clicks} />
       <CountCell state={clickToBasket} />
       <CountCell state={uniqueCustomers} />
+      <CountCell state={sessions} />
       <RateCell inputs={[clicks, impressions]} value={calculateCtr(clicks.value, impressions.value)} />
       <RateCell inputs={[clickToBasket, clicks]} value={calculateClickToBasketRate(clickToBasket.value, clicks.value)} />
     </tr>

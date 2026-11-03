@@ -82,6 +82,9 @@ describe('analyticsService', () => {
       byUserType: { registered: 3, visitor: 2 },
     })
     expect(parseMetricResponse({ count: 5, total_web_clicks: 3 }, 'clicks')).toEqual({ count: 5, byClientType: null, byUserType: null })
+    // As GET /ad/:id/sessions answers: no customers or user types, the converted sessions.
+    const sessions = { count: 6, total_sessions: 6, total_web_sessions: 4, total_mobile_sessions: 3, total_converted_sessions: 2 }
+    expect(parseMetricResponse(sessions, 'sessions')).toEqual({ count: 6, byClientType: { web: 4, mobile: 3 }, byUserType: null, converted: 2 })
     expect(() => parseMetricResponse({ total: 5 })).toThrow('Unexpected response format')
     expect(() => parseMetricResponse(-1)).toThrow('Unexpected response format')
     expect(() => parseMetricResponse('')).toThrow('Unexpected response format')
@@ -117,7 +120,7 @@ describe('AnalyticsPage', () => {
     expect(screen.getByRole('heading', { name: 'Campaign Analytics' })).toBeInTheDocument()
     const requested = api.fetchMetric.mock.calls.map(([id, metric]) => `${id}/${metric}`)
     expect(new Set(requested)).toEqual(
-      new Set(['campaign_001/clicks', 'campaign_001/impressions', 'campaign_001/clickToBasket', 'campaign_001/uniqueCustomers']),
+      new Set(['campaign_001/clicks', 'campaign_001/impressions', 'campaign_001/clickToBasket', 'campaign_001/uniqueCustomers', 'campaign_001/sessions']),
     )
     expect(card('Ad clicks')).toHaveAttribute('aria-busy', 'true')
 
@@ -126,6 +129,7 @@ describe('AnalyticsPage', () => {
       clicks: { count: 1240, customers: 1100, byClientType: { web: 1000, mobile: 240 } },
       clickToBasket: { count: 312, customers: 280, byUserType: { registered: 200, visitor: 90 } },
       uniqueCustomers: { count: 4870, byClientType: { web: 3000, mobile: 2200, both: 330 }, byUserType: { registered: 1200, visitor: 3900 } },
+      sessions: { count: 6120, byClientType: { web: 4000, mobile: 2300 }, converted: 310 },
     })
     expect(card('Ad impressions')).toHaveTextContent('12,450')
     expect(card('Unique customers')).toHaveTextContent('4,870')
@@ -134,6 +138,10 @@ describe('AnalyticsPage', () => {
     // Web only, both, mobile only: 3,000 − 330 and 2,200 − 330.
     expect(card('Unique customers')).toHaveTextContent(/Web only 2,670\s*Both 330\s*Mobile only 1,870/)
     expect(card('Unique customers')).toHaveTextContent(/Registered 1,200\s*Visitors 3,900/)
+    // Sessions: converted in the same visit and the rest, then by platform.
+    expect(card('Sessions')).toHaveTextContent('6,120')
+    expect(card('Sessions')).toHaveTextContent(/Converted 310\s*Other 5,810/)
+    expect(card('Sessions')).toHaveTextContent(/Web 4,000\s*Mobile 2,300/)
     // The funnel's headline is customers, as the API's spec defines the metrics; the event total is under it.
     expect(screen.getByTestId('metric-Ad clicks')).toHaveTextContent('1,100')
     expect(card('Ad clicks')).toHaveTextContent('1,240 clicks in total')
@@ -150,27 +158,28 @@ describe('AnalyticsPage', () => {
   it('shows a loader while requests are in flight and removes it when all finish', async () => {
     const { api, settle } = createDeferredApi()
     render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
-    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('Loading metrics for campaign_001… (0 of 4 loaded)')
+    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('Loading metrics for campaign_001… (0 of 5 loaded)')
     expect(within(card('Ad clicks')).getByRole('status')).toHaveTextContent('Loading Ad clicks')
 
     await settle('campaign_001', 'clicks', 10)
-    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(1 of 4 loaded)')
+    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(1 of 5 loaded)')
     expect(within(card('Ad clicks')).queryByRole('status')).not.toBeInTheDocument()
 
     await settle('campaign_001', 'impressions', 100)
     await settle('campaign_001', 'clickToBasket', new Error('boom'))
     await settle('campaign_001', 'uniqueCustomers', 7)
+    await settle('campaign_001', 'sessions', 9)
     expect(screen.queryByTestId('metrics-loading')).not.toBeInTheDocument()
   })
 
   it('shows the loader again while a failed metric is retried', async () => {
     const { api, settle, resolveAll } = createDeferredApi()
     render(<AnalyticsPage campaigns={campaigns} api={api} />, { wrapper: AsManager })
-    await resolveAll('campaign_001', { impressions: 1, clickToBasket: 1, uniqueCustomers: 1 })
+    await resolveAll('campaign_001', { impressions: 1, clickToBasket: 1, uniqueCustomers: 1, sessions: 1 })
     await settle('campaign_001', 'clicks', new Error('Request failed with status 500'))
     expect(screen.queryByTestId('metrics-loading')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry Ad clicks' }))
-    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(3 of 4 loaded)')
+    expect(screen.getByTestId('metrics-loading')).toHaveTextContent('(4 of 5 loaded)')
   })
 
   it('renders zero counts and shows — for zero denominators', async () => {
@@ -315,7 +324,7 @@ describe('time range filter', () => {
 
     const sevenDays = toPeriod({ preset: '7d' })
     const newCalls = api.fetchMetric.mock.calls.filter(([, , period]) => period.from === sevenDays.from)
-    expect(newCalls.map(([, metric]) => metric).sort()).toEqual(['clickToBasket', 'clicks', 'impressions', 'uniqueCustomers'])
+    expect(newCalls.map(([, metric]) => metric).sort()).toEqual(['clickToBasket', 'clicks', 'impressions', 'sessions', 'uniqueCustomers'])
     expect(screen.getByTestId('analytics-period')).toHaveTextContent(formatRangeLabel({ preset: '7d' }))
 
     // The 30-day answer arrives after the switch: it must not show.

@@ -6,6 +6,7 @@
  *   GET {VITE_API_BASE_URL}/ad/{campaignID}/impressions?from&to&storeId
  *   GET {VITE_API_BASE_URL}/ad/{campaignID}/clickToBasket?from&to&storeId
  *   GET {VITE_API_BASE_URL}/ad/{campaignID}/uniqueCustomers?from&to&storeId
+ *   GET {VITE_API_BASE_URL}/ad/{campaignID}/sessions?from&to&storeId
  *
  * from/to are ISO timestamps (see timeRange.js); without them the backend
  * counts the last 30 days. storeId limits the counts to one store; without it
@@ -14,7 +15,8 @@
  * Impressions, clicks and click-to-basket also have the customers behind them
  * (customers), per user type e.g. customers_registered_clicks; unique customers
  * have has_visited_in_web, has_visited_in_mobile and has_visited_in_both, and per
- * user type has_visited_registered and has_visited_visitor.
+ * user type has_visited_registered and has_visited_visitor; sessions have
+ * total_web_sessions, total_mobile_sessions and total_converted_sessions.
  *
  * The response contract is not confirmed yet. parseMetricResponse() is the only
  * place that knows the response shape: change it when the backend is final.
@@ -22,7 +24,7 @@
 import { getMockMetric } from './mockMetrics.js'
 import { apiRequest } from '../../api/httpClient.js'
 
-export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers']
+export const METRICS = ['clicks', 'impressions', 'clickToBasket', 'uniqueCustomers', 'sessions']
 
 /** The response field of each metric's count per client type (unique customers also on both). */
 const CLIENT_FIELDS = {
@@ -30,6 +32,7 @@ const CLIENT_FIELDS = {
   impressions: { web: 'total_web_impressions', mobile: 'total_mobile_impressions' },
   clickToBasket: { web: 'total_web_click_to_basket', mobile: 'total_mobile_click_to_basket' },
   uniqueCustomers: { web: 'has_visited_in_web', mobile: 'has_visited_in_mobile', both: 'has_visited_in_both' },
+  sessions: { web: 'total_web_sessions', mobile: 'total_mobile_sessions' },
 }
 
 /** Customers per user type: people seen as registered users, and as visitors (one can be both). */
@@ -45,6 +48,7 @@ export const METRIC_LABELS = {
   impressions: 'Ad impressions',
   clickToBasket: 'Click-to-basket',
   uniqueCustomers: 'Unique customers',
+  sessions: 'Sessions',
 }
 
 export class MetricRequestError extends Error {
@@ -76,7 +80,7 @@ function counts(body, fields = {}) {
 /**
  * Response adapter: { count, byClientType: { web, mobile[, both] }, byUserType:
  * { registered, visitor } (customers), plus customers (impressions, clicks and
- * click-to-basket) when the response has them }. Accepts a bare number (`1240`, or "1240" as
+ * click-to-basket) and converted (sessions) when the response has them }. Accepts a bare number (`1240`, or "1240" as
  * text) or an object with a numeric `count` (`{ "count": 1240 }`), with the
  * metric's columns when all of them are counts (else that split is null or
  * left out). Anything else is an error, never a guessed value.
@@ -86,11 +90,13 @@ export function parseMetricResponse(body, metric) {
   const count = toCount(body) ?? (isObject ? toCount(body.count) : null)
   if (count === null) throw new MetricRequestError('Unexpected response format')
   const customers = isObject ? toCount(body.customers) : null
+  const converted = isObject && metric === 'sessions' ? toCount(body.total_converted_sessions) : null
   return {
     count,
     byClientType: counts(body, CLIENT_FIELDS[metric]),
     byUserType: counts(body, USER_FIELDS[metric]),
     ...(customers === null ? {} : { customers }),
+    ...(converted === null ? {} : { converted }),
   }
 }
 

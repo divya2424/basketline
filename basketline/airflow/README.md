@@ -1,150 +1,96 @@
-# Basketline: Airflow batch jobs (the Iceberg archive and history backfills)
+# Basketline: Airflow jobs (history backfills, backups, lake purges)
 
-ClickHouse keeps raw events, credited basket additions and sessions for 20 days; the `/ad` daily totals keep every day. The **Iceberg archive on S3** keeps them forever at object-storage prices, and can be queried with Athena (or Spark, Trino, Snowflake, DuckDB) without touching ClickHouse.
+ClickHouse keeps only the daily tables `/ad` reads (and 3 days of Flink's output they are counted from). Every event ever sent is in the **data lake**: Kafka Connect writes every topic to Iceberg tables on S3 ([`../connect/`](../connect/)). Airflow runs the batch jobs around them:
 
-```
-Flink job ──(as they arrive, a commit per checkpoint)──► Iceberg archive.events, archive.attributed_baskets
-ClickHouse sessions ──(nightly, day D-7)──► jobs/export_archive.py ──► Iceberg archive.sessions
-                                                                         S3 + Glue catalog (forever)
-```
-
-The big tables are written by the Flink job (`flink/sql/pipelines/04_archive.sql`), so archiving scales with the job, not with one Python process. Sessions get their `session_id` in ClickHouse and are one row per session, so they are still copied nightly. The Flink job appends: a copy of an event (redelivered, or replayed after a checkpoint reset) is appended again, so readers keep one row per `event_id`, as the history backfill does.
+| DAG | When | Job | What |
+|---|---|---|---|
+| `history_backfill` | on demand | [`jobs/backfill_daily.py`](jobs/backfill_daily.py) | Recomputes past days of ClickHouse's daily tables from the lake, and swaps them in |
+| `clickhouse_backup` | daily 02:30 UTC | [`jobs/backup_clickhouse.py`](jobs/backup_clickhouse.py) | Backs up the daily tables and the erasure and backfill records to S3 |
+| `tenant_purge` | daily 02:00 UTC | [`jobs/purge_tenants.py`](jobs/purge_tenants.py) | Deletes deleted tenants' and erased shoppers' rows from the lake |
 
 | | Locally (`docker-compose.yml`) | On AWS |
 |---|---|---|
-| Object storage | `archive-storage` (SeaweedFS, S3 API on :8333, UI on http://localhost:23646) | S3 bucket `ad-insights-archive` |
-| Iceberg catalog | PyIceberg SQL catalog in Postgres (`iceberg_catalog_db`) | AWS Glue (database `archive`) |
+| Object storage | `archive-storage` (SeaweedFS, S3 API on :8333, UI on http://localhost:23646): the lake in `basketline-pipeline/lake/`, backups in `ad-insights-archive/clickhouse-backups/` | S3 buckets |
+| The lake's catalog | Iceberg JDBC/SQL catalog in Postgres (`iceberg_catalog_db`), shared with Kafka Connect | AWS Glue |
 | Scheduler | `airflow` (standalone), UI on http://localhost:8082 | official Airflow Helm chart, KubernetesExecutor (`deploy/helm/environments/local/airflow.yaml`) |
-| Maintenance | — | Athena `OPTIMIZE` / `VACUUM` (`archive_maintenance` DAG) |
 
 ## Layout
 
 ```
-Dockerfile             apache/airflow + the jobs' own virtualenv (/opt/jobs), so their pins never meet Airflow's
+Dockerfile             apache/airflow + the jobs' own virtualenv (/opt/jobs), so their pins never meet Airflow's;
+                       built from basketline/, with ClickHouse's schema files (the backfill builds its scratch database from them)
 requirements.txt       the jobs' dependencies (PyIceberg, pyarrow, clickhouse-connect)
-dags/                  scheduling only: which job, which day, retries
-  archive_export.py      nightly 01:00 UTC: exports day D-7 of sessions
-  archive_maintenance.py daily, AWS only: Athena OPTIMIZE + VACUUM
-  history_backfill.py    on demand: recompute closed months of the daily tables from the archive
-  tenant_purge.py        daily 02:00 UTC: delete deleted tenants' and erased shoppers' rows from the archive (jobs/purge_tenants.py)
+dags/                  scheduling only: which job, when, retries
 jobs/                  the work, as plain scripts that also run without Airflow
-  export_archive.py      copies one day of a table from ClickHouse; also creates the archive's tables
-  backfill/              spark_backfill.py (Spark) and load_backfill.py (ClickHouse staging and swap)
-s3-lifecycle.json      storage classes for the archive bucket on AWS
 tests/                 the jobs against the running stack
 ```
 
-## The nightly export (sessions)
+## History backfill
 
-**Which day.** Each run exports the sessions of the day seven days before its date. ingestion-service accepts events up to 5 days late, so the day is complete from midnight five days after it; the extra day lets the last of those events reach ClickHouse even when Flink or ClickHouse is behind. ClickHouse keeps 20 days, so a failed export can be retried for almost two weeks. Airflow retries a failed task 3 times, and runs missed while it was down are caught up when it is back.
-
-**Safe to re-run.** `export_archive.py --table T --day D` deletes day D from the Iceberg table and appends ClickHouse's rows for D **in one commit**. A retry or a backfill replaces the day instead of duplicating it, and a run that fails half-way commits nothing. It reads with `FINAL`, so copies ClickHouse hasn't merged away yet are archived once. It refuses a day ClickHouse no longer keeps, since that would replace the archived day with nothing.
-
-**Columns.** The tables follow ClickHouse's columns. A new one (`client_type`, `user_type`; `event_type`, `seller_id` and sessions' `sellers`) is added at the end of an existing Iceberg table, as optional. The Flink job writes to these tables too, so run `iceberg_table()` for a new column before deploying a job that writes it (the backend README's upgrade steps). A dropped one (`anonymous_id`, before every visitor had a `user_id`) stays, NULL from then on, since dropping it would break reading older files.
-
-**Table layout.** The tables are partitioned by `day(event_time)` and `bucket(16, tenant_id)`: a query for a date range reads only those days, and a tenant's query reads one bucket of each. IDs are stored as strings (Athena has no UUID type), times as `timestamptz` in UTC, and the files are Parquet with zstd.
-
-**Files.** The Flink job commits once a minute, a file per partition it wrote to; the daily `OPTIMIZE` merges the last 7 days' small files. The export appends in batches of 500,000 rows, one file per partition per batch.
-
-**Repairing a day.** `export_archive.py` copies any table's day from ClickHouse while ClickHouse still keeps it (20 days), replacing what the archive holds for that day. Use it for events or credited basket additions if the Flink job's archive writes were off.
-
-## Run it
+To fix past days (a counting bug fixed, a tenant's events that were wrong) or to fill a new daily table's past, the job recomputes whole UTC days from the lake with the current rules:
 
 ```bash
-docker compose up -d --build archive-storage airflow
-open http://localhost:8082                     # DAGs → archive_export; no login (local only)
+docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/backfill_daily.py --from 2026-11-01 --to 2026-11-05 \
+  [--tenant <uuid> ...] [--table <daily table> ...]
+docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/backfill_daily.py --rollback   # undo the latest run
 ```
 
-Export a day of sessions by hand, or re-export any table's day (safe at any time):
+Or trigger `history_backfill` in the UI, with `from_day`, `to_day`, `tenants`, `tables` or `rollback`.
+
+1. **A scratch database from the real schema.** `analytics_backfill` is created from `infra/clickhouse/01_tables.sql` and `02_materialized_views.sql` (`analytics` renamed, the hourly check left out), so the recomputed rows come from the same materialized views as live ones, every daily table included, and a new one with no extra code.
+2. **The lake into its staging tables, a day at a time.** ClickHouse reads the lake's interactions table with `icebergS3` (only the hourly partitions the day's events can be in) and inserts what the Flink job would have written:
+   - the day's ad impressions and clicks with a campaign;
+   - each of the day's basket additions with every click on its product by the same user in the 7 days before it (the views credit the latest);
+   - the sessions that began that day (no gap of 30 minutes; the day before and after tell where they start and end).
+
+   Each event once (`LIMIT 1 BY event_id`); deleted tenants and erased shoppers left out; only the tenants asked for.
+3. **An atomic swap per month.** For each month the days fall in, the scratch table gets the live rows of every other day and tenant, the live month moves into `previous_<table>`, and the scratch month replaces it (`REPLACE PARTITION`). Meanwhile ClickHouse stops reading Kafka (the queue views are detached) and the hourly check waits, so no live row is lost: reading resumes from the committed offsets after.
+4. **Kept until the next run.** The scratch database, with the months as they were, stays until the next run, to look into or to `--rollback` (once). Each run is recorded in `analytics.backfill_runs`.
+
+**Which days.** Only settled days, 3 days old or more: ingestion accepts events up to 2 days late, so no live event can change them during the swap. And only days the lake holds whole: from the first full day after it began (Kafka Connect started from the topics' oldest messages). The job refuses anything else.
+
+**The same rules as Flink.** A rule change in [`02_attributed_baskets.sql`](../flink/sql/pipelines/02_attributed_baskets.sql) or [`03_sessions.sql`](../flink/sql/pipelines/03_sessions.sql) must change `backfill_daily.py` too. The attribution cases in [`test/fixtures/attribution_cases.json`](../test/fixtures/attribution_cases.json) run through both (`pnpm test:flink`, `pnpm test:airflow`). Sessions differ in one way, on purpose: the backfill has no watermark, so an event that arrived too late for its live session is in its recomputed one.
+
+**A new daily table:** add it and its view to the schema files and a migration; it counts live data from then. Three days later, backfill it with `--table <name>` from the lake's first full day to the day it was created; that day is recomputed whole, so its partial live count is replaced.
+
+**Cost and limits.** The reads are of Parquet files, pruned to the days' hourly partitions; the swap is metadata only. Large ranges run a day at a time; split very long ones into several runs.
+
+## Backups
+
+`clickhouse_backup` runs `BACKUP TABLE …` to `CLICKHOUSE_BACKUP_S3_URL/<day>`: the daily tables (the lake can recompute them, but slowly), `deleted_tenants`, `deleted_users` and `backfill_runs`. A day already backed up is left as it is, so a retry is safe. Restoring: the backend README, "Restoring ClickHouse from a backup".
+
+## Lake purges
+
+Deleting a tenant removes it from ClickHouse at once (ingestion-service); `tenant_purge` deletes its rows from every lake table (`payload_tenantId`), and an erased shopper's from the interactions and identity tables (`payload_userId`). It purges every deleted tenant and shopper on every run, not only new ones: Kafka still holds their messages (14 days, and the compacted topics until compaction), so a replay of the connector could append them again. A run with nothing to delete only reads table metadata. `lake_purged_at` in ClickHouse records the first purge.
+
+To remove one tenant's rows without deleting it (the load test's, after `loadtest/cleanup.sql`):
 
 ```bash
-docker compose exec airflow airflow backfill create --dag-id archive_export --from-date 2026-10-30 --to-date 2026-10-31 --reprocess-behavior completed
-docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/export_archive.py --table events --day 2026-10-24
+docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/purge_tenants.py --tenant <uuid>
 ```
 
-A backfill covers the runs scheduled between the two dates (the 01:00 run of 10-30 here), and each run exports the sessions of the day seven days before it (10-23). Query the archive from Python:
+The lake's tables are partitioned by tenant and hour, so a tenant's deletion drops whole files; a shopper's rewrites only the files that have their rows.
 
-```bash
-docker compose exec airflow /opt/jobs/bin/python -c "
-from pyiceberg.catalog import load_catalog
-print(load_catalog('archive').load_table('archive.events').scan().to_arrow().group_by('event_name').aggregate([('event_id', 'count')]))"
-```
+## Test
 
-**Test:** `pnpm test:airflow` (from `basketline/`, with ClickHouse, Postgres and `archive-storage` up; needs [uv](https://docs.astral.sh/uv/)). It exports a day twice, including an event delivered twice, and checks that the archive holds each row once. It also checks that a day ClickHouse no longer keeps is refused. It writes to the `archive_test` namespace.
+`pnpm test:airflow` (from `basketline/`, with ClickHouse, Postgres and `archive-storage` up; needs [uv](https://docs.astral.sh/uv/)):
 
-## Backfilling history
-
-ClickHouse's daily tables keep every day, but the hourly check can only correct the 20 days whose raw events ClickHouse still holds. To correct older days, for example after a bug fix or a change to the attribution or session rules, the `history_backfill` DAG recomputes them from the archive's raw events, with the current rules. It can cover one tenant, several or all, and any number of months.
-
-```
-validate → spark_backfill (local or EMR Serverless) → prepare → check → swap (only with apply=true)
-```
-
-| Step | Engine | What it does |
-|---|---|---|
-| `spark_backfill` ([`jobs/backfill/spark_backfill.py`](jobs/backfill/spark_backfill.py)) | Spark | Reads raw events for `[from − 7 days, to + 1 day)` and the tenants in scope. Credits each `add_to_cart` to the same user's latest click on the product in the 7 days before it, and splits sessions at a 6-hour gap. Writes small exact rows to Iceberg (`backfill.event_totals`, `customer_days`, `sessions`, partitioned by run). |
-| `prepare` ([`jobs/backfill/load_backfill.py`](jobs/backfill/load_backfill.py)) | ClickHouse | For every touched month of the three daily tables, builds `<table>_rebuild`: the month's live rows outside the scope as they are, plus the recomputed rows. It reads Spark's rows with `icebergS3` and builds the customer and session sketches with the live views' own functions, so they merge with live rows. It backs up the live month into `<table>_before_rebuild` and logs a before/after report per tenant and day. |
-| `check` | ClickHouse | Rows outside the scope are equal in staging and live, and every month is backed up. |
-| `swap` | ClickHouse | `ALTER TABLE … REPLACE PARTITION <month> FROM <table>_rebuild` for every table and month, back to back. If one fails, the months already swapped go back from the backup. |
-
-- **Nothing live changes before `swap`.** Without `apply`, the run is a dry run: read `prepare`'s log.
-- **Dashboards never see an empty or partial month.** Nothing is deleted from a live table. Each `REPLACE PARTITION` swaps a month's parts atomically, so a query sees the whole old month or the whole new one. The whole swap is metadata operations and takes seconds, whatever the backfill's size. For those seconds, one month can be corrected while the next isn't yet.
-- **Only closed months.** The daily tables are partitioned by month (rows stay one per day). A month can be backfilled once its last day is more than 7 days ago: events arrive at most 5 days late, and two days' margin covers the archive's last commits. No live view or nightly check writes to such a month, so a swap can't race them.
-- **Why Spark and ClickHouse.** Spark does the heavy part (the 7-day join and sessions over months of raw events) away from the cluster that serves dashboards. ClickHouse builds the sketches, because they must be byte-compatible with the live rows. Its part reads only Spark's reduced rows, under its own limits (`BACKFILL_MAX_THREADS`, `BACKFILL_MAX_MEMORY_BYTES`).
-- **The same rules as Flink.** A rule change must change [`02_attributed_baskets.sql`](../flink/sql/pipelines/02_attributed_baskets.sql) and `spark_backfill.py` together. [`tests/fixtures/attribution_cases.json`](tests/fixtures/attribution_cases.json) runs the same cases through both (`pnpm test:flink`, `pnpm test:backfill`).
-- **Context.** Basket additions in the first week need clicks from the week before `from`. The run refuses if the archive starts later, unless `allow_partial_context` is set. A session longer than 7 days that starts before the range is seen only from that point.
-
-Run it (a dry run, then apply):
-
-```bash
-docker compose exec airflow airflow dags trigger history_backfill --conf '{"from": "2026-08-01", "to": "2026-09-01", "tenants": "all", "apply": false}'
-docker compose exec airflow airflow dags trigger history_backfill --conf '{"from": "2026-08-01", "to": "2026-09-01", "tenants": "5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01", "apply": true}'
-# Undo a swapped run (its months come back from the backup, until a later run prepares the same months):
-docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/backfill/load_backfill.py rollback --run-id <run id>
-```
-
-Each run is recorded in ClickHouse's `backfill_runs` (range, tenants, months, status). After a successful swap, its rows in the `backfill` Iceberg tables are deleted.
-
-**On EMR Serverless.**
-1. Create an EMR Serverless Spark application (an EMR release with Spark and Iceberg).
-2. Give its execution role:
-   - Glue access to the `archive` and `backfill` databases;
-   - S3 read on the archive;
-   - S3 read/write on `backfill/`.
-3. Upload `jobs/backfill/spark_backfill.py` to S3.
-4. Set the Airflow variables:
-   - `backfill_runtime=emr`;
-   - `emr_serverless_application_id`, `emr_serverless_role_arn`;
-   - `backfill_script_s3` (the script's S3 URL);
-   - `archive_warehouse` (`s3://<bucket>`).
-5. Point `ARCHIVE_S3_URL` at the bucket's HTTPS URL, and give ClickHouse read access to `backfill/` (its IAM role, or keys).
-
-It costs nothing between runs and scales up for a large backfill. Only the local path is tested here; the EMR task is checked by the DAG loading.
-
-**Test:** `pnpm test:backfill` (from `basketline/`). It runs in the Airflow container, which has Java, so the stack must be up with a rebuilt `airflow` image. It writes the shared attribution cases, a session and two tenants' events for July–August 2026 into `archive_test`, then:
-- backfills one tenant for half of August while a reader checks the month is never empty or partial;
-- checks the corrected and untouched days, the other tenant, the attribution winners, the sketches and the sessions;
-- rolls back;
-- backfills all tenants for two months, with a forced failure during the swap that's undone;
-- swaps again.
+- **Backfill:** a fixture lake table (`lake_test.interactions`, shaped like Kafka Connect's) with the attribution cases, duplicates, events without a store, an erased shopper and a deleted tenant, backfilled into a throwaway database. It checks the counts, the credits per campaign, the customers, the sessions (gap, day boundary, web/mobile, conversion), tenant scope, rollback and the guards.
+- **Purge:** deleted tenants and erased shoppers removed from a fixture lake table.
 
 ## On AWS
 
-- **Catalog:** set `PYICEBERG_CATALOG__ARCHIVE__TYPE=glue` and `PYICEBERG_CATALOG__ARCHIVE__WAREHOUSE=s3://<bucket>`, and drop the `URI`, `S3__ENDPOINT` and key variables. The job creates the Glue database `archive` and both tables on its first run.
-- **Credentials:** give the Airflow service account an IAM role (IRSA or EKS Pod Identity) instead of keys. It needs S3 read/write on the bucket, Glue on the `archive` database, and Athena for the maintenance DAG.
-- **Maintenance:** set `aws_default` and the Airflow variable `athena_workgroup` (a workgroup with a query result location), then unpause `archive_maintenance`. On the 1st of each month it runs `OPTIMIZE … REWRITE DATA USING BIN_PACK` for the last 40 days, then `VACUUM`, which expires old snapshots and deletes unreferenced files (Athena's defaults keep 5 days of snapshots).
-- **Storage classes:** apply [`s3-lifecycle.json`](s3-lifecycle.json):
-
-  ```bash
-  aws s3api put-bucket-lifecycle-configuration --bucket ad-insights-archive --lifecycle-configuration file://s3-lifecycle.json
-  ```
-
-  Data files move to Standard-IA after 30 days and to Glacier Instant Retrieval after 180, and stay readable in milliseconds, so Athena queries keep working. Metadata files stay in Standard, because every query reads them. Unfinished multipart uploads are deleted after 7 days.
+- **Catalog:** set `PYICEBERG_CATALOG__LAKE__TYPE=glue` and the warehouse (`s3://<bucket>`), and drop the URI, endpoint and key variables. Switch Kafka Connect to the same catalog: in `connect/lake-sink.json`, `iceberg.catalog.catalog-impl` becomes `org.apache.iceberg.aws.glue.GlueCatalog` (its jars are in the image), without the JDBC and key settings.
+- **Credentials:** an IAM role for Airflow's service account (IRSA or EKS Pod Identity): S3 read/write on the lake, Glue on its database. ClickHouse reads the lake and writes backups with its own IAM role: leave `PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID` and `BACKUP_S3_*` unset.
+- **Storage classes:** an S3 lifecycle rule on the lake's data files (Standard → Infrequent Access after 30 days → Glacier Instant Retrieval after 180), which stay readable in milliseconds; metadata files stay in Standard. Backups expire after 35 days.
 
 ## Configuration
 
-| Variable | Purpose |
-|---|---|
-| `CLICKHOUSE_URL` | ClickHouse to read the raw tables from (as for ingestion-service) |
-| `PYICEBERG_CATALOG__ARCHIVE__*` | The Iceberg catalog: `TYPE` (`sql` or `glue`), `URI`, `WAREHOUSE`, `S3__ENDPOINT`, `S3__REGION`, `S3__ACCESS_KEY_ID`, `S3__SECRET_ACCESS_KEY` ([PyIceberg configuration](https://py.iceberg.apache.org/configuration/)) |
-| `ARCHIVE_NAMESPACE` | The Iceberg namespace (Glue database). Default `archive`; the test uses `archive_test` |
+| Variable | Used by | Purpose |
+|---|---|---|
+| `CLICKHOUSE_URL` | all | ClickHouse, as the services' user `basketline` |
+| `PYICEBERG_CATALOG__LAKE__*` | purge | The lake's catalog: `TYPE` (`sql` or `glue`), `URI`, `WAREHOUSE`, `S3__ENDPOINT`, `S3__REGION`, `S3__ACCESS_KEY_ID`, `S3__SECRET_ACCESS_KEY` ([PyIceberg configuration](https://py.iceberg.apache.org/configuration/)) |
+| `LAKE_NAMESPACE` | purge | The lake's namespace; default `lake` |
+| `LAKE_INTERACTIONS_URL` | backfill | The lake's interactions table as ClickHouse reaches it (read with the catalog's S3 keys, or ClickHouse's IAM role) |
+| `CLICKHOUSE_SCHEMA_DIR` | backfill | Where the schema files are; default `/opt/airflow/clickhouse` (in the image) |
+| `CLICKHOUSE_BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | backup | Where backups go, as ClickHouse reaches it |

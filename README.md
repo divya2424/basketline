@@ -84,15 +84,15 @@ cd ../retailer-sim
 pnpm keys                 # its own keys → retailer-sim/keys/ (git-ignored)
 docker compose up -d --build
 
-# Demo data: a marketplace "Demo Mart" with shopping by user01–user10 and visitors,
-# today's through Basketline's API and the 30 days before (once) into ClickHouse
+# Demo data: a marketplace "Demo Mart" with shopping by user01–user10 and visitors: today's
+# and the last 2 days' through Basketline's API, the 30 days before (once) through its lake + history backfill
 pnpm seed:demo            # in retailer-sim/; each run adds another round of today's activity
 
 # The marketplaces' web app
 (cd retailer-sim/storefront && cp .env.example .env && pnpm dev)  # http://localhost:5174
 ```
 
-After `pnpm seed:demo`, sign in to **Demo Mart** as `seller1` or `seller2` (password `test`): their campaigns' analytics show 30 days of activity (switch between 7, 30 and 90 days), and today's within about a minute. Basketline's API takes events at most 2 days old, so the older days are written straight into ClickHouse's staging tables, as its Flink job would; they aren't in the data lake (`SEED_HISTORY_DAYS` sets how many).
+After `pnpm seed:demo`, sign in to **Demo Mart** as `seller1` or `seller2` (password `test`): their campaigns' analytics show 30 days of activity (switch between 7, 30 and 90 days), and today's within about a minute. Basketline's API takes events at most 2 days old, so the older days go into its data lake with the history import job and are computed by the history backfill ([airflow/README.md § History import](basketline/airflow/README.md#history-import)); `SEED_HISTORY_DAYS` sets how many. The last 2 days' sessions appear after a later backfill: they reach the live session window too late.
 
 Without a GitHub token, `pnpm install` and the image builds fail on the two packages above (`401 Unauthorized`): create a classic token with only `read:packages`.
 

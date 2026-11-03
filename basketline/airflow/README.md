@@ -7,6 +7,7 @@ ClickHouse keeps only the daily tables `/ad` reads (and 3 days of Flink's output
 | `history_backfill` | on demand | [`jobs/backfill_daily.py`](jobs/backfill_daily.py) | Recomputes past days of ClickHouse's daily tables from the lake, and swaps them in |
 | `clickhouse_backup` | daily 02:30 UTC | [`jobs/backup_clickhouse.py`](jobs/backup_clickhouse.py) | Backs up the daily tables and the erasure and backfill records to S3 |
 | `tenant_purge` | daily 02:00 UTC | [`jobs/purge_tenants.py`](jobs/purge_tenants.py) | Deletes deleted tenants' and erased shoppers' rows from the lake |
+| — | on demand | [`jobs/import_history.py`](jobs/import_history.py) | Imports a tenant's past interactions (older than the API takes) into the lake, for a history backfill |
 
 | | Locally (`docker-compose.yml`) | On AWS |
 |---|---|---|
@@ -54,6 +55,19 @@ Or trigger `history_backfill` in the UI, with `from_day`, `to_day`, `tenants`, `
 **A new daily table:** add it and its view to the schema files and a migration; it counts live data from then. Three days later, backfill it with `--table <name>` from the lake's first full day to the day it was created; that day is recomputed whole, so its partial live count is replaced.
 
 **Cost and limits.** The reads are of Parquet files, pruned to the days' hourly partitions; the swap is metadata only. Large ranges run a day at a time; split very long ones into several runs.
+
+## History import
+
+A tenant's events from before it sent them to Basketline (a retailer's past data, or `pnpm seed:demo` in `retailer-sim/`) can't go through the API, which takes events at most 2 days old. `import_history.py` appends them to the lake's interactions table, one JSON object per line as ingestion-service publishes them. Kafka Connect writes rows the same way, and the Kafka time of each row is when its event was received. Then the history backfill computes those days:
+
+```bash
+docker compose exec -T airflow /opt/jobs/bin/python /opt/airflow/jobs/import_history.py --tenant <uuid> < events.jsonl
+docker compose exec airflow /opt/jobs/bin/python /opt/airflow/jobs/backfill_daily.py --from <day after the first imported> --to <last imported> --tenant <uuid>
+```
+
+- **What it refuses:** rows of another tenant, events from the last 2 days (send those through the API), and a second import for the same tenant (exit 3), so its history can't be counted twice.
+- **The lake's start moves earlier.** The backfill counts days from the lake's oldest Kafka time, and the import makes that the oldest imported day. Always run that backfill with `--tenant`: an unscoped backfill of those early days would recompute every other tenant from an empty lake.
+- **Before Kafka Connect's first commit** (hourly), the table doesn't exist yet. The import then creates it with the columns the backfill reads, partitioned like Connect's, and Connect adds the rest.
 
 ## Backups
 

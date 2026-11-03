@@ -343,9 +343,6 @@ importers:
 
   retailer-sim/services/retailer-auth-service:
     dependencies:
-      '@basketline/contracts':
-        specifier: workspace:*
-        version: link:../../../basketline/packages/contracts
       '@basketline/platform':
         specifier: workspace:*
         version: link:../../../basketline/packages/platform

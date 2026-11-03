@@ -1,14 +1,18 @@
-/* The seller portal and a campaign's analytics. Web and mobile are categorical
-   slots 1 and 2 of the reference palette (validated on both surfaces). */
+/* The seller portal and a campaign's analytics. Web and mobile, then visitors and
+   registered, are categorical slots 1–4 of the reference palette (validated on both surfaces). */
 :root {
   --series-web: #2a78d6;
   --series-mobile: #eb6834;
+  --series-visitor: #1baf7a;
+  --series-registered: #eda100;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --series-web: #3987e5;
     --series-mobile: #d95926;
+    --series-visitor: #199e70;
+    --series-registered: #c98500;
   }
 }
 
@@ -324,6 +328,16 @@
 .split__key--mobile,
 .split__part--mobile {
   background: var(--series-mobile);
+}
+
+.split__key--visitor,
+.split__part--visitor {
+  background: var(--series-visitor);
+}
+
+.split__key--registered,
+.split__part--registered {
+  background: var(--series-registered);
 }
 
 /* Products */

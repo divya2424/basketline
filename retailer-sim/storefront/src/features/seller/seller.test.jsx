@@ -22,6 +22,11 @@ const RESULTS = {
     mobile: { impressions: 10, clicks: 1, addToCarts: 0, customers: 10, sessions: 9 },
   },
   bothClients: 2,
+  byUserType: {
+    visitor: { customers: 24, viewed: 24, clicked: 2, addedToCart: 0 },
+    registered: { customers: 8, viewed: 6, clicked: 2, addedToCart: 1 },
+  },
+  bothUserTypes: 2,
   items: [
     { productId: 'product_006', name: 'Lumen LED Desk Lamp', category: 'Home', impressions: 40, clicks: 4, ctr: 0.1, addToCarts: 1, clickToBasket: 0.25 },
     { productId: 'product_010', name: 'Glide Ergonomic Wireless Mouse', category: 'Accessories', impressions: 0, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },
@@ -100,6 +105,10 @@ describe("a campaign's analytics page", () => {
     const devices = screen.getByTestId('by-client')
     expect(within(devices).getByRole('img', { name: 'Impressions: web 30 (75.0%), mobile 10 (25.0%)' })).toBeInTheDocument()
     expect(devices).toHaveTextContent('2 used both apps')
+    const users = screen.getByTestId('by-user-type')
+    expect(within(users).getByRole('img', { name: 'Customers: visitors 24 (75.0%), registered 8 (25.0%)' })).toBeInTheDocument()
+    expect(within(users).getByRole('img', { name: 'Added to cart: visitors 0 (0.0%), registered 1 (100.0%)' })).toBeInTheDocument()
+    expect(users).toHaveTextContent('2 signed in during their visit')
 
     const rows = within(screen.getByRole('table')).getAllByRole('row').slice(1)
     expect(rows[0]).toHaveTextContent(/1\s*Lumen LED Desk Lamp\s*Home\s*40\s*4\s*10\.0%\s*1\s*25\.0%/)

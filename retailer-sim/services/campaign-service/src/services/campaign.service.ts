@@ -277,6 +277,20 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         ]),
       )
       const bothClients = column(uniqueCustomers!, 'has_visited_in_both')
+      // The people per user type: visitors (signed out) and registered (signed in). Someone who
+      // browsed signed out and then signed in counts in each (bothUserTypes of them).
+      const byUserType = Object.fromEntries(
+        (['visitor', 'registered'] as const).map((type) => [
+          type,
+          {
+            customers: column(uniqueCustomers!, `has_visited_${type}`),
+            viewed: column(impressions!, `customers_${type}_impressions`),
+            clicked: column(clicks!, `customers_${type}_clicks`),
+            addedToCart: column(clickToBasket!, `customers_${type}_click_to_basket`),
+          },
+        ]),
+      )
+      const bothUserTypes = Math.max(0, byUserType.visitor!.customers + byUserType.registered!.customers - uniqueCustomers!.count)
       const reported = new Set(items.map((item) => item.productId))
       const quiet = campaign.productIds.filter((productId) => !reported.has(productId))
       const names = new Map((await findProductDetails(db, tenantId, quiet)).map((product) => [product.productId, product]))
@@ -291,7 +305,7 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         addToCarts: 0,
         clickToBasket: 0,
       }))
-      return { campaignId: id, totals, byClient, bothClients, items: [...items, ...zeros] }
+      return { campaignId: id, totals, byClient, bothClients, byUserType, bothUserTypes, items: [...items, ...zeros] }
     },
 
     async update(tenantId: string, actorId: string, id: string, input: UpdateCampaignInput): Promise<Campaign> {

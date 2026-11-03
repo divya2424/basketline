@@ -512,10 +512,10 @@ describe('sellers (the seller portal)', () => {
     const { body } = await create({ title: 'Results', placement: 'spotlight', productIds: [a, b], sellerId: undefined }, seller)
     results.splice(0, results.length, { productId: a, name: 'Earbuds', category: 'Audio', price: 999, impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5 })
     Object.assign(metrics, {
-      impressions: { count: 10, total_web_impressions: 7, total_mobile_impressions: 3 },
-      clicks: { count: 2, total_web_clicks: 2, total_mobile_clicks: 0 },
-      clickToBasket: { count: 1, total_web_click_to_basket: 1, total_mobile_click_to_basket: 0 },
-      uniqueCustomers: { count: 7, has_visited_in_web: 5, has_visited_in_mobile: 3, has_visited_in_both: 1 },
+      impressions: { count: 10, total_web_impressions: 7, total_mobile_impressions: 3, customers_visitor_impressions: 5, customers_registered_impressions: 2 },
+      clicks: { count: 2, total_web_clicks: 2, total_mobile_clicks: 0, customers_visitor_clicks: 1, customers_registered_clicks: 1 },
+      clickToBasket: { count: 1, total_web_click_to_basket: 1, total_mobile_click_to_basket: 0, customers_visitor_click_to_basket: 0, customers_registered_click_to_basket: 1 },
+      uniqueCustomers: { count: 7, has_visited_in_web: 5, has_visited_in_mobile: 3, has_visited_in_both: 1, has_visited_visitor: 6, has_visited_registered: 2 },
       sessions: { count: 8, total_converted_sessions: 1, total_web_sessions: 6, total_mobile_sessions: 2 },
     })
     try {
@@ -527,6 +527,12 @@ describe('sellers (the seller portal)', () => {
         mobile: { impressions: 3, clicks: 0, addToCarts: 0, customers: 3, sessions: 2 },
       })
       expect(res.body.bothClients).toBe(1)
+      expect(res.body.byUserType).toEqual({
+        visitor: { customers: 6, viewed: 5, clicked: 1, addedToCart: 0 },
+        registered: { customers: 2, viewed: 2, clicked: 1, addedToCart: 1 },
+      })
+      // 6 + 2 - 7: one browsed signed out, then signed in.
+      expect(res.body.bothUserTypes).toBe(1)
       expect(res.body.items).toEqual([
         { productId: a, name: 'Earbuds', category: 'Audio', price: 999, impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5 },
         { productId: b, name: 'Cable', category: 'Audio', price: 999, impressions: 0, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },

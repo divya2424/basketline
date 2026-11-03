@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { Button } from '../../components/common/Button.jsx'
 
 const number = new Intl.NumberFormat('en-IN')
@@ -57,25 +58,25 @@ export function FunnelBars({ steps }) {
   )
 }
 
-/** How a count splits between the web and the mobile app, as one 100% bar with both shares labelled. */
-export function SplitBar({ label, web, mobile, note }) {
-  const total = web + mobile
-  const share = (value) => (total > 0 ? value / total : 0)
-  const describe = (name, value) => `${name} ${formatNumber(value)} (${formatPercent(share(value))})`
+/** How a count splits between groups (web and mobile, visitors and registered), as one 100% bar with every share labelled. parts: [{ key, name, value }]. */
+export function SplitBar({ label, parts, note }) {
+  const total = parts.reduce((sum, part) => sum + part.value, 0)
+  const describe = (name, value) => `${name} ${formatNumber(value)} (${formatPercent(total > 0 ? value / total : 0)})`
   return (
     <div className="split">
       <div className="split__head">
         <span className="split__label">{label}</span>
         <span className="split__counts">
-          <span className="split__key split__key--web" aria-hidden="true" />
-          {describe('Web', web)}
-          <span className="split__key split__key--mobile" aria-hidden="true" />
-          {describe('Mobile', mobile)}
+          {parts.map((part) => (
+            <Fragment key={part.key}>
+              <span className={`split__key split__key--${part.key}`} aria-hidden="true" />
+              {describe(part.name, part.value)}
+            </Fragment>
+          ))}
         </span>
       </div>
-      <div className="split__track" role="img" aria-label={`${label}: ${describe('web', web)}, ${describe('mobile', mobile)}`}>
-        {web > 0 ? <div className="split__part split__part--web" style={{ flexGrow: web }} /> : null}
-        {mobile > 0 ? <div className="split__part split__part--mobile" style={{ flexGrow: mobile }} /> : null}
+      <div className="split__track" role="img" aria-label={`${label}: ${parts.map((part) => describe(part.name.toLowerCase(), part.value)).join(', ')}`}>
+        {parts.map((part) => (part.value > 0 ? <div key={part.key} className={`split__part split__part--${part.key}`} style={{ flexGrow: part.value }} /> : null))}
       </div>
       {note ? <p className="split__note">{note}</p> : null}
     </div>

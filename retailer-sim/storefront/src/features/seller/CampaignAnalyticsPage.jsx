@@ -131,7 +131,16 @@ function Analytics({ campaign, placementName, onChanged }) {
 }
 
 function Report({ data, days }) {
-  const { totals, byClient, bothClients, items } = data
+  const { totals, byClient, bothClients, byUserType, bothUserTypes, items } = data
+  const clients = (key) => [
+    { key: 'web', name: 'Web', value: byClient.web[key] },
+    { key: 'mobile', name: 'Mobile', value: byClient.mobile[key] },
+  ]
+  const userTypes = (key) => [
+    { key: 'visitor', name: 'Visitors', value: byUserType.visitor[key] },
+    { key: 'registered', name: 'Registered', value: byUserType.registered[key] },
+  ]
+  const noActivity = totals.impressions + totals.clicks + totals.uniqueCustomers === 0
   const active = items.filter((item) => item.impressions > 0 || item.clicks > 0 || item.addToCarts > 0)
   const quiet = items.length - active.length
   const topCtr = Math.max(0, ...items.map((item) => item.ctr))
@@ -173,20 +182,40 @@ function Report({ data, days }) {
           <h2 id="devices-heading" className="analytics__heading">
             Web vs mobile
           </h2>
-          {totals.impressions + totals.clicks + totals.uniqueCustomers === 0 ? (
+          {noActivity ? (
             <p className="muted">No activity yet in this period.</p>
           ) : (
             <>
-              <SplitBar label="Impressions" web={byClient.web.impressions} mobile={byClient.mobile.impressions} />
-              <SplitBar label="Clicks" web={byClient.web.clicks} mobile={byClient.mobile.clicks} />
-              <SplitBar label="Add-to-carts" web={byClient.web.addToCarts} mobile={byClient.mobile.addToCarts} />
+              <SplitBar label="Impressions" parts={clients('impressions')} />
+              <SplitBar label="Clicks" parts={clients('clicks')} />
+              <SplitBar label="Add-to-carts" parts={clients('addToCarts')} />
               <SplitBar
                 label="Customers"
-                web={byClient.web.customers}
-                mobile={byClient.mobile.customers}
+                parts={clients('customers')}
                 note={bothClients > 0 ? `${formatNumber(bothClients)} used both apps (counted in each)` : null}
               />
-              <SplitBar label="Sessions" web={byClient.web.sessions} mobile={byClient.mobile.sessions} />
+              <SplitBar label="Sessions" parts={clients('sessions')} />
+            </>
+          )}
+        </section>
+
+        <section aria-labelledby="users-heading" className="panel" data-testid="by-user-type">
+          <h2 id="users-heading" className="analytics__heading">
+            Visitors vs registered
+          </h2>
+          <p className="muted small">People, each counted once: signed out (visitors) or signed in (registered).</p>
+          {noActivity ? (
+            <p className="muted">No activity yet in this period.</p>
+          ) : (
+            <>
+              <SplitBar
+                label="Customers"
+                parts={userTypes('customers')}
+                note={bothUserTypes > 0 ? `${formatNumber(bothUserTypes)} signed in during their visit (counted in each)` : null}
+              />
+              <SplitBar label="Saw it" parts={userTypes('viewed')} />
+              <SplitBar label="Clicked" parts={userTypes('clicked')} />
+              <SplitBar label="Added to cart" parts={userTypes('addedToCart')} />
             </>
           )}
         </section>

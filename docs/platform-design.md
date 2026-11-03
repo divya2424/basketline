@@ -102,7 +102,7 @@ Two more read endpoints:
 
 **Who reads, and what they see:**
 - **The retailer's backend,** with an integration token from its API key. It shows results in its own UI, e.g. a marketplace's seller portal (`retailer-sim/`).
-- **The tenant's campaign managers,** with an access token.
+- **The tenant's users,** with an access token.
 - Either way, the tenant comes from the token, never from the request.
 - **`storeId` scopes a read to one store.** In a marketplace a store is a seller, so a seller sees only its own campaign's numbers. Without `storeId`, the read covers all the tenant's stores, and a customer active in two stores counts once.
 - Events carry their store per event, so one page mixing several sellers' campaigns credits each seller.
@@ -161,7 +161,7 @@ Tools:
 
 **Isolation by design, enforced in more than one place:**
 
-1. **Identity:** every token carries the tenant. ingestion-service takes the tenant, user and user type from the token, never from the body; a mismatch rejects the batch.
+1. **Identity:** every token carries the tenant. The gateway verifies the token once and passes the caller on (`x-basketline-caller`: the tenant, and for events the user, user type and client), dropping any client-supplied one. ingestion and insights trust it instead of verifying again: a NetworkPolicy lets only the gateway reach them (`deploy/helm`). ingestion-service takes the tenant, user and user type from it, never from the body; a mismatch rejects the batch.
 2. **Data:** every row, in every table and topic, has `tenant_id`. In ClickHouse, insights-service reads as `basketline_reader`, whose **row policy** returns only the tenant named in the query's settings. A query that forgets its tenant filter still can't read another tenant's rows; one with no tenant reads nothing.
 3. **Lake:** partitioned by tenant, so a tenant's export, deletion or residency move touches only its files. Tenants with contractual isolation get their own bucket, namespace and KMS key.
 4. **Deletion and erasure:** a deleted tenant's rows go from ClickHouse at once and from the lake by the purge job. An erased shopper's rows go from staging and the lake. Replays can't bring them back: the Kafka queue views and the backfill skip them.

@@ -57,6 +57,30 @@ spec:
 {{- end }}
 {{- end -}}
 
+{{- define "basketline.networkPolicy" -}}
+{{- with .Values.networkPolicy }}
+{{- if .enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "basketline.fullname" $ }}
+  labels:
+    {{- include "basketline.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "basketline.selectorLabels" $ | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml .from | nindent 8 }}
+      ports:
+        - port: http
+{{- end }}
+{{- end }}
+{{- end -}}
+
 {{- define "basketline.hpa" -}}
 {{- with .Values.autoscaling }}
 {{- if .enabled }}

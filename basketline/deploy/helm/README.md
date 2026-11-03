@@ -42,7 +42,7 @@ kubectl -n basketline create secret generic basketline-jwt \
   --from-file=jwt-private.pem=keys/jwt-private.pem      # from basketline/; `pnpm keys` creates them
 ```
 
-Only auth-service mounts `jwt-private.pem`; the other services get only the public key.
+Only auth-service mounts `jwt-private.pem`, and only it and the gateway verify tokens. ingestion- and insights-service mount no keys: they trust the caller the gateway verified (`x-basketline-caller`), so their charts ship a NetworkPolicy that admits only the gateway's pods and Prometheus (namespace `monitoring`, pods `app.kubernetes.io/name: prometheus`; change `networkPolicy.from` to match your install).
 
 ## Deploy
 

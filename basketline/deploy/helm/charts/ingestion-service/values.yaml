@@ -22,9 +22,21 @@ secrets:
   CLICKHOUSE_URL: ""
 existingSecret: ""
 
-jwt:
-  secretName: basketline-jwt
-  privateKey: false
+# Only the gateway (and Prometheus) may call this service: it trusts the caller the gateway verified
+# (x-basketline-caller) instead of verifying tokens again, so it mounts no token keys.
+networkPolicy:
+  enabled: true
+  from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: gateway
+    # Prometheus, to scrape /metrics (same port as the API). Change the labels to your install's.
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
 
 resources:
   requests:

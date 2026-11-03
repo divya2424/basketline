@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { importPKCS8, importSPKI, jwtVerify, SignJWT, type CryptoKey } from 'jose'
+import { decodeJwt, importPKCS8, importSPKI, jwtVerify, SignJWT, type CryptoKey } from 'jose'
 import { CLIENT_TYPES, ROLES, type ClientType, type Role, type UserType } from '@basketline/contracts'
 import { isUuid } from './checks.ts'
 
@@ -91,6 +91,11 @@ export async function verifyIntegrationToken(token: string, publicKey: CryptoKey
   const { tid, exp } = payload as Partial<IntegrationTokenClaims>
   if (!isUuid(tid) || typeof exp !== 'number') throw new Error('token is missing required claims')
   return { tid, exp }
+}
+
+/** Whether a token claims to be an integration token (unverified): picks the one verifier to run. */
+export function isIntegrationToken(token: string): boolean {
+  return decodeJwt(token).aud === INTEGRATION_AUDIENCE
 }
 
 export async function signIntegrationToken(

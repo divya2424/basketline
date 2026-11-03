@@ -1,5 +1,5 @@
 import { ANALYTICS_EVENT_TYPE, eventTypeOf, externalId, METRIC_EVENT_NAMES, NO_STORE, topicOf, type AnalyticsEventPayload } from '@basketline/contracts'
-import { AppError, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@basketline/platform'
+import { AppError, serviceUnavailable, type BusMessage, type EventBus, type Logger, type Sender } from '@basketline/platform'
 import type { IncomingEvent } from '../validators/analytics.validator.ts'
 import type { CampaignDirectory } from './campaign.directory.ts'
 
@@ -57,7 +57,7 @@ export function createIngestionService({
   let tenantWindow = { start: 0, counts: new Map<string, number>() }
 
   /** Fixed one-minute windows per sender. */
-  function assertWithinLimit(sender: EventSender, count: number, now: number) {
+  function assertWithinLimit(sender: Sender, count: number, now: number) {
     if (now - window.start >= MINUTE) window = { start: now, counts: new Map() }
     const used = window.counts.get(sender.userId) ?? 0
     if (used + count > maxEventsPerMinute) {
@@ -79,7 +79,7 @@ export function createIngestionService({
     tenantWindow.counts.set(tenantId, used + count)
   }
 
-  function toMessage(event: IncomingEvent, sender: EventSender, storeId: string, receivedAt: string): BusMessage {
+  function toMessage(event: IncomingEvent, sender: Sender, storeId: string, receivedAt: string): BusMessage {
     const { campaignId: sentCampaign, productId: sentProduct, ...properties } = event.properties ?? {}
     // IDs are lowercased or mapped here, once (a store's own IDs become UUIDs:
     // externalId), so every consumer (Flink joins on them as text) sees one form.
@@ -120,7 +120,7 @@ export function createIngestionService({
 
   return {
     /** storeId: the batch's store (seller) as the client sent it (its own ID or a UUID), for events without their own; without either, NO_STORE. */
-    async ingest(events: IncomingEvent[], sender: EventSender, userAgent = '', storeId?: string): Promise<IngestResult[]> {
+    async ingest(events: IncomingEvent[], sender: Sender, userAgent = '', storeId?: string): Promise<IngestResult[]> {
       const now = Date.now()
       if (BOT_USER_AGENT.test(userAgent)) {
         logger.info({ tenantId: sender.tenantId, events: events.length, reason: 'bot_user_agent' }, 'invalid traffic rejected')

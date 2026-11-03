@@ -1,6 +1,6 @@
-import type { RequestHandler } from 'express'
+import type { Request, RequestHandler } from 'express'
 import { createProxyMiddleware } from 'http-proxy-middleware'
-import type { Logger } from '@basketline/platform'
+import { CALLER_HEADER, type Logger } from '@basketline/platform'
 
 export interface ServiceUrls {
   auth: string
@@ -13,6 +13,8 @@ export interface ServiceUrls {
 /**
  * One proxy per service. Each request goes to exactly one service and the
  * response is passed back unchanged — the gateway never combines responses.
+ * Every forwarded request loses any client-supplied CALLER_HEADER here and gets
+ * one only from the caller the access middleware verified (req.caller).
  */
 export function proxyRoutes(urls: ServiceUrls, logger: Logger): RequestHandler[] {
   const proxy = (pathFilter: string[], target: string) =>
@@ -22,6 +24,11 @@ export function proxyRoutes(urls: ServiceUrls, logger: Logger): RequestHandler[]
       changeOrigin: true,
       proxyTimeout: 10_000,
       on: {
+        proxyReq: (proxyReq, req) => {
+          proxyReq.removeHeader(CALLER_HEADER)
+          const { caller } = req as Request
+          if (caller) proxyReq.setHeader(CALLER_HEADER, JSON.stringify(caller))
+        },
         error: (error, req, res) => {
           logger.error({ err: error, target, url: req.url }, 'upstream request failed')
           if ('writeHead' in res && !res.headersSent) {

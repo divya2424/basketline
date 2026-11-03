@@ -1,16 +1,28 @@
 /**
- * Coarse route permissions, checked before a request is forwarded. The
- * services check roles again themselves; this stops bad requests early and
- * enforces session revocation, which only the gateway tracks.
+ * Route permissions, checked before a request is forwarded. The gateway is the
+ * only place tokens are verified: it sets req.caller, which the proxy passes on
+ * in CALLER_HEADER (proxy.routes.ts), and ingestion and insights trust it (only
+ * the gateway can reach them). It also enforces session revocation, which only it tracks.
  */
 import type { RequestHandler } from 'express'
 import type { CryptoKey } from 'jose'
-import { forbidden, isUuid, notFound, unauthorized, verifyAccessToken, verifyEventToken, verifyIntegrationToken, type AccessTokenClaims } from '@basketline/platform'
+import {
+  forbidden,
+  isIntegrationToken,
+  isUuid,
+  notFound,
+  unauthorized,
+  verifyAccessToken,
+  verifyEventToken,
+  verifyIntegrationToken,
+  type AccessTokenClaims,
+  type Caller,
+} from '@basketline/platform'
 import type { AccessService } from '../services/access.service.ts'
 
 /**
  * 'events': an access token, or an events-only token: a visitor's, or a vendor's shopper's.
- * 'results': a campaign manager's access token, or a store's backend's integration token.
+ * 'results': a user's access token, or a store's backend's integration token.
  */
 type Access = 'public' | 'authenticated' | 'campaign-manager' | 'events' | 'integration' | 'results'
 
@@ -29,8 +41,8 @@ export function accessFor(method: string, path: string): Access | null {
   // Deleting a tenant: open like onboarding, by choice (its name must be typed again).
   if (/^\/api\/v1\/accounts\/[^/]+$/.test(path)) return method === 'DELETE' ? 'public' : null
   if (path === '/api/v1/analytics/events') return method === 'POST' ? 'events' : null
-  // The tenant's campaign list: campaign managers, only their own tenant's (insights-service reads it from the token).
-  if (path === '/api/v1/ad/campaigns') return read ? 'campaign-manager' : null
+  // The tenant's campaign list: its users, only their own tenant's.
+  if (path === '/api/v1/ad/campaigns') return read ? 'authenticated' : null
   // A campaign's metrics and results per product: also a store's backend, for its sellers' portal.
   if (path.startsWith('/api/v1/ad/')) return read ? 'results' : null
   // Reference data and server-side identity from a store's backend, with an integration token.
@@ -56,23 +68,24 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService, co
 
     let claims: AccessTokenClaims | null = null
     let eventsTenant: string | null = null
+    let caller: Caller | null = null
     const header = req.headers.authorization
     if (header && rule !== 'public') {
       const [scheme, token] = header.split(' ')
       try {
         if (scheme !== 'Bearer' || !token) throw new Error('bad scheme')
         if (rule === 'integration') {
-          // A store's backend: no user, only its tenant; ingestion-service verifies it again.
+          // A store's backend: no user, only its tenant.
           eventsTenant = (await verifyIntegrationToken(token, publicKey)).tid
         } else if (rule === 'events') {
-          // A visitor's or shopper's token has no claims to check here; ingestion-service verifies it again.
-          const sender = await verifyEventToken(token, publicKey)
-          claims = sender.claims
+          // A visitor's or shopper's token has no claims to check here.
+          const { claims: senderClaims, ...sender } = await verifyEventToken(token, publicKey)
+          claims = senderClaims
           eventsTenant = sender.tenantId
-        } else if (rule === 'results') {
-          // A store's backend (insights-service verifies it again), else a user's access token.
-          eventsTenant = await verifyIntegrationToken(token, publicKey).then(({ tid }) => tid, () => null)
-          if (!eventsTenant) claims = await verifyAccessToken(token, publicKey)
+          caller = sender
+        } else if (rule === 'results' && isIntegrationToken(token)) {
+          // A store's backend; any other token must be a user's access token.
+          eventsTenant = (await verifyIntegrationToken(token, publicKey)).tid
         } else {
           claims = await verifyAccessToken(token, publicKey)
         }
@@ -87,7 +100,7 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService, co
     if (!claims && (rule === 'authenticated' || rule === 'campaign-manager' || (rule === 'results' && !eventsTenant))) {
       throw unauthorized('UNAUTHENTICATED', 'A bearer token is required')
     }
-    if ((rule === 'campaign-manager' || (rule === 'results' && claims)) && claims?.role !== 'campaign-manager') {
+    if (rule === 'campaign-manager' && claims?.role !== 'campaign-manager') {
       throw forbidden('FORBIDDEN', 'Requires role: campaign-manager')
     }
     const origin = req.headers.origin
@@ -97,6 +110,8 @@ export function accessMiddleware(publicKey: CryptoKey, access: AccessService, co
       if (isUuid(tenant)) await access.assertOriginAllowed(tenant, origin)
     }
     if (claims) req.headers.user_id = claims.sub
+    caller ??= eventsTenant ? { tenantId: eventsTenant } : claims ? { tenantId: claims.tid } : null
+    if (caller) req.caller = caller
     next()
   }
 }

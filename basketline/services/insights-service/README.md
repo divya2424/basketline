@@ -10,13 +10,13 @@ Mounted at `/api/v1/ad`:
 
 | Endpoint | Returns | Who can call |
 |---|---|---|
-| `GET /:campaignId/:metric?from&to&storeId`<br>(metric: `clicks`, `impressions`, `clickToBasket`, `uniqueCustomers`, `sessions`) | `customers` (distinct people), `count` (events), split per client (web/mobile) and user type, and the `period` | A campaign manager (access token), or the tenant's backend (integration token) |
+| `GET /:campaignId/:metric?from&to&storeId`<br>(metric: `clicks`, `impressions`, `clickToBasket`, `uniqueCustomers`, `sessions`) | `customers` (distinct people), `count` (events), split per client (web/mobile) and user type, and the `period` | A user (access token), or the tenant's backend (integration token) |
 | `GET /:campaignId/products?from&to&storeId` | Per product: `impressions`, `clicks`, `ctr`, `addToCarts`, `clickToBasket`, with name and category | The same |
-| `GET /campaigns` | The tenant's campaigns with activity, per store | A campaign manager |
+| `GET /campaigns` | The tenant's campaigns with activity, per store | A user (access token) |
 
 - **Period:** the last 30 days by default, at most 366. It is snapped to whole UTC days, the grain of the daily tables, and a period ending now includes today.
 - **`storeId`** limits the read to one store (in a marketplace, one seller). Without it, the read covers all the tenant's stores.
-- **Errors:** an unknown campaign has 0 for every count. An invalid ID, date or metric is a `400` with a code (`UNKNOWN_METRIC`, `INVALID_PERIOD`, `VALIDATION_FAILED`). No token, or the wrong role, is `401` or `403`.
+- **Errors:** an unknown campaign has 0 for every count. An invalid ID, date or metric is a `400` with a code (`UNKNOWN_METRIC`, `INVALID_PERIOD`, `VALIDATION_FAILED`). No token is `401` (at the gateway, which verifies it).
 
 Example: the integration token comes from the retailer's API key.
 
@@ -41,7 +41,7 @@ A request goes through one layer per concern, and each layer only calls the one 
 ```
 src/index.ts                  config from env, ClickHouse as the reader user, graceful shutdown
 src/app.ts                    builds the Express app from its dependencies (tests pass their own)
-  routes/ad.routes.ts         URLs, authentication (access or integration token), role, UUID and query validation
+  routes/ad.routes.ts         URLs, the caller from the gateway, UUID and query validation
   validators/metric.validator.ts   from / to / storeId checks → 400 with every error
   controllers/metrics.controller.ts  HTTP in and out: the tenant from the token, the response shape
   services/metrics.service.ts      the rules: the period, the rates, the 15 s cache of identical counts
@@ -49,12 +49,12 @@ src/app.ts                    builds the Express app from its dependencies (test
   repositories/campaign.repository.ts  the campaign list
 ```
 
-- **Dependencies are passed in, not imported.** `buildInsightsApp({ clickhouse, logger, publicKey })` gets everything it needs, so the tests run the real app against a test database.
+- **Dependencies are passed in, not imported.** `buildInsightsApp({ clickhouse, logger })` gets everything it needs, so the tests run the real app against a test database.
 - **Shared code** comes from `@basketline/platform`: the base Express app, health checks, auth middleware, validation, errors and logging. That code is the same in every Basketline service.
 
 ## How a count is read
 
-1. **The tenant comes from the token**, never from the URL or a header. A `tenant_id` header can't change it.
+1. **The tenant comes from the token**, as the gateway verified it (`x-basketline-caller`), never from the URL or a client's header. A `tenant_id` header can't change it.
 2. **The query reads the daily tables** (`daily_campaign_aggregation`, `daily_campaign_customers_aggregation`, `daily_campaign_sessions_aggregation`, `daily_campaign_product_aggregation`).
    - One row per tenant, store, campaign and day, kept forever. A year is 365 small rows, so "today" and "last year" are the same query.
    - The `WHERE` clause follows the sort key: tenant, store, campaign, day.
@@ -69,7 +69,7 @@ src/app.ts                    builds the Express app from its dependencies (test
 
 [`test/insights.test.ts`](test/insights.test.ts) runs the app over HTTP (supertest) against its own ClickHouse database, built from the real schema and dropped afterwards. Rows are seeded as ingestion and Flink would write them. It covers:
 - **Counting:** redelivered events count once; date ranges; click-to-basket credits the latest click; web/mobile/total; a visitor who signs in counts once; sessions; per-store reads; per-product results.
-- **Isolation and access:** another tenant's rows are never returned, even through the row policy alone; only campaign managers or integration tokens can read.
+- **Isolation and access:** another tenant's rows are never returned, even through the row policy alone; nothing is read without the gateway's caller (who may call which route is the gateway's check).
 - **Limits and cache:** the query limits and the cache.
 
 ```bash

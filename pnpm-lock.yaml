@@ -354,8 +354,8 @@ importers:
         specifier: workspace:*
         version: link:../../../basketline/packages/platform
       '@divya2424/basketline-sdk':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.4.0
+        version: 0.4.0
 
   retailer-sim/services/campaign-service:
     dependencies:
@@ -405,8 +405,8 @@ importers:
   retailer-sim/storefront:
     dependencies:
       '@divya2424/basketline-sdk':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.4.0
+        version: 0.4.0
       axios:
         specifier: 1.20.0
         version: 1.20.0(debug@4.4.3)
@@ -521,8 +521,8 @@ packages:
     resolution: {integrity: sha512-TX69xUcGHzuS4C0GRcjvdSWXiQ5X1o+m5RGg2Q+LzwEggAumbc4nGqPLlCbLNH7y3PPihUh5cFqbqZy114zitw==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-kafka/0.1.2/d7f6ff5b9ab2f7d56deb632024b7ab66a39090fd}
     engines: {node: '>=24'}
 
-  '@divya2424/basketline-sdk@0.3.0':
-    resolution: {integrity: sha512-OZIp2Orkb0xYclQSqxyubzqhrP2xz885zD5JuI/nn6+Ddr63KjXEhFbsVTsLvFGLYCTpvkPxZPtkueMTC1qBHA==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-sdk/0.3.0/c403ec11ace92a3b2a2d4453663f2d295a5d2a5b}
+  '@divya2424/basketline-sdk@0.4.0':
+    resolution: {integrity: sha512-eRpYUNN2BHFQtU7y7Rc8Yg0tMTVgUn9XJNZL+indxjAbCwwRD4ipVrnNdBErB5JY9ocM74Km2imGK+DwWoR5NA==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-sdk/0.4.0/02527ee6b3ac5fa4bd1788b59f665e193e79c42e}
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
@@ -2894,7 +2894,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@divya2424/basketline-sdk@0.3.0': {}
+  '@divya2424/basketline-sdk@0.4.0': {}
 
   '@drizzle-team/brocli@0.10.2': {}
 

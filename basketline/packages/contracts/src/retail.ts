@@ -23,9 +23,6 @@ export const CAMPAIGN_PRODUCTS_TOPIC = 'retail.campaign-products.v1'
 export const CATALOG_EVENT_NAMES = ['seller_upserted', 'product_upserted', 'product_removed'] as const
 export const CAMPAIGN_EVENT_NAMES = ['campaign_upserted', 'campaign_removed'] as const
 export const CAMPAIGN_PRODUCT_EVENT_NAMES = ['campaign_product_added', 'campaign_product_removed'] as const
-export type CatalogEventName = (typeof CATALOG_EVENT_NAMES)[number]
-export type CampaignEventName = (typeof CAMPAIGN_EVENT_NAMES)[number]
-export type CampaignProductEventName = (typeof CAMPAIGN_PRODUCT_EVENT_NAMES)[number]
 
 export interface SellerUpserted {
   sellerId: string

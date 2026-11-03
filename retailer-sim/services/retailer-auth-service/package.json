@@ -8,7 +8,6 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@basketline/contracts": "workspace:*",
     "@basketline/platform": "workspace:*",
     "@retailer-sim/shared": "workspace:*",
     "drizzle-orm": "^0.45.4"

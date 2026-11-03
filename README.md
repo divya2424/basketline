@@ -101,6 +101,39 @@ Without a GitHub token, `pnpm install` and the image builds fail on the two pack
 
 To create tenants and users from the command line, see [basketline/README.md § Run it](basketline/README.md#run-it).
 
+## Using the portal
+
+Screenshots of the marketplaces' web app (http://localhost:5174) with the demo data from `pnpm seed:demo`.
+
+**1. The Marketplaces page.** Every marketplace (a Basketline tenant) with its tier. **Visit** one to sell or shop there, or add a new one: it's onboarded at Basketline and seeded with sellers, products, campaigns and logins.
+
+![The Marketplaces page](docs/screenshots/01-marketplaces.png)
+
+**2. A marketplace.** **Sell:** sign in as one of its sellers. **Shop:** browse as a visitor, or sign in as one of its shoppers (`user01`–`user10`).
+
+![A marketplace's page: sell or shop](docs/screenshots/02-marketplace.png)
+
+**3. Signing in.** Choosing an account fills in its demo password (`test`).
+
+![Signing in as a seller](docs/screenshots/03-sign-in.png)
+
+**4. The seller portal.** A seller puts their own products in a campaign of the type they choose: Spotlight, Top rated, Customer picks or Deals, the sections of the marketplace's home page. Each campaign can be paused or resumed, and opens its analytics.
+
+![The seller portal](docs/screenshots/04-seller-portal.png)
+
+**5. A campaign's analytics.** All read from Basketline's `/ad` API by the marketplace's backend, for this seller's store only, over 7, 30 or 90 days:
+- the headline numbers;
+- the funnel from impressions to add-to-carts;
+- web vs mobile;
+- visitors vs registered shoppers;
+- the results per product.
+
+![A campaign's analytics](docs/screenshots/05-campaign-analytics.png)
+
+**6. Shopping.** Shoppers see each placement's campaigns from every seller. What they see, click and add to the cart is sent to Basketline with its SDK, and shows in the seller's analytics within about a minute. **Logout** leads back to the Marketplaces page.
+
+![The shop, signed in as a shopper](docs/screenshots/06-shop.png)
+
 ## Local URLs
 
 | What | URL | Sign-in |

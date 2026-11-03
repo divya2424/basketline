@@ -6,14 +6,6 @@ export interface VisitorInput {
   clientType?: 'web' | 'mobile'
 }
 
-export interface ShopperTokenInput {
-  /** The vendor's own ID for its signed-in customer. */
-  customerId: string
-  /** The SDK's visitor UUID for this browser: the customer keeps it, so they stay one person. */
-  visitorId?: string
-  clientType?: 'web' | 'mobile'
-}
-
 export interface LoginInput {
   username: string
   password: string

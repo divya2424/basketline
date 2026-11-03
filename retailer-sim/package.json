@@ -8,6 +8,7 @@
     "lint": "oxlint",
     "verify": "pnpm lint && pnpm typecheck && pnpm test",
     "db:generate": "pnpm --filter './services/*' --if-present db:generate",
-    "keys": "node scripts/generate-keys.ts"
+    "keys": "node scripts/generate-keys.ts",
+    "seed:demo": "node scripts/seed-demo.ts"
   }
 }

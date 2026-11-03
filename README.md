@@ -84,9 +84,14 @@ cd ../retailer-sim
 pnpm keys                 # its own keys → retailer-sim/keys/ (git-ignored)
 docker compose up -d --build
 
+# Demo data: a marketplace "Demo Mart" with shopping by user01–user10 and visitors
+pnpm seed:demo            # in retailer-sim/; each run adds another round of activity
+
 # The marketplaces' web app
 (cd retailer-sim/storefront && cp .env.example .env && pnpm dev)  # http://localhost:5174
 ```
+
+After `pnpm seed:demo`, sign in to **Demo Mart** as `seller1` or `seller2` (password `test`): their campaigns' analytics show the seeded activity within about a minute, with sessions about 40 minutes later.
 
 Without a GitHub token, `pnpm install` and the image builds fail on the two packages above (`401 Unauthorized`): create a classic token with only `read:packages`.
 

@@ -37,7 +37,7 @@ const { app, access } = buildGateway({
     ingestion: requireEnv('INGESTION_SERVICE_URL'),
     insights: requireEnv('INSIGHTS_SERVICE_URL'),
   },
-  corsOrigins: listEnv('CORS_ORIGINS', ['http://localhost:5173']),
+  corsOrigins: listEnv('CORS_ORIGINS', []),
   rateLimitPerMinute: intEnv('RATE_LIMIT_PER_MINUTE', 300),
   eventsRateLimitPerMinute: intEnv('EVENTS_RATE_LIMIT_PER_MINUTE', 120),
   visitorRateLimitPerMinute: intEnv('VISITOR_RATE_LIMIT_PER_MINUTE', 10),

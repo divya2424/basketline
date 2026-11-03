@@ -35,7 +35,7 @@ export function createMetricsController(service: MetricsService) {
       const metric = metricOf(req)
       const { campaignId } = req.params
       const storeId = queryString(req.query.storeId)?.toLowerCase()
-      const { count, customers, columns, period } = await service.count(req.auth!.tid, campaignId, metric, {
+      const { count, customers, columns, period } = await service.count(req.integration?.tid ?? req.auth!.tid, campaignId, metric, {
         from: queryString(req.query.from),
         to: queryString(req.query.to),
         storeId,

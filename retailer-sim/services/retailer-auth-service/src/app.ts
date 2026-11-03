@@ -43,7 +43,7 @@ export function buildRetailerAuthApp({ db, bus, logger, privateKey, publicKey, b
     },
   })
 
-  app.use('/api/v1', retailerRoutes(createRetailerController(stores, auth), { authenticate: retailerAuth(publicKey), loginLimiter }))
+  app.use('/api/v1', retailerRoutes(createRetailerController(stores, auth, db), { authenticate: retailerAuth(publicKey), loginLimiter }))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

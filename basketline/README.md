@@ -1,8 +1,8 @@
 # Basketline: the platform
 
-[Basketline](../README.md), an ads analytics platform for retailers: four Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHouse for the metrics, a data lake (Kafka Connect → Iceberg on S3), Airflow for backfills, backups and purges, and the web dashboard (`dashboard/`, [README](dashboard/README.md)).
+[Basketline](../README.md), an ads analytics platform for retailers: four Node.js + TypeScript services behind one gateway, a Flink SQL job, ClickHouse for the metrics, a data lake (Kafka Connect → Iceberg on S3), Airflow for backfills, backups and purges. It is API-only: no UI of its own.
 
-**The product is the analytics side** (ingestion-service, insights-service, Flink, ClickHouse, Airflow), with auth-service for tenants, dashboard users and tokens. Retailers integrate through its public API only: they onboard (`POST /accounts`) and keep an API key, send their stores' catalog and campaigns to the retail API (`/retail/*`) with integration tokens, vouch for their signed-in shoppers with shopper tokens, and their sites send events with the SDK. The simulated retailer ([`../retailer-sim`](../retailer-sim/README.md)) does exactly that, with its own logins, services and database. Basketline's services talk to each other only through **Kafka** events.
+**The product is the analytics side** (ingestion-service, insights-service, Flink, ClickHouse, Airflow), with auth-service for tenants, API users and tokens. Retailers integrate through its public API only: they onboard (`POST /accounts`) and keep an API key, send their stores' catalog and campaigns to the retail API (`/retail/*`) with integration tokens, vouch for their signed-in shoppers with shopper tokens, and their sites send events with the SDK, and their backends read the analytics (`/ad`) for their own UIs, such as a sellers' portal. The simulated retailer ([`../retailer-sim`](../retailer-sim/README.md)) does exactly that, with its own logins, services and database. Basketline's services talk to each other only through **Kafka** events.
 
 **Contents:**
 
@@ -13,9 +13,9 @@
 
 ```
                     ┌──────────── gateway :8080 ────────────┐
- dashboard ─HTTP───►│ CORS · rate limits · JWT check ·       │──HTTP──► one service per request
- retailer's site    │ session revocation · route permissions │
-  (SDK) and backend └────────────────────────────────────────┘
+ retailer's site ──►│ CORS · rate limits · JWT check ·       │──HTTP──► one service per request
+  (SDK) and backend │ session revocation · route permissions │
+                    └────────────────────────────────────────┘
  auth-service                    ingestion-service                      insights-service (/ad)
    identity_db                     │ publish                            ▲ reads (SQL, one tenant)
      │  publish                    ▼                                    │
@@ -55,8 +55,7 @@ Everything below runs with `docker compose up -d --build`, as the Compose projec
 | **Kafka** | `localhost:9092` | `kafka:19092` | No UI; use the CLI in the container (see [Operations](#operations)) |
 | **Postgres** | `localhost:5432` | `postgres:5432` | Superuser `postgres` / `postgres`; one database and login per service (`infra/postgres/init.sql`) |
 | **S3** (SeaweedFS) | http://localhost:8333 · UI http://localhost:23646 | `archive-storage:8333` | Buckets `basketline-pipeline` (the lake, under `lake/`) and `ad-insights-archive` (ClickHouse backups), keys `archive` / `archive_dev` |
-| **Dashboard** (dev server) | http://localhost:5173 | — | Started from `dashboard/` with `pnpm dev` |
-| Storefront (dev server) | http://localhost:5174 | — | The simulated retailer's (`../retailer-sim`), a retailer's site sending events with the SDK |
+| Marketplaces (dev server) | http://localhost:5174 | — | The simulated marketplaces (`../retailer-sim`): a retailer's site sending events with the SDK, and its seller portal reading `/ad` |
 | **Grafana** (profile `monitoring`) | http://localhost:3000 | `grafana:3000` | Dashboard "Pipeline" (the home page); viewing needs no login, editing `admin` / `basketline_dev` |
 | **Prometheus** (profile `monitoring`) | http://localhost:9090 · alerts http://localhost:9090/alerts | `prometheus:9090` | Scrapes Flink, ClickHouse, the pipeline's SQL metrics and Kafka lag |
 
@@ -74,15 +73,14 @@ pnpm install                  # at the repo root: one workspace for both folders
 cd basketline
 pnpm keys                     # ES256 key pair → keys/ (git-ignored)
 docker compose up -d --build     # the platform
-(cd ../retailer-sim && docker compose up -d --build)   # the simulated retailer's services
-(cd dashboard && pnpm dev)    # http://localhost:5173
+(cd ../retailer-sim && docker compose up -d --build)   # the simulated marketplaces' services
 ```
 
 **The token:** the Kafka event bus is its own package, `@divya2424/basketline-kafka`, on GitHub Packages, which needs a token even to install. Use a classic personal access token with only `read:packages`, in `NODE_AUTH_TOKEN`. pnpm takes registry tokens only from your user config, so add `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` to `~/.npmrc` once (the repo's `.npmrc` only says which registry `@divya2424` packages come from). Docker builds get the token as the build secret `npm_token` (`docker-compose.yml`), so it never ends up in an image. Images build from the repo root (`../Dockerfile`), since the workspace and lockfile live there.
 
-The quickest way in is the simulated retailer (`../retailer-sim`): its storefront's Stores page onboards a store here with `POST /accounts`, which creates a tenant with an `onboarding` campaign manager (password `test`), and its services then send the store's sellers, products and campaigns through the retail API.
+The quickest way in is the simulated marketplaces (`../retailer-sim`): their Marketplaces page onboards one here with `POST /accounts`, which creates a tenant with an `onboarding` campaign manager (an API user, password `test`) and an API key, and their services then send the sellers, products and campaigns through the retail API.
 
-**From the command line instead** (the default storefront tenant, `VITE_TENANT_ID` in `dashboard/.env.example`):
+**From the command line instead** (the storefront's default tenant, `VITE_TENANT_ID` in `../retailer-sim/storefront/.env.example`):
 
 ```bash
 cli() { docker compose exec auth-service node basketline/services/auth-service/src/cli.ts "$@"; }
@@ -96,7 +94,7 @@ SEED_API_KEY=<the key> pnpm seed   # 10 sample products and 4 campaigns, through
 | CLI command | What it does |
 | --- | --- |
 | `create-account --name … [--tier free|pro|enterprise] [--tenant <uuid>]` | Creates a tenant (generates the UUID if omitted) |
-| `create-user --username … --password … --role campaign-manager --tenant <uuid>` | Creates a dashboard user |
+| `create-user --username … --password … --role campaign-manager --tenant <uuid>` | Creates an API user (reads `/ad` with an access token) |
 | `set-role --username … --role … --tenant <uuid>` | Changes a role (published as an event, so the gateway picks it up) |
 | `disable --username … --tenant <uuid>` | Disables a user |
 | `create-api-key --tenant <uuid> --name '…'` | A retailer's secret API key, for shopper and integration tokens. Printed once; only its hash is stored |
@@ -105,7 +103,7 @@ SEED_API_KEY=<the key> pnpm seed   # 10 sample products and 4 campaigns, through
 
 All data is per tenant: a campaign manager sees only their tenant's campaigns and metrics.
 
-**Web apps:** set `VITE_API_BASE_URL=http://localhost:8080/api/v1` in `dashboard/.env`. The gateway allows CORS from the dashboard, http://localhost:5173 (`CORS_ORIGINS`); retailers' sites (the storefront on :5174) use the SDK's endpoints, which accept any origin.
+**Browsers:** retailers' sites (the marketplaces on :5174) call only the SDK's endpoints, which accept any origin; `CORS_ORIGINS` (none by default) would open every route to a browser app.
 
 ## Test it
 
@@ -116,7 +114,7 @@ All data is per tenant: a campaign manager sees only their tenant's campaigns an
 | `pnpm test:flink` | Attribution through Kafka → Flink → ClickHouse, from the shared cases | the whole stack |
 | `pnpm test:airflow` | The history backfill (events, attribution, sessions, scope, rollback) and the lake purge (needs [uv](https://docs.astral.sh/uv/)) | clickhouse, postgres, archive-storage |
 
-The analytics tests create and drop their own ClickHouse database. The dashboard's tests run with `pnpm test` in `dashboard/`; the simulated retailer's with `pnpm verify` in `../retailer-sim`. The architecture check and the e2e test cover the retailer's services too.
+The analytics tests create and drop their own ClickHouse database. The simulated marketplaces' tests run with `pnpm verify` in `../retailer-sim` and `pnpm test` in its `storefront/`. The architecture check and the e2e test cover the retailer's services too.
 
 ## API
 
@@ -153,7 +151,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
   Basketline holds no shoppers and no catalog of its own: those are the retailer's, sent with the API key.
 
-- **Roles:** `campaign-manager`, the dashboard user: every campaign and store of the tenant. Shoppers are the retailer's (shopper tokens, below).
+- **Roles:** `campaign-manager`, an API user (access token): every campaign and store of the tenant. Shoppers are the retailer's (shopper tokens, below).
 
 - **Stores are sellers:** a tenant is a marketplace; each seller on it is a store, and `storeId` is the seller's ID. A product's, campaign's or campaign product's store defaults to its `sellerId`, and each event can carry the store (seller) it's about. A seller sees its results through the marketplace's own seller portal, whose backend reads them with its API key (`GET /ad/:id/products`); sellers have no Basketline login.
 
@@ -167,7 +165,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
   - **Errors:** a wrong, revoked or other tenant's key gets `401 INVALID_API_KEY`.
 
-  - **Allowed websites:** a tenant can list the websites its events may come from (dashboard → Integrate your site → Allowed websites, or `PUT /auth/allowed-origins`). The gateway then answers `403 ORIGIN_NOT_ALLOWED` when a browser page on another website calls `/auth/visitor` or `/analytics/events` for that tenant. It goes by the `Origin` header, which a browser always sends and a page can't change. Not checked:
+  - **Allowed websites:** a tenant can list the websites its events may come from (`PUT /auth/allowed-origins`). The gateway then answers `403 ORIGIN_NOT_ALLOWED` when a browser page on another website calls `/auth/visitor` or `/analytics/events` for that tenant. It goes by the `Origin` header, which a browser always sends and a page can't change. Not checked:
 
     - tenants with no list (any website, as before);
     - Basketline's own apps (`CORS_ORIGINS`);
@@ -175,7 +173,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
     The gateway learns a change from `TenantOriginsChanged` (`auth.tenant.v1`), within seconds.
 
-  - **Keys:** every tenant gets a first key at onboarding (`apiKey`, named "Default"). Its campaign managers create and revoke keys in the dashboard (`/auth/api-keys`) or with the CLI. Keys are stored hashed, so a key is shown only when it's created.
+  - **Keys:** every tenant gets a first key at onboarding (`apiKey`, named "Default"). Its campaign managers create and revoke keys with `/auth/api-keys` or the CLI. Keys are stored hashed, so a key is shown only when it's created.
 
   - **The client side:** see the SDK, [divya2424/basketline-sdk](https://github.com/divya2424/basketline-sdk).
 
@@ -195,7 +193,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 - **Identity check on events:** the batch's tenant, user and user type must match its token (`registered` for a shopper or access token, `visitor` for a visitor token). Any difference, or a `tenant_id` header for another tenant, rejects the whole batch with `403 IDENTITY_MISMATCH`.
 - **Event errors:** `429 TOO_MANY_EVENTS` past 300 events per sender per minute; `503 EVENTS_NOT_DELIVERED` when Kafka is down.
-- **What answers the spec:** "the number of customers who clicked / viewed / added to cart after clicking" is `customers` on `/ad/:id/clicks`, `impressions` and `clickToBasket`; the dashboard shows it as the headline. `count` is the number of events (one customer can click many times), kept for rates such as CTR. `customers` is a `uniqCombined64` sketch: exact up to a few thousand, within about 1% above; `count` is exact.
+- **What answers the spec:** "the number of customers who clicked / viewed / added to cart after clicking" is `customers` on `/ad/:id/clicks`, `impressions` and `clickToBasket`; a UI shows it as the headline. `count` is the number of events (one customer can click many times), kept for rates such as CTR. `customers` is a `uniqCombined64` sketch: exact up to a few thousand, within about 1% above; `count` is exact.
 - `/ad` **columns:** `count` is the event total and `customers` the people behind it. The columns split them:
   - `total_web_clicks`, `total_mobile_clicks`;
   - `customers_clicks`, and its `_web_`, `_mobile_`, `_registered_` and `_visitor_` variants;
@@ -294,13 +292,12 @@ Everything else (every original event, the catalog, campaigns, campaign products
   - **Replicas:** two per shard, in a `Replicated` database (ClickHouse Keeper), so the schema files apply once to every node and the hourly check refreshes on one replica per shard (`02_materialized_views.sql`).
   - **Kafka:** each shard's queue tables share their consumer groups, so the serving topics' partitions are split between shards (give those topics at least as many partitions as there are shards). Their views insert into the `Distributed` tables, not the local ones, so each row lands on its tenant's shard whichever shard read it.
 
-- **Freshness:** dashboards show data under a minute old. In the worst case:
+- **Freshness:** `/ad` answers with data under a minute old. In the worst case:
 
   - the storefront batches events every 2 s;
   - Flink writes within about a second;
   - ClickHouse stores what it reads at least every 15 s;
-  - `/ad` caches for 15 s (`METRICS_CACHE_MS`);
-  - the dashboard refreshes every 20 s.
+  - `/ad` caches for 15 s (`METRICS_CACHE_MS`).
 
 - **Limits:**
 
@@ -529,7 +526,7 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's re
 
 ## Deleting a tenant
 
-`DELETE /accounts/:tenantId` (or **Details → Delete tenant** on the dashboard's tenants page) removes everything the tenant owns at Basketline, for good:
+`DELETE /accounts/:tenantId` removes everything the tenant owns at Basketline, for good:
 
 | Where | What | When |
 | --- | --- | --- |
@@ -556,7 +553,7 @@ The Kafka topics keep the tenant's past messages until they expire (14 days at m
 - **History starts with the lake.** The history backfill recomputes only days the lake holds whole; days before it was set up keep their daily rows as they are.
 - **Results per product have no hourly check:** a copy of an event stored again after a Flink restart or a replay counts twice in `/ad/:id/products` until a history backfill recomputes the day (the campaign totals are corrected within the hour).
 - **Sessions are about 40 minutes behind,** and a quiet stack holds its last sessions open until the next event (no watermark heartbeat). Events more than 10 minutes late are left out of sessions until a backfill.
-- **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded dashboard users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.
+- **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded API users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.
 - **Deleting a tenant is open to anyone,** like onboarding: typing the tenant's name is a guard against mistakes, not a permission. Put `DELETE /accounts/:tenantId` behind an admin role too.
 - **Not implemented:** `CampaignMetricUpdated` events, OpenAPI files, refresh tokens, a time-series endpoint.
 
@@ -588,7 +585,6 @@ deploy/helm/          Kubernetes: a Helm chart per service, helmfile (deploy/hel
 infra/                Postgres and ClickHouse schemas and migrations; monitoring (Prometheus, Grafana)
 scripts/              generate-keys.ts, check-architecture.ts
 test/                 architecture, end-to-end and Flink tests
-dashboard/            the web app: onboarding and the campaign dashboard (dashboard/README.md)
 ```
 
 **Databases:**

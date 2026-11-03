@@ -82,6 +82,15 @@ export interface CampaignProductResult {
   clickToBasket: number
 }
 
+/** A campaign metric's answer (GET /ad/{campaignId}/{metric}): its total, the customers behind it, and its columns (e.g. total_converted_sessions). */
+export interface CampaignMetric {
+  count: number
+  customers?: number
+  [column: string]: unknown
+}
+
+export type CampaignMetricName = 'impressions' | 'clicks' | 'clickToBasket' | 'uniqueCustomers' | 'sessions'
+
 /** Updates per request (the retail API's limit). */
 const MAX_PER_REQUEST = 500
 /** Integration tokens last 15 minutes; a new one is fetched a minute before. */
@@ -138,6 +147,9 @@ export function createStoreApi({ apiUrl, tenantId, apiKey, fetch: doFetch = glob
     for (let i = 0; i < events.length; i += MAX_PER_REQUEST) await request(`/retail/${endpoint}`, { events: events.slice(i, i + MAX_PER_REQUEST) })
   }
   const ids = (key: string, values: string | string[]) => [values].flat().map((value) => ({ [key]: value }))
+  type Scope = { campaignId: string; storeId?: string; from?: string; to?: string }
+  const query = (params: Record<string, string | undefined>) =>
+    new URLSearchParams(Object.entries(params).filter((entry): entry is [string, string] => entry[1] !== undefined))
 
   return {
     catalog: {
@@ -159,10 +171,12 @@ export function createStoreApi({ apiUrl, tenantId, apiKey, fetch: doFetch = glob
     },
     insights: {
       /** A campaign's results per product over [from, to) (default the last 30 days), for one store (seller) or all. */
-      async campaignProducts({ campaignId, storeId, from, to }: { campaignId: string; storeId?: string; from?: string; to?: string }): Promise<CampaignProductResult[]> {
-        const query = new URLSearchParams(Object.entries({ storeId, from, to }).filter((entry): entry is [string, string] => entry[1] !== undefined))
-        return ((await request(`/ad/${campaignId}/products?${query}`)) as { items: CampaignProductResult[] }).items
+      async campaignProducts({ campaignId, storeId, from, to }: Scope): Promise<CampaignProductResult[]> {
+        return ((await request(`/ad/${campaignId}/products?${query({ storeId, from, to })}`)) as { items: CampaignProductResult[] }).items
       },
+      /** One of a campaign's metrics over the same period, for one store (seller) or all. */
+      campaignMetric: ({ campaignId, metric, storeId, from, to }: Scope & { metric: CampaignMetricName }) =>
+        request(`/ad/${campaignId}/${metric}?${query({ storeId, from, to })}`) as Promise<CampaignMetric>,
     },
   }
 }

@@ -104,3 +104,33 @@
 .seller__table-wrap {
   overflow-x: auto;
 }
+
+.seller__periods {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.seller__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.seller__total {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.seller__total dt {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.seller__total dd {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}

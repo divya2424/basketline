@@ -162,7 +162,7 @@ describe('permissions', () => {
     expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', manager)).body).toEqual({ from: 'auth', url: '/api/v1/auth/api-keys' })
   })
 
-  it('limits campaign metrics to campaign managers, never events-only tokens', async () => {
+  it("limits campaign metrics to campaign managers (and the tenant's backend), never events-only tokens", async () => {
     const path = '/api/v1/ad/abc/clicks'
     const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
     expect((await request(gateway).get(path)).status).toBe(401)
@@ -171,14 +171,15 @@ describe('permissions', () => {
     expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
   })
 
-  it("lets a campaign manager or the tenant's backend (integration token) read a campaign's results per product; not other metrics", async () => {
+  it("lets a campaign manager or the tenant's backend (integration token) read a campaign's metrics and results; only managers list campaigns", async () => {
     const path = '/api/v1/ad/abc/products'
     const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, randomUUID())).token}`
     expect((await request(gateway).get(path)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', (await visitorTokenFor(keys)).header)).status).toBe(401)
     expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
     expect((await request(gateway).get(path).set('Authorization', backend)).status).toBe(200)
-    expect((await request(gateway).get('/api/v1/ad/abc/clicks').set('Authorization', backend)).status).toBe(401)
+    expect((await request(gateway).get('/api/v1/ad/abc/clicks').set('Authorization', backend)).status).toBe(200)
+    expect((await request(gateway).get('/api/v1/ad/campaigns').set('Authorization', backend)).status).toBe(401)
   })
 
   it("doesn't route a retailer's own APIs: its catalog and campaigns are its business", async () => {

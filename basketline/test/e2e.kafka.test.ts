@@ -257,7 +257,7 @@ describe('the simulated retailer, through Basketline\'s public API', () => {
     expect(retail('campaign_upserted')).toMatchObject({ storeId: sellerId, sellerId, placement: 'spotlight', title: 'Festive Sale', productIds: [productId] })
     expect(retail('campaign_product_added')).toMatchObject({ productId, storeId: sellerId, sellerId, productName: 'Aurora Wireless Earbuds', productPrice: 2999, category: 'Audio' })
 
-    // Basketline's dashboard: the tenant's campaign manager signs in.
+    // Basketline's API user: the tenant's campaign manager signs in (for the revocation check below).
     const manager = await request(gateway).post('/api/v1/auth/login').set('tenant_id', tenantId).send({ username: 'onboarding', password: connected.body.basketlinePassword, clientType: 'web' })
     expect(manager.status).toBe(200)
     const asManager = `Bearer ${manager.body.accessToken}`
@@ -287,11 +287,12 @@ describe('the simulated retailer, through Basketline\'s public API', () => {
     expect(click.topic).toBe(INTERACTIONS_TOPIC)
     expect(click.envelope.payload).toMatchObject({ campaignId, productId, storeId: sellerId, eventType: 'interaction', userId, userType: 'registered', tenantId })
 
-    // The seller portal: the campaign's results per product, which the campaign
-    // service reads from Basketline (GET /ad/{id}/products) with the store's API key.
+    // The seller portal: the campaign's totals and results per product, which the campaign
+    // service reads from Basketline (GET /ad/{id}/<metric> and /products) with the store's API key.
     // Flink doesn't run here, so the product has no counts yet.
     const results = await request(campaignUrl).get(`/api/v1/campaigns/${campaignId}/results`).set('Authorization', asSeller)
     expect(results.status).toBe(200)
+    expect(results.body.totals).toMatchObject({ impressions: 0, clicks: 0, addToCarts: 0, uniqueCustomers: 0, sessions: 0 })
     expect(results.body.items).toEqual([expect.objectContaining({ productId, name: 'Aurora Wireless Earbuds', impressions: 0, clicks: 0, addToCarts: 0 })])
 
     // Logout → SessionRevoked over Kafka → the gateway refuses the manager's token.

@@ -13,11 +13,11 @@ Diagrams:
 | Layer | Built with | Role |
 |---|---|---|
 | **Retailer** (simulated in `retailer-sim/`) | Its own services, storefront and the Basketline SDK | Sends shoppers' events from the browser or app, its catalog and campaigns from its backend (the retail API), and server-side identity (sign-in, erasure). Outside the platform. |
-| **Edge** | gateway, auth-service | Routing, per-IP limits, CORS per tenant's allowed origins; API keys, visitor, shopper, integration and dashboard tokens. |
+| **Edge** | gateway, auth-service | Routing, per-IP limits, CORS per tenant's allowed origins; API keys, visitor, shopper, integration and access tokens. |
 | **Ingestion** | ingestion-service | Validates each event, refuses bot traffic, holds each tenant to its budget, publishes to Kafka. |
 | **Stream** | Kafka | `retail.interactions.v1` (impressions, clicks, views, add-to-cart, …; 14 days), identity events, and compacted catalog, campaign, campaign-product and tenant topics. Shared by every tenant. |
 | **Processing** | Flink (SQL) | Validated ad events, click→basket attribution (7-day stateful join), user sessions (event-time session window). Writes three serving topics. |
-| **Serving** | ClickHouse, insights-service, dashboard | Daily aggregates per tenant, store, campaign and day, kept forever; the `/ad` API reads them as a user that sees one tenant per query. |
+| **Serving** | ClickHouse, insights-service | Daily aggregates per tenant, store, campaign and day, kept forever; the `/ad` API reads them as a user that sees one tenant per query. |
 | **Data lake** | Kafka Connect → Apache Iceberg on S3 | Every topic, every tenant, as typed Iceberg tables: the system of record. |
 | **Batch** | Airflow | History backfills from the lake, ClickHouse backups, tenant and shopper purges from the lake. |
 | **Observability** | Prometheus, Grafana, alerts; Loki and Alloy for logs | Every layer above. |
@@ -44,7 +44,7 @@ site / app ─► gateway ─► ingestion-service ─► Kafka ─┬─► Fli
 
 - **Clients** batch events (1–100 per request) through the SDK. A shopper's events carry a token that fixes the tenant, user and user type; the SDK keeps a visitor's UUID across sign-in, so a visitor who signs in stays one user.
 - **ingestion-service** checks the sender (bot user agents are refused and counted per tenant), the format, the timestamp (at most 2 days old, 5 minutes ahead), the campaign (active, of the sender's tenant), the rate (per sender, and per tenant by tier), then publishes to Kafka and answers. It doesn't wait for processing.
-- **Latency:** on one laptop with the whole stack, ingestion p99 is 58 ms at 1,000 events/s, and an event is in the dashboard's numbers 7.5 s later (p50; 22 s p99) ([`basketline/loadtest/README.md`](../basketline/loadtest/README.md)).
+- **Latency:** on one laptop with the whole stack, ingestion p99 is 58 ms at 1,000 events/s, and an event is in the `/ad` numbers 7.5 s later (p50; 22 s p99) ([`basketline/loadtest/README.md`](../basketline/loadtest/README.md)).
 - **Partitioning:** interactions are keyed by event ID, so every tenant's events spread over all partitions: no hot partition whatever the tenant mix. Stateful grouping happens in Flink, not by Kafka key. Size partitions for the peak (e.g. 48 for 100k events/s).
 
 ## 4. Real-time processing and state
@@ -79,7 +79,7 @@ One Flink SQL job reads `retail.interactions.v1` once and runs three pipelines i
 | **Everything raw, every tenant** | Iceberg on S3 (the lake), partitioned by tenant and hour | Forever, tiered: S3 Standard → Infrequent Access (30 d) → Glacier Instant Retrieval (180 d) | System of record: recompute, new metrics, analysts, ML |
 | Backups | S3 | Daily ClickHouse backups of what the lake can't rebuild (daily tables, erasure records, backfill runs) | Disaster recovery |
 
-**Real-time and batch from one design.** ClickHouse serves both live and historical numbers with millisecond reads. The lake is where batch analytics and recomputation read. S3 is never on the dashboard's path: a read there would cost per scan and take seconds.
+**Real-time and batch from one design.** ClickHouse serves both live and historical numbers with millisecond reads. The lake is where batch analytics and recomputation read. S3 is never on the `/ad` API's path: a read there would cost per scan and take seconds.
 
 **Corrections and new metrics without raw data in ClickHouse.** The history backfill (`airflow/jobs/backfill_daily.py`) reads the lake from ClickHouse (`icebergS3`). It recomputes whole days into a scratch database built from the live schema, so the same materialized views count them. Then it swaps each month in atomically (`REPLACE PARTITION`), keeping the replaced month for rollback. A new aggregate table is a new table plus view, and its history is one backfill run.
 
@@ -120,7 +120,7 @@ The rule: **a tenant's load spreads across the platform, and each tenant is capp
 
 **Peak events (e.g. Black Friday).**
 - Pre-scale ingestion pods and Flink parallelism ahead of the peak; partitions are already sized for it.
-- Kafka buffers whatever the consumers can't keep up with. The dashboard is then a little behind (consumer-lag panel and alert), but nothing is lost.
+- Kafka buffers whatever the consumers can't keep up with. The `/ad` numbers are then a little behind (consumer-lag panel and alert), but nothing is lost.
 - Clients retry `429`s once after `Retry-After`.
 
 **Known limit:** tenant budgets are counted per pod, so N pods give a tenant N× its budget. A shared counter (Redis) would make it exact.

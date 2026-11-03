@@ -638,6 +638,9 @@ describe("a campaign's results per product (GET /ad/:campaignId/products)", () =
     // The tenant's backend, with its integration token (its API key), e.g. for its sellers' portal; never another tenant's rows.
     const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, TENANT)).token}`
     expect((await metric(campaignId, 'products', `?storeId=${seller}`, backend)).body.items).toHaveLength(2)
+    // And the campaign's totals for the seller.
+    expect((await metric(campaignId, 'impressions', `?storeId=${seller}`, backend)).body).toMatchObject({ storeId: seller, count: 5 })
+    expect((await request(app).get('/api/v1/ad/campaigns').set('Authorization', backend)).status).toBe(401)
     const foreign = `Bearer ${(await signIntegrationToken(keys.privateKey, OTHER_TENANT)).token}`
     expect((await metric(campaignId, 'products', '', foreign)).body.items).toEqual([])
     expect((await metric(campaignId, 'products', '', visitor)).status).toBe(401)

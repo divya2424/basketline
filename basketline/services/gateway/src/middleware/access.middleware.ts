@@ -29,10 +29,10 @@ export function accessFor(method: string, path: string): Access | null {
   // Deleting a tenant: open like onboarding, by choice (its name must be typed again).
   if (/^\/api\/v1\/accounts\/[^/]+$/.test(path)) return method === 'DELETE' ? 'public' : null
   if (path === '/api/v1/analytics/events') return method === 'POST' ? 'events' : null
-  // A campaign's results per product: also a store's backend, for its sellers' portal.
-  if (/^\/api\/v1\/ad\/[^/]+\/products$/.test(path)) return read ? 'results' : null
-  // Campaign metrics: campaign managers, only their own tenant's (insights-service reads it from the token).
-  if (path.startsWith('/api/v1/ad/')) return read ? 'campaign-manager' : null
+  // The tenant's campaign list: campaign managers, only their own tenant's (insights-service reads it from the token).
+  if (path === '/api/v1/ad/campaigns') return read ? 'campaign-manager' : null
+  // A campaign's metrics and results per product: also a store's backend, for its sellers' portal.
+  if (path.startsWith('/api/v1/ad/')) return read ? 'results' : null
   // Reference data and server-side identity from a store's backend, with an integration token.
   if (path.startsWith('/api/v1/retail/')) return method === 'POST' ? 'integration' : null
   if (path.startsWith('/api/v1/analytics/')) return read ? 'authenticated' : null

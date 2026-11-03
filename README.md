@@ -13,14 +13,14 @@ Basketline is a multi-tenant ads analytics platform for online retailers (tenant
 
 Every retailer (tenant) is kept apart: users, campaigns, events and metrics, in every store and topic.
 
-![The Basketline campaign dashboard](basketline/dashboard/docs/dashboard.png)
+Basketline has no UI of its own: it is an API. A marketplace shows the analytics to its sellers in its own seller portal, as the simulated marketplace's does.
 
 ```
  retailer site (SDK) ──► gateway :8080 ──► ingestion-service ──► Kafka: retail.interactions.v1 (14 days), identity,
  retailer backend    ──► (auth, limits)    (validate, bot filter,  catalog, campaign and tenant topics (compacted)
   (catalog, campaigns, via /retail API)     tenant budgets)              │                        │
                                                                          ▼                        ▼
- dashboard ──► insights-service (/ad) ◄── ClickHouse ◄── serving ◄── Flink SQL            Kafka Connect ──► Iceberg on S3
+ seller portal ► insights-service (/ad) ◄── ClickHouse ◄── serving ◄── Flink SQL            Kafka Connect ──► Iceberg on S3
                                     (daily tables per tenant,  topics   (ad events, 7-day      (every topic)      (the lake, forever)
                                      store, campaign: forever;          attribution join,                           │
                                      staging: 3 days)                   30-min sessions)     Airflow: history backfill from the lake,
@@ -29,8 +29,8 @@ Every retailer (tenant) is kept apart: users, campaigns, events and metrics, in 
 ```
 
 The repo has two folders:
-- **[`basketline/`](basketline/README.md): the product.** The analytics path: ingestion-service (data in), Kafka, Flink, ClickHouse, insights-service (the `/ad` API), Iceberg and Airflow; with the gateway, auth-service and the dashboard.
-- **[`retailer-sim/`](retailer-sim/README.md): a simulated retailer**, so the integration can be shown end to end, through Basketline's public API only: its own sign-in (retailer-auth-service, which onboards its stores at Basketline and keeps their API keys), product- and campaign-service (its catalog and campaigns, sent to Basketline's retail API), and its storefront (tracking shoppers with the SDK).
+- **[`basketline/`](basketline/README.md): the product.** The analytics path: ingestion-service (data in), Kafka, Flink, ClickHouse, insights-service (the `/ad` API), Iceberg and Airflow; with the gateway and auth-service. API only.
+- **[`retailer-sim/`](retailer-sim/README.md): simulated marketplaces** (e.g. a Flipkart and a Walmart), so the integration can be shown end to end, through Basketline's public API only: their own sign-in (retailer-auth-service, which onboards each marketplace at Basketline and keeps its API key), product- and campaign-service (sellers' catalogs and campaigns, sent to Basketline's retail API, and sellers' analytics read from it), and the web app: the marketplaces, each one's shop (tracking shoppers with the SDK) and its seller portal.
 
 **Design documents:**
 - [Platform design](docs/platform-design.md): the design proposal: technology choices, ingestion, stateful processing (attribution, sessions), storage and retention, the insights API, scalability, monitoring, multi-tenancy, trade-offs, cost, and extending it.
@@ -62,7 +62,7 @@ The repo has two folders:
 | Every event of every topic | Iceberg on S3 (the lake) | Forever (cheaper tiers with age) |
 | ClickHouse backups | S3 | 35 days |
 
-**Real time vs accuracy:** the dashboard is live (under a minute); totals are corrected by an hourly recount from staging (duplicates from retries or replays removed), and any settled day can be recomputed from the lake (`history_backfill`). Event counts are exact; unique customers are sketches, within about 1%. Details in [basketline/README.md § Where the metrics live](basketline/README.md#where-the-metrics-live).
+**Real time vs accuracy:** the metrics are live (under a minute); totals are corrected by an hourly recount from staging (duplicates from retries or replays removed), and any settled day can be recomputed from the lake (`history_backfill`). Event counts are exact; unique customers are sketches, within about 1%. Details in [basketline/README.md § Where the metrics live](basketline/README.md#where-the-metrics-live).
 
 ## Quick start
 
@@ -86,16 +86,14 @@ cd ../retailer-sim
 pnpm keys                 # its own keys → retailer-sim/keys/ (git-ignored)
 docker compose up -d --build
 
-# The two web apps, each in its own terminal from the repo root
-(cd basketline/dashboard && cp .env.example .env && pnpm dev)     # http://localhost:5173
+# The marketplaces' web app
 (cd retailer-sim/storefront && cp .env.example .env && pnpm dev)  # http://localhost:5174
 ```
 
 Without a GitHub token, `pnpm install` and the image builds fail on the two packages above (`401 Unauthorized`): create a classic token with only `read:packages`.
 
-1. On the storefront's Stores page, http://localhost:5174/stores, connect a store. The retailer onboards it at Basketline and keeps its API key: Basketline creates an `onboarding` campaign manager (password `test`); the retailer creates its logins (`staff`, `user01`–`user10`, password `test`) and sends its sample sellers, products and campaigns to Basketline.
-2. **Open** it to shop; sign in as `user01` to shop as a customer.
-3. On the dashboard, http://localhost:5173, click **Analytics** on the tenant's row.
+1. On http://localhost:5174, the Marketplaces page, add a marketplace (e.g. Flipkart). It's onboarded at Basketline, which gives it an API key, and seeded with two sellers, their products and campaigns, and logins (password `test`): `seller1`, `seller2`, the shoppers `user01`–`user10`, and `staff`.
+2. **Visit** it. **Sell:** sign in as a seller to create campaigns of its products, choosing the campaign type (Spotlight, Top rated, Customer picks, Deals), and see each campaign's analytics. **Shop:** browse as a visitor or sign in as a shopper; what you view, click and add to the cart is what the seller's analytics count, within about a minute.
 
 To create tenants and users from the command line, see [basketline/README.md § Run it](basketline/README.md#run-it).
 
@@ -103,8 +101,7 @@ To create tenants and users from the command line, see [basketline/README.md § 
 
 | What | URL | Sign-in |
 |---|---|---|
-| **Dashboard** (Basketline) | http://localhost:5173 | Sign in from a tenant's row |
-| **Storefront** (simulated retailer) | http://localhost:5174 · stores at /stores | Visitors need no sign-in; the store's logins are the retailer's |
+| **Marketplaces** (simulated) | http://localhost:5174 | Each marketplace's page signs you in as one of its sellers or shoppers |
 | **API gateway** | http://localhost:8080/api/v1 | Tokens from `/auth/login` or `/auth/visitor` |
 | Gateway health | http://localhost:8080/health/ready | — |
 | **Flink** web UI | http://localhost:8081 | — |
@@ -139,7 +136,6 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 | Folder | What it is | Docs |
 |---|---|---|
 | [`basketline/`](basketline/) | **The product:** the gateway and four services, Kafka contracts, Postgres and ClickHouse schemas | [basketline/README.md](basketline/README.md) |
-| [`basketline/dashboard/`](basketline/dashboard/) | The tenants and the campaign dashboard (React 19, Vite) | [dashboard/README.md](basketline/dashboard/README.md) |
 | [`basketline/flink/`](basketline/flink/) | The Flink SQL job: ad events, click→basket attribution, sessions | [flink/README.md](basketline/flink/README.md) |
 | [`basketline/connect/`](basketline/connect/) | Kafka Connect with the Iceberg sink: every topic into the lake | [basketline/README.md](basketline/README.md) |
 | [`basketline/airflow/`](basketline/airflow/) | The history backfill from the lake, ClickHouse backups, tenant and shopper purges | [airflow/README.md](basketline/airflow/README.md) |
@@ -147,7 +143,7 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 | [`basketline/loadtest/`](basketline/loadtest/) | The k6 load test for the analytics path | [loadtest/README.md](basketline/loadtest/README.md) |
 | [`basketline/deploy/helm/`](basketline/deploy/helm/) | Kubernetes: a Helm chart per service, helmfile | [helm/README.md](basketline/deploy/helm/README.md) |
 | [`retailer-sim/`](retailer-sim/) | **The simulated retailer:** its sign-in, product- and campaign-service, their Compose file and Helm charts | [retailer-sim/README.md](retailer-sim/README.md) |
-| [`retailer-sim/storefront/`](retailer-sim/storefront/) | The retailer's web shop and Stores page, tracking with the Basketline SDK (React 19, Vite) | [storefront/README.md](retailer-sim/storefront/README.md) |
+| [`retailer-sim/storefront/`](retailer-sim/storefront/) | The marketplaces' web app: the marketplaces, each one's shop (tracking with the Basketline SDK) and seller portal (React 19, Vite) | [storefront/README.md](retailer-sim/storefront/README.md) |
 
 The root holds the one pnpm workspace (`pnpm-workspace.yaml`, the lockfile and the backend's shared dependencies) and the `Dockerfile` that builds every Node service.
 
@@ -155,8 +151,7 @@ The root holds the one pnpm workspace (`pnpm-workspace.yaml`, the lockfile and t
 
 | Command | Covers | Needs |
 |---|---|---|
-| `cd basketline/dashboard && pnpm test` | The dashboard | Nothing |
-| `cd retailer-sim/storefront && pnpm test` | The storefront | Nothing |
+| `cd retailer-sim/storefront && pnpm test` | The marketplaces' web app | Nothing |
 | `cd basketline && pnpm verify` | Typecheck, architecture check (both folders), unit and integration tests | postgres, kafka, clickhouse |
 | `cd retailer-sim && pnpm verify` | The simulated retailer's services | postgres, kafka |
 | `cd basketline && pnpm test:e2e` | The full flow through the gateway, with real Kafka | The whole stack |

@@ -16,6 +16,7 @@ const CAMPAIGN = {
 }
 const RESULTS = {
   campaignId: 'c1',
+  totals: { impressions: 40, clicks: 4, ctr: 0.1, addToCarts: 1, clickToBasket: 0.25, uniqueCustomers: 30, sessions: 35, convertedSessions: 1 },
   items: [{ productId: 'product_006', name: 'Lumen LED Desk Lamp', impressions: 40, clicks: 4, ctr: 0.1, addToCarts: 1, clickToBasket: 0.25 }],
 }
 
@@ -56,22 +57,28 @@ describe('the seller portal', () => {
       'Glide Ergonomic Wireless Mouse',
     ])
     await user.type(within(form).getByLabelText('Campaign title'), 'Spotlight lamps')
-    await user.selectOptions(within(form).getByLabelText('Section'), 'spotlight')
+    await user.selectOptions(within(form).getByLabelText('Campaign type'), 'spotlight')
     await user.click(within(form).getByLabelText('Lumen LED Desk Lamp'))
     await user.click(within(form).getByRole('button', { name: 'Create campaign' }))
     await waitFor(() => expect(api.requests.some((r) => r.method === 'POST')).toBe(true))
     expect(api.requests.find((r) => r.method === 'POST').body).toEqual({ title: 'Spotlight lamps', placement: 'spotlight', status: 'active', productIds: ['product_006'] })
   })
 
-  it("shows a campaign's results per product and pauses it", async () => {
+  it("shows a campaign's analytics, its totals and per product, for a chosen period, and pauses it", async () => {
     api = campaignService()
     const user = userEvent.setup()
     renderApp('/seller', { authProps: { persist: false, initialUser: SELLER } })
     const row = await screen.findByTestId('seller-campaign')
     expect(row).toHaveTextContent('Desk deals · Deals · active')
-    await user.click(within(row).getByRole('button', { name: 'Results' }))
+    await user.click(within(row).getByRole('button', { name: 'Analytics' }))
     const table = await within(row).findByRole('table')
+    expect(within(row).getByTestId('campaign-totals')).toHaveTextContent(/Impressions\s*40\s*Clicks\s*4\s*CTR\s*10\.0%\s*Add-to-carts\s*1\s*Click-to-basket\s*25\.0%\s*Unique customers\s*30\s*Sessions\s*35\s*Converted sessions\s*1/)
     expect(within(table).getAllByRole('row')[1]).toHaveTextContent(/Lumen LED Desk Lamp\s*40\s*4\s*10\.0%\s*1\s*25\.0%/)
+    const days = (url) => (Date.now() - Date.parse(new URL(url).searchParams.get('from'))) / 86_400_000
+    expect(Math.round(days(api.requests.filter((r) => r.path.endsWith('/results')).at(-1).url))).toBe(30)
+    await user.click(within(row).getByRole('button', { name: '7 days' }))
+    await within(row).findByRole('table')
+    expect(Math.round(days(api.requests.filter((r) => r.path.endsWith('/results')).at(-1).url))).toBe(7)
 
     await user.click(within(row).getByRole('button', { name: 'Pause' }))
     await waitFor(() => expect(api.requests.some((r) => r.method === 'PATCH')).toBe(true))

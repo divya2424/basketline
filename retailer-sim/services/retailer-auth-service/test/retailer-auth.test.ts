@@ -136,9 +136,16 @@ describe('signing in', () => {
 
   it("signs each seeded seller in as its seller, with the seller in its token, and no shopper token", async () => {
     const connected = (await connect({ name: 'Sellers', tier: 'free' })).body
+    const logins = (await request(app).get(`/api/v1/stores/${connected.store.tenantId}/logins`)).body.items as { username: string; role: string; sellerId?: string }[]
+    expect(logins.slice(0, 3)).toEqual([
+      { username: 'seller1', role: 'seller', sellerId: expect.any(String) },
+      { username: 'seller2', role: 'seller', sellerId: expect.any(String) },
+      { username: 'user01', role: 'customer' },
+    ])
+    expect(logins.some((login) => login.role === 'staff')).toBe(false)
     const res = await login(connected.store.tenantId, 'seller1')
     expect(res.status).toBe(200)
-    expect(res.body).toMatchObject({ user: { role: 'seller', sellerId: expect.any(String) }, basketline: null })
+    expect(res.body).toMatchObject({ user: { role: 'seller', sellerId: logins[0]!.sellerId }, basketline: null })
     const claims = await verifyRetailerToken(res.body.accessToken, keys.publicKey)
     expect(claims).toMatchObject({ role: 'seller', sel: res.body.user.sellerId, tid: connected.store.tenantId })
   })

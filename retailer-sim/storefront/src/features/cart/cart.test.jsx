@@ -109,7 +109,7 @@ describe('shopping cart flow', () => {
     await addFromCatalog(user, 'Nimbus Smartwatch')
     await user.click(screen.getByRole('link', { name: /^Cart,/ }))
     await screen.findByRole('heading', { name: 'Your cart' })
-    await user.click(screen.getByRole('link', { name: 'Home' }))
+    await user.click(screen.getByRole('link', { name: 'Shop' }))
     expect(badge()).toHaveTextContent('1')
   })
 
@@ -169,6 +169,7 @@ describe('layout', () => {
     renderApp(route)
     expect(await screen.findByRole('banner')).toBeInTheDocument()
     expect(screen.getByRole('contentinfo')).toHaveTextContent(/sample data/i)
-    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/store')
+    expect(screen.getByRole('link', { name: 'Shop' })).toHaveAttribute('href', '/store')
+    expect(screen.getByRole('link', { name: 'Marketplaces' })).toHaveAttribute('href', '/')
   })
 })

@@ -236,17 +236,32 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
     },
 
     /**
-     * The campaign's results per product over [from, to) (default the last 30
-     * days), from Basketline for its seller's store: each product in the campaign
-     * now, with zeros if it had no activity, and any product taken out that had
-     * some. Most impressions first.
+     * The campaign's analytics over [from, to) (default the last 30 days), from
+     * Basketline for its seller's store: its totals, and its results per product,
+     * each product in the campaign now (zeros if it had no activity) and any
+     * product taken out that had some, most impressions first.
      */
     async results(tenantId: string, id: string, { from, to }: { from?: string; to?: string } = {}) {
       const campaign = await requireCampaign(db, tenantId, id)
       if (!basketline) throw serviceUnavailable('BASKETLINE_NOT_CONFIGURED', 'This service has no Basketline connection')
-      const items = await basketline.read(tenantId, (server) =>
-        server.insights.campaignProducts({ campaignId: id, ...(campaign.sellerId ? { storeId: campaign.sellerId } : {}), from, to }),
+      const scope = { campaignId: id, ...(campaign.sellerId ? { storeId: campaign.sellerId } : {}), from, to }
+      const [items, impressions, clicks, clickToBasket, uniqueCustomers, sessions] = await basketline.read(tenantId, (server) =>
+        Promise.all([
+          server.insights.campaignProducts(scope),
+          ...(['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers', 'sessions'] as const).map((metric) => server.insights.campaignMetric({ ...scope, metric })),
+        ]),
       )
+      const rate = (part: number, whole: number) => (whole > 0 ? part / whole : 0)
+      const totals = {
+        impressions: impressions!.count,
+        clicks: clicks!.count,
+        ctr: rate(clicks!.count, impressions!.count),
+        addToCarts: clickToBasket!.count,
+        clickToBasket: rate(clickToBasket!.count, clicks!.count),
+        uniqueCustomers: uniqueCustomers!.count,
+        sessions: sessions!.count,
+        convertedSessions: Number(sessions!.total_converted_sessions ?? 0),
+      }
       const reported = new Set(items.map((item) => item.productId))
       const quiet = campaign.productIds.filter((productId) => !reported.has(productId))
       const names = new Map((await findProductDetails(db, tenantId, quiet)).map((product) => [product.productId, product]))
@@ -261,7 +276,7 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         addToCarts: 0,
         clickToBasket: 0,
       }))
-      return { campaignId: id, items: [...items, ...zeros] }
+      return { campaignId: id, totals, items: [...items, ...zeros] }
     },
 
     async update(tenantId: string, actorId: string, id: string, input: UpdateCampaignInput): Promise<Campaign> {

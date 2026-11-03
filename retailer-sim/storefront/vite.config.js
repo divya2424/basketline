@@ -14,7 +14,6 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react()],
-  // The Basketline dashboard runs on 5173.
   server: { port: 5174, strictPort: true, proxy },
   preview: { port: 5174, strictPort: true, proxy },
   test: {

@@ -20,7 +20,7 @@ pnpm dev                     # http://localhost:5174; /api/v1 is proxied to the 
 
 **The SDK:** the storefront sends its events through [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk), the same package vendors install. It's on GitHub Packages, which needs a token even to install: a classic personal access token with `read:packages`, in `NODE_AUTH_TOKEN`, and once, in `~/.npmrc`: `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` (pnpm takes registry tokens only from your user config). To use a new SDK version, publish it from its repo, then `pnpm add @divya2424/basketline-sdk@<version>` here. `src/analytics/sdkContract.test.js` checks that its event names match the API's.
 
-Connect a store at http://localhost:5174/stores, then **Open** it. The dashboard's **Open store** link (http://localhost:5173) opens one too.
+Add a marketplace at http://localhost:5174, then **Visit** it: sign in as one of its sellers (the seller portal) or shoppers, or browse as a visitor.
 
 | Command | |
 |---|---|
@@ -35,16 +35,16 @@ Set these in `.env`, starting from `.env.example`.
 | Variable | Values | Purpose |
 |---|---|---|
 | `VITE_BASKETLINE_API_URL` | URL | Basketline's gateway, e.g. `http://localhost:8080/api/v1`, used only by the SDK. Analytics events are only sent when it's set. |
-| `VITE_TENANT_ID` | UUID | The default store's tenant, sent as the `tenant_id` header. Defaults to `5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01`. A store opened from the Stores page or the dashboard takes precedence. |
+| `VITE_TENANT_ID` | UUID | The default store's tenant, sent as the `tenant_id` header. Defaults to `5e0f3c2a-8b14-4d6f-9a27-1c3e5b7d9f01`. A marketplace visited from the Marketplaces page takes precedence. |
 | `VITE_API_BASE_URL` | URL | The retailer's services. Defaults to `/api/v1` on this origin, which the dev and preview servers proxy (`vite.config.js`): products and sellers to 4002, campaigns and placements to 4003, auth and stores to 4006. |
-| `VITE_DASHBOARD_URL` | URL | The Basketline dashboard, linked after connecting a store. Defaults to `http://localhost:5173`. |
 
 ## Using the store
 
-- **Which store:** **Open** on the Stores page, or the dashboard's **Open store** link (`/store?tenant=<id>&name=<name>`). It's remembered in `localStorage` (`basketline:tenant`), and each store has its own cart.
-- **Connecting a store:** the Stores page's form (name, Basketline tier) calls `POST /stores`. The retailer's auth service onboards the store at Basketline (`POST /accounts`), keeps its API key, creates the store's logins (`staff`, `user01`–`user10`, `seller1`, `seller2`, password `test`) and seeds its sellers, products, placements and campaigns, which its services send to Basketline. The page shows the logins, including the Basketline dashboard's (`onboarding`, a campaign manager).
-- **Pages:** `/store`, `/store/products/:id`, `/cart` and `/stores`, open to visitors.
-- **Header:** the store's name, Home, Stores, **Log in** (or the user and **Logout** when signed in) and the cart.
+- **Which marketplace:** **Visit** on the Marketplaces page (`/`) opens its page (`/m/:tenantId`), signing out of the previous one. It's remembered in `localStorage` (`basketline:tenant`), and each has its own cart.
+- **A marketplace's page:** **Sell** lists its sellers (by name, from `GET /sellers`) and **Shop** its shoppers (`GET /stores/:tenantId/logins`, demo only); picking one signs in with the username fixed and the demo password filled in, then opens the seller portal (`/seller`) or the shop (`/store`). **Browse as a visitor** opens the shop signed out.
+- **Adding a marketplace:** the Marketplaces page's form (name, Basketline tier) calls `POST /stores`. The retailer's auth service onboards the store at Basketline (`POST /accounts`), keeps its API key, creates the store's logins (`staff`, `user01`–`user10`, `seller1`, `seller2`, password `test`) and seeds its sellers, products, placements and campaigns, which its services send to Basketline. The page shows the logins.
+- **Pages:** `/` (Marketplaces), `/m/:tenantId`, `/store`, `/store/products/:id` and `/cart`, open to visitors; `/seller` for sellers.
+- **Header:** the marketplace's name (to its page), Marketplaces, Shop, Seller portal (for sellers), **Log in** (or the user and **Logout** when signed in) and the cart.
 - **Session:** kept in `sessionStorage` (`retailer:session:v1`: profile, role, the store's token and expiry, a customer's Basketline shopper token, tenant; never the password), so it lasts until the tab closes. The token lasts 30 minutes, then the store signs out. The store's tokens aren't kept server-side, so Logout just forgets them. A session belongs to one store: switching stores means signing in again.
 
 > **Security note:** any script on the page can read `sessionStorage`, so the app must stay free of XSS. An `httpOnly` cookie would avoid this, but needs backend support.

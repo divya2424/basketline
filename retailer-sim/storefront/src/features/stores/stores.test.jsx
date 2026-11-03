@@ -36,54 +36,53 @@ afterEach(() => api?.restore())
 
 const SIGNED_OUT = { persist: false, initialUser: null }
 
-describe('stores page', () => {
-  it('lists the connected stores and opens one in the store', async () => {
+describe('marketplaces page', () => {
+  it('lists the marketplaces and visits one', async () => {
     fakeStores()
     const navigateTo = vi.fn()
     const user = userEvent.setup()
-    renderApp('/stores', { authProps: SIGNED_OUT, storesProps: { navigateTo } })
+    renderApp('/', { authProps: SIGNED_OUT, storesProps: { navigateTo } })
     const [row] = await screen.findAllByTestId('store-row')
     expect(row).toHaveTextContent('Acme · Pro')
     expect(row).toHaveTextContent(ACME.tenantId)
 
-    await user.click(within(row).getByRole('button', { name: 'Open Acme' }))
-    expect(navigateTo).toHaveBeenCalledWith('/store')
+    await user.click(within(row).getByRole('button', { name: 'Visit Acme' }))
+    expect(navigateTo).toHaveBeenCalledWith(`/m/${ACME.tenantId}`)
     expect(getRequestContext()).toMatchObject({ tenantId: ACME.tenantId, tenantName: 'Acme' })
   })
 
-  it('connects a store and shows its logins and seed', async () => {
+  it('adds a marketplace and shows its logins and seed', async () => {
     fakeStores()
     const navigateTo = vi.fn()
     const user = userEvent.setup()
-    renderApp('/stores', { authProps: SIGNED_OUT, storesProps: { navigateTo } })
+    renderApp('/', { authProps: SIGNED_OUT, storesProps: { navigateTo } })
     await screen.findAllByTestId('store-row')
 
-    await user.click(screen.getByRole('button', { name: 'Connect to Basketline' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter the store’s name.')
+    await user.click(screen.getByRole('button', { name: 'Add marketplace' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter the marketplace’s name.')
 
-    await user.type(screen.getByLabelText('Store name'), 'Corner Shop')
-    await user.click(screen.getByRole('button', { name: 'Connect to Basketline' }))
+    await user.type(screen.getByLabelText('Marketplace name'), 'Corner Shop')
+    await user.click(screen.getByRole('button', { name: 'Add marketplace' }))
     const connected = await screen.findByRole('status', { name: 'Corner Shop is connected' })
     expect(within(connected).getByTestId('connected-tenant-id')).toHaveTextContent(NEW_STORE.tenantId)
     expect(connected).toHaveTextContent('staff, user01')
-    expect(connected).toHaveTextContent('admin@corner-shop')
     expect(connected).toHaveTextContent('Seeding 12 products and 2 active campaigns')
     expect(api.requests.find((r) => r.method === 'POST')).toMatchObject({ body: { name: 'Corner Shop', tier: 'free' } })
     expect(await screen.findAllByTestId('store-row')).toHaveLength(2)
 
-    await user.click(within(connected).getByRole('button', { name: 'Open Corner Shop' }))
-    expect(navigateTo).toHaveBeenCalledWith('/store')
+    await user.click(within(connected).getByRole('button', { name: 'Visit Corner Shop' }))
+    expect(navigateTo).toHaveBeenCalledWith(`/m/${NEW_STORE.tenantId}`)
     expect(getRequestContext().tenantId).toBe(NEW_STORE.tenantId)
   })
 
   it('shows why connecting or listing failed', async () => {
     fakeStores({ listStatus: 500 })
     const user = userEvent.setup()
-    renderApp('/stores', { authProps: SIGNED_OUT })
-    expect(await screen.findByText(/Couldn’t load the stores: Stores are down/)).toBeInTheDocument()
+    renderApp('/', { authProps: SIGNED_OUT })
+    expect(await screen.findByText(/Couldn’t load the marketplaces: Stores are down/)).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Store name'), 'Taken')
-    await user.click(screen.getByRole('button', { name: 'Connect to Basketline' }))
+    await user.type(screen.getByLabelText('Marketplace name'), 'Taken')
+    await user.click(screen.getByRole('button', { name: 'Add marketplace' }))
     expect(await screen.findByText('Basketline is unavailable')).toBeInTheDocument()
   })
 })

@@ -4,11 +4,11 @@ import type { MetricsController } from '../controllers/metrics.controller.ts'
 import { validateMetricQuery } from '../validators/metric.validator.ts'
 
 /**
- * Mounted at /api/v1/ad: GET /campaigns (the tenant's campaigns per store),
- * /:campaignId/<metric>?storeId (clicks, impressions, clickToBasket, uniqueCustomers, sessions),
- * for campaign managers; and /:campaignId/products?storeId (the results per
- * product), also for a store's backend with its integration token, e.g. for its
- * sellers' portal.
+ * Mounted at /api/v1/ad: GET /campaigns (the tenant's campaigns per store), for
+ * campaign managers; and a campaign's /:campaignId/<metric>?storeId (clicks,
+ * impressions, clickToBasket, uniqueCustomers, sessions) and /:campaignId/products
+ * (the results per product), also for a store's backend with its integration
+ * token, e.g. for its sellers' portal.
  */
 export function adMetricRoutes(metrics: MetricsController, authenticate: RequestHandler, authenticateIntegration: RequestHandler): Router {
   const router = Router()
@@ -23,6 +23,6 @@ export function adMetricRoutes(metrics: MetricsController, authenticate: Request
   }
   router.get('/campaigns', authenticate, reader, metrics.campaigns)
   router.get('/:campaignId/products', managerOrIntegration, validate(validateMetricQuery, 'query'), metrics.products)
-  router.get('/:campaignId/:metric', authenticate, reader, validate(validateMetricQuery, 'query'), metrics.metric)
+  router.get('/:campaignId/:metric', managerOrIntegration, validate(validateMetricQuery, 'query'), metrics.metric)
   return router
 }

@@ -4,7 +4,6 @@ packages:
   - basketline
   - basketline/packages/*
   - basketline/services/*
-  - basketline/dashboard
   - retailer-sim
   - retailer-sim/packages/*
   - retailer-sim/services/*

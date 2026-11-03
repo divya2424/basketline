@@ -60,7 +60,7 @@ function Portal({ sellerId }) {
   return (
     <div className="container page">
       <h1>Seller portal</h1>
-      <p className="muted">Put your products in a campaign, in one of the store’s sections, and see how each one does.</p>
+      <p className="muted">Put your products in a campaign of the type you choose (where the marketplace shows it), and see how it does.</p>
       <CreateCampaignForm placements={placements} products={ownProducts} onCreated={reload} />
 
       <section className="seller__section" aria-labelledby="my-campaigns">
@@ -104,7 +104,7 @@ function CreateCampaignForm({ placements, products, onCreated }) {
   const handleSubmit = async (event) => {
     event.preventDefault()
     if (!title.trim() || !chosenPlacement || productIds.length === 0) {
-      setError('Enter a title, choose a section and at least one product.')
+      setError('Enter a title, choose a campaign type and at least one product.')
       return
     }
     setPending(true)
@@ -128,7 +128,7 @@ function CreateCampaignForm({ placements, products, onCreated }) {
         <input id={`${id}-title`} value={title} maxLength={255} onChange={(event) => setTitle(event.target.value)} disabled={pending} />
       </div>
       <div className="form-field">
-        <label htmlFor={`${id}-placement`}>Section</label>
+        <label htmlFor={`${id}-placement`}>Campaign type</label>
         <select id={`${id}-placement`} value={chosenPlacement} onChange={(event) => setPlacement(event.target.value)} disabled={pending}>
           {placements.map((option) => (
             <option key={option.key} value={option.key}>
@@ -193,7 +193,7 @@ function CampaignRow({ campaign, placementName, products, onChanged }) {
             </Button>
           ) : null}
           <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-            {open ? 'Hide results' : 'Results'}
+            {open ? 'Hide analytics' : 'Analytics'}
           </Button>
         </div>
       </div>
@@ -237,32 +237,68 @@ function CampaignRow({ campaign, placementName, products, onChanged }) {
   )
 }
 
-/** The campaign's last 30 days per product, from Basketline through the campaign service. */
+const PERIODS = [7, 30, 90]
+
+/** The campaign's analytics for the seller's store, from Basketline through the campaign service: its totals, then per product. */
 function Results({ campaignId }) {
-  const [state, setState] = useState({ status: 'loading', items: [], error: null })
+  const [days, setDays] = useState(30)
+  const [state, setState] = useState({ status: 'loading', totals: null, items: [], error: null })
 
   useEffect(() => {
     const controller = new AbortController()
-    fetchResults(campaignId, { signal: controller.signal })
-      .then(({ items }) => setState({ status: 'ready', items, error: null }))
+    setState({ status: 'loading', totals: null, items: [], error: null })
+    fetchResults(campaignId, { days, signal: controller.signal })
+      .then(({ totals, items }) => setState({ status: 'ready', totals, items, error: null }))
       .catch((error) => {
-        if (!controller.signal.aborted) setState({ status: 'error', items: [], error: error.message })
+        if (!controller.signal.aborted) setState({ status: 'error', totals: null, items: [], error: error.message })
       })
     return () => controller.abort()
-  }, [campaignId])
+  }, [campaignId, days])
 
+  const periods = (
+    <div className="seller__periods" role="group" aria-label="Period">
+      {PERIODS.map((n) => (
+        <Button key={n} size="sm" variant={n === days ? 'primary' : 'ghost'} aria-pressed={n === days} onClick={() => setDays(n)}>
+          {n} days
+        </Button>
+      ))}
+    </div>
+  )
   if (state.status === 'loading') {
     return (
-      <p className="muted" role="status">
-        <Spinner size="sm" /> Loading results…
-      </p>
+      <>
+        {periods}
+        <p className="muted" role="status">
+          <Spinner size="sm" /> Loading analytics…
+        </p>
+      </>
     )
   }
-  if (state.status === 'error') return <p className="form-error" role="alert">Couldn’t load the results: {state.error}</p>
+  if (state.status === 'error') return <p className="form-error" role="alert">Couldn’t load the analytics: {state.error}</p>
+  const { totals } = state
+  const cards = [
+    ['Impressions', totals.impressions],
+    ['Clicks', totals.clicks],
+    ['CTR', percent(totals.ctr)],
+    ['Add-to-carts', totals.addToCarts],
+    ['Click-to-basket', percent(totals.clickToBasket)],
+    ['Unique customers', totals.uniqueCustomers],
+    ['Sessions', totals.sessions],
+    ['Converted sessions', totals.convertedSessions],
+  ]
   return (
     <div className="seller__table-wrap">
+      {periods}
+      <dl className="seller__totals" data-testid="campaign-totals">
+        {cards.map(([label, value]) => (
+          <div key={label} className="seller__total">
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
       <table className="seller__results">
-        <caption>Last 30 days</caption>
+        <caption>Per product, last {days} days</caption>
         <thead>
           <tr>
             <th scope="col">Product</th>

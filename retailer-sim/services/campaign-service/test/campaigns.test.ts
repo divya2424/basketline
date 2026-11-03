@@ -25,7 +25,7 @@ const SELLER = randomUUID()
 const OTHER_SELLER = randomUUID()
 
 /** What the service sent to Basketline with the SDK, as the store's backend. */
-const { basketline, sent, results } = createFakeBasketline()
+const { basketline, sent, results, metrics } = createFakeBasketline()
 const SECRETS_KEY = Buffer.alloc(32, 7).toString('base64')
 /** The store's staff (they write campaigns), customers, and another store's. */
 let manager: string
@@ -507,13 +507,21 @@ describe('sellers (the seller portal)', () => {
     ])
   })
 
-  it("see their campaign's results per product from Basketline (their store), with zeros for products without activity", async () => {
+  it("see their campaign's totals and results per product from Basketline (their store), with zeros for products without activity", async () => {
     const [a, b] = [await knownProduct('Earbuds'), await knownProduct('Cable')]
     const { body } = await create({ title: 'Results', placement: 'spotlight', productIds: [a, b], sellerId: undefined }, seller)
     results.splice(0, results.length, { productId: a, name: 'Earbuds', category: 'Audio', price: 999, impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5 })
+    Object.assign(metrics, {
+      impressions: { count: 10 },
+      clicks: { count: 2 },
+      clickToBasket: { count: 1 },
+      uniqueCustomers: { count: 7 },
+      sessions: { count: 8, total_converted_sessions: 1 },
+    })
     try {
       const res = await request(app).get(`/api/v1/campaigns/${body.id}/results?from=2026-10-01T00:00:00Z`).set('Authorization', seller)
       expect(res.status).toBe(200)
+      expect(res.body.totals).toEqual({ impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5, uniqueCustomers: 7, sessions: 8, convertedSessions: 1 })
       expect(res.body.items).toEqual([
         { productId: a, name: 'Earbuds', category: 'Audio', price: 999, impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5 },
         { productId: b, name: 'Cable', category: 'Audio', price: 999, impressions: 0, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },
@@ -521,6 +529,7 @@ describe('sellers (the seller portal)', () => {
       expect(sent.findLast((c) => c.call === 'insights.campaignProducts')!.records[0]).toEqual({ campaignId: body.id, storeId: SELLER, from: '2026-10-01T00:00:00Z', to: undefined })
     } finally {
       results.splice(0, results.length)
+      for (const metric of Object.keys(metrics)) delete metrics[metric]
     }
     expect((await request(app).get(`/api/v1/campaigns/${body.id}/results`).set('Authorization', otherSeller)).status).toBe(404)
     expect((await request(app).get(`/api/v1/campaigns/${body.id}/results`).set('Authorization', manager)).status).toBe(200)

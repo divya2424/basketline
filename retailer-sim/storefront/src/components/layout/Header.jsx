@@ -18,14 +18,15 @@ const cartIcon = (
 
 const navClass = ({ isActive }) => (isActive ? 'nav-link nav-link--active' : 'nav-link')
 
-/** The store's name, Home, the seller portal (for sellers) and Stores, the signed-in user and Logout (or Log in for visitors), and the cart. */
+/** The marketplace's name (to its page), Marketplaces, Shop, the seller portal (for sellers), the signed-in user and Logout (or Log in for visitors), and the cart. */
 export function Header() {
   const { totalQuantity } = useCart()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [loginOpen, setLoginOpen] = useState(false)
 
-  const tenantName = getRequestContext().tenantName || 'Basketline'
+  const { tenantId, tenantName = null } = getRequestContext()
+  const brand = tenantName || 'Marketplace'
   const cartLabel = `Cart, ${totalQuantity} ${totalQuantity === 1 ? 'item' : 'items'}`
   const openLogin = () => {
     setLoginOpen(true)
@@ -39,22 +40,22 @@ export function Header() {
   return (
     <header className="site-header">
       <div className="container site-header__inner">
-        <Link to="/store" className="brand" aria-label={`${tenantName} home`}>
+        <Link to={`/m/${tenantId}`} className="brand" aria-label={`${brand} home`}>
           <span className="brand__mark" aria-hidden="true" />
-          {tenantName}
+          {brand}
         </Link>
         <nav className="site-nav" aria-label="Main">
+          <NavLink to="/" end className={navClass}>
+            Marketplaces
+          </NavLink>
           <NavLink to="/store" end className={navClass}>
-            Home
+            Shop
           </NavLink>
           {user?.role === 'seller' ? (
             <NavLink to="/seller" className={navClass}>
               Seller portal
             </NavLink>
           ) : null}
-          <NavLink to="/stores" className={navClass}>
-            Stores
-          </NavLink>
         </nav>
         <div className="site-header__actions">
           {user ? (
@@ -79,7 +80,7 @@ export function Header() {
           </NavLink>
         </div>
       </div>
-      {loginOpen ? <LoginModal title={`Sign in to ${tenantName}`} onClose={() => setLoginOpen(false)} /> : null}
+      {loginOpen ? <LoginModal title={`Sign in to ${brand}`} onClose={() => setLoginOpen(false)} /> : null}
     </header>
   )
 }

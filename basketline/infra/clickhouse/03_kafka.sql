@@ -121,3 +121,29 @@ AS SELECT
 FROM analytics.campaign_products_queue
 WHERE JSONExtractString(message, 'eventType') = 'campaign_product_added'
   AND tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);
+
+-- The tenants' campaigns (retail.campaign-events.v1, from the retail API), for
+-- ingestion-service's check that an impression or click is for an active campaign.
+-- Compacted, like campaign products: a new consumer group reads each campaign's
+-- latest state. Flushed every second, so a new campaign counts within seconds.
+CREATE TABLE IF NOT EXISTS analytics.campaigns_queue
+(
+    message String
+)
+ENGINE = Kafka
+SETTINGS kafka_broker_list = 'kafka:19092',
+         kafka_topic_list = 'retail.campaign-events.v1',
+         kafka_group_name = 'clickhouse-campaigns',
+         kafka_format = 'JSONAsString',
+         kafka_flush_interval_ms = 1000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.campaigns_queue_mv TO analytics.campaigns
+AS SELECT
+    toUUID(JSONExtractString(message, 'payload', 'tenantId')) AS tenant_id,
+    toUUID(JSONExtractString(message, 'payload', 'campaignId')) AS campaign_id,
+    if(JSONExtractString(message, 'eventType') = 'campaign_removed', 'removed', JSONExtractString(message, 'payload', 'status')) AS status,
+    JSONExtractBool(message, 'payload', 'archived') AS archived,
+    parseDateTime64BestEffort(JSONExtractString(message, 'payload', 'updatedAt'), 3, 'UTC') AS updated_at
+FROM analytics.campaigns_queue
+WHERE JSONExtractString(message, 'eventType') IN ('campaign_upserted', 'campaign_removed')
+  AND tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);

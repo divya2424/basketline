@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import type { Counter } from 'prom-client'
 import { forbidden, type EventSender } from '@basketline/platform'
 import type { IngestionService } from '../services/ingestion.service.ts'
 import type { IngestIdentity } from '../validators/analytics.validator.ts'
@@ -19,12 +20,14 @@ function assertSameIdentity(body: IngestIdentity, header: unknown, sender: Event
   if (!matches) throw forbidden('IDENTITY_MISMATCH', 'tenantId, userId or userType does not match the token')
 }
 
-export function createIngestionController(service: IngestionService) {
+/** events: counts each event by outcome and rejection reason (ingestion_events_total), for the data-quality alerts. */
+export function createIngestionController(service: IngestionService, events: Counter<'outcome' | 'reason'>) {
   return {
     async ingest(req: Request, res: Response) {
       assertSameIdentity(req.body, req.headers.tenant_id, req.sender!)
       // Tenant, user and client type are then taken from the token itself.
       const results = await service.ingest(req.body.events, req.sender!, req.get('user-agent'), req.body.storeId)
+      for (const result of results) events.inc({ outcome: result.status, reason: result.status === 'rejected' ? result.reason : '' })
       const tally = (status: string) => results.filter((result) => result.status === status).length
       res.json({ accepted: tally('accepted'), rejected: tally('rejected'), results })
     },

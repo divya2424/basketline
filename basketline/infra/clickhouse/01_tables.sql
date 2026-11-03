@@ -240,10 +240,10 @@ ORDER BY (tenant_id, store_id, campaign_id, day);
 -- A campaign's results per product: impressions, clicks and credited basket
 -- additions per UTC day, tenant, store, campaign and product (GET /ad/{id}/products,
 -- e.g. for a seller's portal). Filled live by 02_materialized_views.sql with the
--- same rules as daily_campaign_aggregation, but without its hourly check: a copy
--- of an event stored in a later insert (after a Flink restart or a replay) counts
--- again until a history backfill recomputes the day. Impressions and clicks
--- without a product aren't counted here.
+-- same rules as daily_campaign_aggregation, and corrected hourly by its own check
+-- (a copy of an event stored in a later insert, after a Flink restart or a
+-- replay, counts until then). Impressions and clicks without a product aren't
+-- counted here.
 CREATE TABLE IF NOT EXISTS analytics.daily_campaign_product_aggregation
 (
     day             Date,
@@ -276,6 +276,21 @@ CREATE TABLE IF NOT EXISTS analytics.campaign_products
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, campaign_id, product_id);
+
+-- Each tenant's campaigns and whether they're running (retail.campaign-events.v1,
+-- by 03_kafka.sql): ingestion-service counts impressions and clicks only for a
+-- tenant's active campaigns. A removed campaign keeps its row, as status
+-- 'removed'. ReplacingMergeTree: the latest update wins.
+CREATE TABLE IF NOT EXISTS analytics.campaigns
+(
+    tenant_id   UUID,
+    campaign_id UUID,
+    status      LowCardinality(String),
+    archived    Bool,
+    updated_at  DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, campaign_id);
 
 -- Each history backfill (airflow/jobs/backfill_daily.py): the days and tenants it
 -- recomputed from the data lake, the daily tables it replaced and their recomputed

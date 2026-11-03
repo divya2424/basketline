@@ -240,9 +240,9 @@ const atDay = (days: number, hour: number) => new Date(midnight(days).getTime() 
 const dayString = (days: number) => midnight(days).toISOString().slice(0, 10)
 
 /** What runs every hour: recount the days that changed, today included, and add the difference. */
-async function runCheck() {
-  await clickhouse.command({ query: `SYSTEM REFRESH VIEW ${db.database}.daily_campaign_aggregation_check_mv` })
-  await clickhouse.command({ query: `SYSTEM WAIT VIEW ${db.database}.daily_campaign_aggregation_check_mv` })
+async function runCheck(view = 'daily_campaign_aggregation_check_mv') {
+  await clickhouse.command({ query: `SYSTEM REFRESH VIEW ${db.database}.${view}` })
+  await clickhouse.command({ query: `SYSTEM WAIT VIEW ${db.database}.${view}` })
 }
 
 /** One campaign's daily totals, as /ad sees them (rows not merged yet are added up). */
@@ -646,5 +646,26 @@ describe("a campaign's results per product (GET /ad/:campaignId/products)", () =
     expect((await metric(campaignId, 'products', '', visitor)).status).toBe(401)
     const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId: randomUUID() })).token}`
     expect((await metric(campaignId, 'products', '', shopper)).status).toBe(401)
+  })
+
+  it('counts a copy stored in another batch until its hourly check corrects the product', async () => {
+    const [campaignId, store, product, click] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    const shown = { event_name: 'impression', campaign_id: campaignId, store_id: store, product_id: product, event_time: atDay(1, 9) }
+    const clicked = { event_id: click, event_name: 'click', campaign_id: campaignId, store_id: store, product_id: product, event_time: atDay(1, 10) }
+    const credited: AttributedBasket = { basket_event_id: randomUUID(), click_event_id: click, campaign_id: campaignId, store_id: store, product_id: product, event_time: atDay(1, 11) }
+    const batch = [{ ...shown, event_id: randomUUID() }, clicked]
+    await insert(batch)
+    await insertAttributed([credited])
+    // Redelivered in separate batches (a retry, or a replay after a restart).
+    await insert(batch)
+    await insertAttributed([credited])
+
+    const lastTwoDays = `?from=${midnight(1).toISOString()}`
+    expect((await metric(campaignId, 'products', lastTwoDays)).body.items[0]).toMatchObject({ impressions: 2, clicks: 2, addToCarts: 2 })
+    await runCheck('daily_campaign_product_aggregation_check_mv')
+    expect((await metric(campaignId, 'products', lastTwoDays)).body.items[0]).toMatchObject({ productId: product, impressions: 1, clicks: 1, addToCarts: 1 })
+    // Running it again changes nothing.
+    await runCheck('daily_campaign_product_aggregation_check_mv')
+    expect((await metric(campaignId, 'products', lastTwoDays)).body.items[0]).toMatchObject({ impressions: 1, clicks: 1, addToCarts: 1 })
   })
 })

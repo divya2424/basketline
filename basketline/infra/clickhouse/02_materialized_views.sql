@@ -295,3 +295,90 @@ FROM
 )
 WHERE basket_product_id IS NOT NULL
 GROUP BY day, tenant_id, store_id, campaign_id, product_id;
+
+-- Check (every hour, 10 minutes past) for the results per product, as
+-- daily_campaign_aggregation_check_mv does for the campaigns' totals: for each day,
+-- tenant, store, campaign and product that got rows in the last 3 hours, the exact
+-- counts from staging minus what the table holds, appended as one correcting row.
+-- So a copy of an event stored in another insert can't overcount a product for
+-- longer than the hour. Basket additions are recounted with their latest click.
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_product_aggregation_check_mv
+REFRESH EVERY 1 HOUR OFFSET 10 MINUTE APPEND
+TO analytics.daily_campaign_product_aggregation
+AS WITH changed AS
+(
+    SELECT toDate(event_time) AS day, tenant_id, store_id, campaign_id, assumeNotNull(product_id) AS product_id
+    FROM analytics.events
+    WHERE event_name IN ('impression', 'click') AND product_id IS NOT NULL
+      AND ingested_at >= now64(3, 'UTC') - INTERVAL 3 HOUR
+
+    UNION DISTINCT
+
+    SELECT toDate(event_time), tenant_id, store_id, campaign_id, assumeNotNull(product_id)
+    FROM analytics.attributed_baskets
+    WHERE product_id IS NOT NULL AND (tenant_id, basket_event_id) IN
+    (
+        SELECT tenant_id, basket_event_id
+        FROM analytics.attributed_baskets
+        WHERE ingested_at >= now64(3, 'UTC') - INTERVAL 3 HOUR
+    )
+),
+exact AS
+(
+    SELECT day, tenant_id, store_id, campaign_id, product_id, sum(i) AS i, sum(c) AS c, sum(b) AS b
+    FROM
+    (
+        SELECT toDate(event_time) AS day, tenant_id, store_id, campaign_id, assumeNotNull(product_id) AS product_id,
+               toInt64(countIf(event_name = 'impression')) AS i, toInt64(countIf(event_name = 'click')) AS c, toInt64(0) AS b
+        -- FINAL: copies of an event merge into one row as the day is read.
+        FROM analytics.events FINAL
+        WHERE event_name IN ('impression', 'click') AND product_id IS NOT NULL
+          AND event_time >= (SELECT min(day) FROM changed)
+          AND (toDate(event_time), tenant_id, store_id, campaign_id, assumeNotNull(product_id)) IN (SELECT * FROM changed)
+        GROUP BY day, tenant_id, store_id, campaign_id, product_id
+
+        UNION ALL
+
+        SELECT toDate(basket_time) AS day, tenant_id, basket_store_id AS store_id, winning_campaign_id AS campaign_id, basket_product_id AS product_id,
+               toInt64(0), toInt64(0), toInt64(uniqExact(winning_click_id))
+        FROM
+        (
+            -- Each basket addition with its latest click, over all of its candidates.
+            SELECT tenant_id, basket_event_id,
+                   argMax(campaign_id, (click_time, click_event_id)) AS winning_campaign_id,
+                   max((click_time, click_event_id)).2 AS winning_click_id,
+                   any(store_id) AS basket_store_id, assumeNotNull(any(product_id)) AS basket_product_id, any(event_time) AS basket_time
+            FROM analytics.attributed_baskets
+            WHERE product_id IS NOT NULL
+              AND event_time >= (SELECT min(day) FROM changed)
+              AND (toDate(event_time), tenant_id) IN (SELECT day, tenant_id FROM changed)
+            GROUP BY tenant_id, basket_event_id
+        )
+        WHERE (toDate(basket_time), tenant_id, basket_store_id, winning_campaign_id, basket_product_id) IN (SELECT * FROM changed)
+        GROUP BY day, tenant_id, store_id, campaign_id, product_id
+
+        UNION ALL
+
+        -- Every changed key, so one whose counts dropped to nothing is corrected too.
+        SELECT day, tenant_id, store_id, campaign_id, product_id, toInt64(0), toInt64(0), toInt64(0)
+        FROM changed
+    )
+    GROUP BY day, tenant_id, store_id, campaign_id, product_id
+),
+stored AS
+(
+    SELECT day, tenant_id, store_id, campaign_id, product_id, sum(impressions) AS i, sum(clicks) AS c, sum(click_to_basket) AS b
+    FROM analytics.daily_campaign_product_aggregation
+    WHERE (day, tenant_id, store_id, campaign_id, product_id) IN (SELECT * FROM changed)
+    GROUP BY day, tenant_id, store_id, campaign_id, product_id
+)
+SELECT *
+FROM
+(
+    SELECT exact.day AS day, exact.tenant_id AS tenant_id, exact.store_id AS store_id, exact.campaign_id AS campaign_id, exact.product_id AS product_id,
+           exact.i - stored.i AS impressions, exact.c - stored.c AS clicks, exact.b - stored.b AS click_to_basket
+    FROM exact
+    LEFT JOIN stored ON exact.day = stored.day AND exact.tenant_id = stored.tenant_id AND exact.store_id = stored.store_id
+                    AND exact.campaign_id = stored.campaign_id AND exact.product_id = stored.product_id
+)
+WHERE impressions != 0 OR clicks != 0 OR click_to_basket != 0;

@@ -44,7 +44,7 @@ site / app ─► gateway ─► ingestion-service ─► Kafka ─┬─► Fli
 ## 3. Event ingestion
 
 - **Clients** batch events (1–100 per request) through the SDK. A shopper's events carry a token that fixes the tenant, user and user type; the SDK keeps a visitor's UUID across sign-in, so a visitor who signs in stays one user.
-- **ingestion-service** checks the sender (bot user agents are refused and counted per tenant), the format, the timestamp (at most 2 days old, 5 minutes ahead), the campaign (active, of the sender's tenant), the rate (per sender, and per tenant by tier), then publishes to Kafka and answers. It doesn't wait for processing.
+- **ingestion-service** checks the sender (bot user agents are refused and counted per tenant), the format, the timestamp (at most 2 days old, 5 minutes ahead), the campaign (an impression or click must be for one of the sender's tenant's active campaigns, else it's rejected as `UNKNOWN_CAMPAIGN`: ClickHouse's `campaigns` table, loaded from the retail API's campaign topic, cached 30 s, reloaded on a miss; if ClickHouse can't answer, events are accepted unchecked rather than lost), the rate (per sender, and per tenant by tier), then publishes to Kafka and answers. It doesn't wait for processing.
 - **Latency:** on one laptop with the whole stack, ingestion p99 is 58 ms at 1,000 events/s, and an event is in the `/ad` numbers 7.5 s later (p50; 22 s p99) ([`basketline/loadtest/README.md`](../basketline/loadtest/README.md)).
 - **Partitioning:** interactions are keyed by event ID, so every tenant's events spread over all partitions: no hot partition whatever the tenant mix. Stateful grouping happens in Flink, not by Kafka key. Size partitions for the peak (e.g. 48 for 100k events/s).
 
@@ -62,12 +62,12 @@ One Flink SQL job reads `retail.interactions.v1` once and runs three pipelines i
 
 **Why two different time models.**
 - The attribution join is a *regular* join, not an event-time window. Either event may arrive first, up to 2 days late, and still match, and nothing is dropped. That is the accuracy-critical metric.
-- Sessions need event time to know when a session has ended. An event more than 10 minutes behind the watermark is left out of its session only, and counted (`numLateRecordsDropped`, alert `LateRecordsDropped`). The history backfill later rebuilds sessions from the lake with late events included.
+- Sessions need event time to know when a session has ended. An event more than 10 minutes behind the watermark is left out of its session only, and counted (`numLateRecordsDropped`, alert `LateRecordsDropped`). A nightly backfill recomputes the newest settled day (3 days ago) from the lake with late events included (`nightly_backfill`), once the lake has caught up.
 
 **Delivery** is at least once end to end. Exact counts come from IDs:
 - staging tables keyed by event or session ID merge copies;
 - customer and session counts are sketches of IDs;
-- an hourly check recounts recent days exactly.
+- hourly checks recount recent days exactly, for the campaigns' totals and per product.
 
 ## 5. Storage and retention
 
@@ -144,7 +144,8 @@ The rule: **a tenant's load spreads across the platform, and each tenant is capp
 | API health (RED) | requests/s, 5xx rate, p99 per service and route | 5xx > 5%; ingestion p99 > 500 ms; `/ad` p99 > 1 s |
 | Freshness | age of the newest stored event; consumer lag per group | lag growing; ClickHouse Kafka errors |
 | Processing | Flink uptime, restarts, failed checkpoints, records in/out, late events | job down or restarting; checkpoints failing; late events dropped |
-| Accuracy | hourly check's last success and failures | check failing or stale |
+| Accuracy | hourly checks' last success and failures | check failing or stale |
+| Data quality | share of each tenant's events without a store; rejected events by reason (`ingestion_events_total`); partitions each ClickHouse queue reads; newest session's age; the lake sink's progress | `EventsWithoutStore`, `EventsRejected`, `ClickHouseQueueNotReading`, `SessionsStalled`, `LakeSinkStalled` |
 | Durability | age of the newest backup | no backup for 26 h |
 | Per tenant | impressions and clicks per store in the last hour; refused bot traffic | — |
 | Runtime | Node event-loop lag; ClickHouse's own metrics | any scrape target down |
@@ -180,8 +181,8 @@ Tools:
 
 | Challenge | Choice | Trade-off |
 |---|---|---|
-| **Real-time vs accurate counts** | Live views count each batch as it lands; an hourly check recounts recent days exactly from staging; the backfill recomputes any settled day from the lake | A day's number can be slightly high (a redelivered event) for up to an hour, then exact |
-| **Late and out-of-order events** | Attribution: regular join, no watermark, nothing dropped. Sessions: 10-minute watermark | Sessions are about 40 minutes behind and exclude very late events until a backfill |
+| **Real-time vs accurate counts** | Live views count each batch as it lands; hourly checks recount recent days exactly from staging (campaign totals and per product); a nightly backfill recomputes the newest settled day from the lake, and any other on demand | A day's number can be slightly high (a redelivered event) for up to an hour, then exact |
+| **Late and out-of-order events** | Attribution: regular join, no watermark, nothing dropped. Sessions: 10-minute watermark | Sessions are about 40 minutes behind and exclude very late events until the nightly backfill, 3 days later |
 | **Distinct counts at scale** | `uniqCombined64` sketches, mergeable across days, stores and client types | ~1% error above a few thousand customers; event counts stay exact |
 | **Attribution correctness** | Flink emits every candidate click; ClickHouse picks the latest | More rows than credits; an append-only stream without retractions |
 | **Exactly once** | At least once plus idempotent storage (IDs, sketches, hourly recount) | Simpler and cheaper than transactional sinks end to end |

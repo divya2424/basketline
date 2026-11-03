@@ -5,6 +5,7 @@ ClickHouse keeps only the daily tables `/ad` reads (and 3 days of Flink's output
 | DAG | When | Job | What |
 |---|---|---|---|
 | `history_backfill` | on demand | [`jobs/backfill_daily.py`](jobs/backfill_daily.py) | Recomputes past days of ClickHouse's daily tables from the lake, and swaps them in |
+| `nightly_backfill` | daily 03:00 UTC | [`jobs/backfill_daily.py`](jobs/backfill_daily.py) `--only-if-lake-caught-up` | Recomputes the newest settled day (3 days ago), so events too late for their live session count; waits (retries) while the lake is behind |
 | `clickhouse_backup` | daily 02:30 UTC | [`jobs/backup_clickhouse.py`](jobs/backup_clickhouse.py) | Backs up the daily tables and the erasure and backfill records to S3 |
 | `tenant_purge` | daily 02:00 UTC | [`jobs/purge_tenants.py`](jobs/purge_tenants.py) | Deletes deleted tenants' and erased shoppers' rows from the lake |
 | — | on demand | [`jobs/import_history.py`](jobs/import_history.py) | Imports a tenant's past interactions (older than the API takes) into the lake, for a history backfill |

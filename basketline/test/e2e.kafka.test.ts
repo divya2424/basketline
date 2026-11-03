@@ -19,6 +19,7 @@ import { closeDb, createEventPublisher, createKafkaEventBus, createLogger, ensur
 import { createTestDatabase, createTestKeys } from '@basketline/platform/testing'
 import { createClickHouse } from '@basketline/platform/clickhouse'
 import { buildIngestionApp } from '../services/ingestion-service/src/app.ts'
+import { createCampaignDirectory } from '../services/ingestion-service/src/services/campaign.directory.ts'
 import { buildInsightsApp } from '../services/insights-service/src/app.ts'
 import { buildAuthApp } from '../services/auth-service/src/app.ts'
 import { createAuthDb, migrateAuthDb } from '../services/auth-service/src/db/client.ts'
@@ -171,7 +172,7 @@ beforeAll(async () => {
   campaignUrl = await listen(buildCampaignApp({ db: campaignDb, bus: campaignBus, logger, publicKey: retailerKeys.publicKey, basketline: campaignSender }))
 
   const ingestionBus = await kafka('ingestion-service')
-  const ingestionUrl = await listen(buildIngestionApp({ bus: ingestionBus, clickhouse, logger, publicKey: keys.publicKey }))
+  const ingestionUrl = await listen(buildIngestionApp({ bus: ingestionBus, clickhouse, logger, publicKey: keys.publicKey, campaigns: createCampaignDirectory({ clickhouse, logger }) }))
   const insightsUrl = await listen(buildInsightsApp({ clickhouse: readerClickhouse, logger, publicKey: keys.publicKey }))
   const reader = await kafka('e2e-analytics-reader')
   await reader.subscribe({
@@ -256,6 +257,15 @@ describe('the simulated retailer, through Basketline\'s public API', () => {
     await eventually(async () => [retail('campaign_upserted'), retail('campaign_product_added')], (found) => found.every(Boolean))
     expect(retail('campaign_upserted')).toMatchObject({ storeId: sellerId, sellerId, placement: 'spotlight', title: 'Festive Sale', productIds: [productId] })
     expect(retail('campaign_product_added')).toMatchObject({ productId, storeId: sellerId, sellerId, productName: 'Aurora Wireless Earbuds', productPrice: 2999, category: 'Audio' })
+    // What ClickHouse's campaigns queue loads from that message in production (03_kafka.sql): ingestion counts
+    // impressions and clicks only for the tenant's active campaigns.
+    const upserted = retail('campaign_upserted')!
+    await clickhouse.insert({
+      table: 'campaigns',
+      values: [{ tenant_id: tenantId, campaign_id: campaignId, status: upserted.status, archived: upserted.archived, updated_at: upserted.updatedAt }],
+      format: 'JSONEachRow',
+      clickhouse_settings: { date_time_input_format: 'best_effort' },
+    })
 
     // Basketline's API user: the tenant's campaign manager signs in (for the revocation check below).
     const manager = await request(gateway).post('/api/v1/auth/login').set('tenant_id', tenantId).send({ username: 'onboarding', password: connected.body.basketlinePassword, clientType: 'web' })

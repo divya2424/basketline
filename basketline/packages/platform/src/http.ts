@@ -59,6 +59,8 @@ export function createBaseApp({
     }),
   )
   const metrics = createHttpMetrics(name)
+  // A service's own metrics register here, to be served on its /metrics too.
+  app.locals.metrics = metrics.registry
   app.use(metrics.middleware)
   app.use(healthRoutes(name, health))
   app.use(metrics.routes)

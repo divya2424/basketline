@@ -50,6 +50,40 @@ groups:
         expr: basketline_backup_age_seconds > 26 * 3600
         annotations: { summary: "No ClickHouse backup for {{ $value | humanizeDuration }}" }
 
+  # The data, not only the services: what went unnoticed before (events stored
+  # under no store from an old SDK, a queue table that stopped reading after a
+  # Kafka restart, the lake's storage down).
+  - name: data-quality
+    rules:
+      - alert: EventsWithoutStore
+        expr: basketline_events_without_store_share > 0.2
+        for: 15m
+        annotations: { summary: "{{ $value | humanizePercentage }} of tenant {{ $labels.tenant }}'s events in the last hour have no store: its client isn't sending storeId (an old SDK?)" }
+
+      - alert: EventsRejected
+        expr: sum by (reason) (rate(ingestion_events_total{outcome="rejected"}[15m])) / scalar(sum(rate(ingestion_events_total[15m]))) > 0.1
+        for: 15m
+        annotations: { summary: "{{ $value | humanizePercentage }} of events are rejected as {{ $labels.reason }}" }
+
+      # A queue table that left its consumer group reads nothing, and its lag may barely move.
+      - alert: ClickHouseQueueNotReading
+        expr: basketline_kafka_assigned_partitions == 0
+        for: 15m
+        annotations: { summary: "ClickHouse's {{ $labels.table }} reads no Kafka partition; detach and attach it (or restart ClickHouse)" }
+
+      # Sessions arrive about 40 minutes after a visit; none for 3 hours while events keep coming means they stopped.
+      - alert: SessionsStalled
+        expr: basketline_newest_row_age_seconds{table="sessions"} > 3 * 3600 and on() basketline_newest_event_age_seconds < 3600
+        for: 15m
+        annotations: { summary: "No session stored for {{ $value | humanizeDuration }} while events keep arriving" }
+
+      # Kafka Connect commits to the lake hourly; behind with no progress for 2 hours, the lake stopped growing.
+      - alert: LakeSinkStalled
+        expr: sum(kafka_consumergroup_lag_sum{consumergroup="connect-lake-sink"}) > 0
+          and sum(delta(kafka_consumergroup_current_offset_sum{consumergroup="connect-lake-sink"}[2h])) == 0
+        for: 15m
+        annotations: { summary: "Kafka Connect hasn't written to the data lake for 2 hours (is its storage up?)" }
+
   # The services' RED metrics. The targets match loadtest/README.md: ingestion p99 < 500 ms, reads p99 < 1 s.
   - name: services
     rules:

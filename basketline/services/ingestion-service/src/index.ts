@@ -2,6 +2,7 @@ import { CAMPAIGN_PRODUCTS_TOPIC, CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC,
 import { createBusFromEnv, createHealth, createLogger, handleShutdown, intEnv, loadPublicKey, requireEnv, secretEnv } from '@basketline/platform'
 import { createClickHouse } from '@basketline/platform/clickhouse'
 import { buildIngestionApp } from './app.ts'
+import { createCampaignDirectory } from './services/campaign.directory.ts'
 import { handleIdentityEvent } from './events/identity.consumer.ts'
 import { handleTenantEvent } from './events/tenant.consumer.ts'
 import { TENANT_EVENTS_PER_MINUTE } from './services/ingestion.service.ts'
@@ -47,7 +48,8 @@ const tenantEventsPerMinute = {
   pro: intEnv('TENANT_EVENTS_PER_MINUTE_PRO', TENANT_EVENTS_PER_MINUTE.pro!),
   enterprise: intEnv('TENANT_EVENTS_PER_MINUTE_ENTERPRISE', TENANT_EVENTS_PER_MINUTE.enterprise!),
 }
-const app = buildIngestionApp({ bus, clickhouse, logger, health, tenantEventsPerMinute, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+const campaigns = createCampaignDirectory({ clickhouse, logger })
+const app = buildIngestionApp({ bus, clickhouse, logger, health, campaigns, tenantEventsPerMinute, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
 const port = intEnv('PORT', 4004)
 const server = app.listen(port, () => {
   health.markStarted()

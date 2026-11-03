@@ -30,7 +30,7 @@ const fakeBasketline: typeof fetch = async (input, init) => {
   if (path === '/accounts') {
     if (body.name === 'Taken') return json(400, { error: { code: 'VALIDATION_FAILED', message: 'Request validation failed' } })
     const tenantId = randomUUID()
-    const users = [{ username: 'onboarding', role: 'campaign-manager' }, ...(body.sellerManagers as { username: string }[]).map(({ username }) => ({ username, role: 'seller-manager' }))]
+    const users = [{ username: 'onboarding', role: 'campaign-manager' }]
     return json(201, { account: { tenantId, name: body.name, tier: body.tier }, users, password: 'test', apiKey: { key: `bl_sk_key-of-${tenantId}`, prefix: 'bl_sk_key-of' } })
   }
   if (path === '/auth/shopper-token') {
@@ -67,7 +67,7 @@ describe('connecting a store to Basketline', () => {
     expect(res.body).toMatchObject({
       store: { tenantId, name: 'Acme Store', tier: 'pro' },
       password: 'test',
-      basketlineUsers: [{ username: 'onboarding' }, { username: 'seller01', role: 'seller-manager' }],
+      basketlineUsers: [{ username: 'onboarding', role: 'campaign-manager' }],
       basketlinePassword: 'test',
     })
     expect(res.body.users.map((u: { username: string }) => u.username)).toEqual(['staff', ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`)])
@@ -83,9 +83,9 @@ describe('connecting a store to Basketline', () => {
     expect(JSON.stringify(payload)).not.toContain('bl_sk_')
     expect(openSecret(payload.sealedApiKey, SECRETS_KEY)).toBe(`bl_sk_key-of-${tenantId}`)
     expect(payload.seed.campaigns.map((c) => c.productIds.length)).toEqual([2, 3])
-    // seller01 at Basketline manages the first seeded seller.
+    // Only what Basketline's POST /accounts accepts: it refuses unknown fields.
     const onboarding = calls.findLast((c) => c.path === '/accounts')!
-    expect(onboarding.body).toEqual({ name: 'Acme Store', tier: 'pro', sellerManagers: [{ username: 'seller01', sellerId: payload.seed.sellers[0]!.sellerId }] })
+    expect(onboarding.body).toEqual({ name: 'Acme Store', tier: 'pro' })
     const staff = await login(tenantId, 'staff')
     expect(payload.connectedBy).toBe(staff.body.user.id)
 

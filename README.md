@@ -93,7 +93,7 @@ docker compose up -d --build
 
 Without a GitHub token, `pnpm install` and the image builds fail on the two packages above (`401 Unauthorized`): create a classic token with only `read:packages`.
 
-1. On the storefront's Stores page, http://localhost:5174/stores, connect a store. The retailer onboards it at Basketline and keeps its API key: Basketline creates an `onboarding` campaign manager and a `seller01` seller manager (password `test`); the retailer creates its logins (`staff`, `user01`–`user10`, password `test`) and sends its sample sellers, products and campaigns to Basketline.
+1. On the storefront's Stores page, http://localhost:5174/stores, connect a store. The retailer onboards it at Basketline and keeps its API key: Basketline creates an `onboarding` campaign manager (password `test`); the retailer creates its logins (`staff`, `user01`–`user10`, password `test`) and sends its sample sellers, products and campaigns to Basketline.
 2. **Open** it to shop; sign in as `user01` to shop as a customer.
 3. On the dashboard, http://localhost:5173, click **Analytics** on the tenant's row.
 

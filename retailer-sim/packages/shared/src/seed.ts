@@ -1,8 +1,7 @@
 /**
  * The demo catalog a newly connected store is seeded with: 10–15 products from
  * two sellers, and active campaigns of 2 and 3 of them. The plan is drawn from a
- * random key, before the store is onboarded (its first seller gets a Basketline
- * seller manager); StoreConnected carries the plan itself, so applying it again
+ * random key, before the store is onboarded; StoreConnected carries the plan itself, so applying it again
  * creates nothing twice.
  */
 import { createHash } from 'node:crypto'

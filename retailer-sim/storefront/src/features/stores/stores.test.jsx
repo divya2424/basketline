@@ -11,7 +11,7 @@ const CONNECTED = {
   store: NEW_STORE,
   users: [{ username: 'staff' }, { username: 'user01' }],
   password: 'test',
-  basketlineUsers: [{ username: 'admin@corner-shop' }, { username: 'seller01' }],
+  basketlineUsers: [{ username: 'admin@corner-shop' }],
   basketlinePassword: 'basketline-password',
   seed: { products: 12, campaigns: 2 },
 }
@@ -66,7 +66,7 @@ describe('stores page', () => {
     const connected = await screen.findByRole('status', { name: 'Corner Shop is connected' })
     expect(within(connected).getByTestId('connected-tenant-id')).toHaveTextContent(NEW_STORE.tenantId)
     expect(connected).toHaveTextContent('staff, user01')
-    expect(connected).toHaveTextContent('admin@corner-shop, seller01')
+    expect(connected).toHaveTextContent('admin@corner-shop')
     expect(connected).toHaveTextContent('Seeding 12 products and 2 active campaigns')
     expect(api.requests.find((r) => r.method === 'POST')).toMatchObject({ body: { name: 'Corner Shop', tier: 'free' } })
     expect(await screen.findAllByTestId('store-row')).toHaveLength(2)

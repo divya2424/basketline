@@ -41,7 +41,7 @@ export function createBasketlineClient({ apiUrl, fetch: doFetch = globalThis.fet
 
   return {
     /** Onboards a store; the API key comes only in this answer. */
-    async onboard(input: { name: string; tier: string; sellerManagers?: { username: string; sellerId: string }[] }): Promise<OnboardedStore> {
+    async onboard(input: { name: string; tier: string }): Promise<OnboardedStore> {
       const { account, apiKey, users, password } = await call<{
         account: { tenantId: string; name: string; tier: string }
         apiKey: { key: string }

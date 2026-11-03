@@ -17,8 +17,6 @@ import { hashPassword } from './password.ts'
 export const DEMO_PASSWORD = 'test'
 export const STAFF_USERNAME = 'staff'
 const CUSTOMERS = 10
-/** The first seeded seller's Basketline seller manager. */
-export const SELLER_MANAGER_USERNAME = 'seller01'
 
 export function createStoreService({ db, publish, basketline, secretsKey }: { db: Db; publish: PublishEvents; basketline: BasketlineClient; secretsKey: string }) {
   return {
@@ -30,11 +28,7 @@ export function createStoreService({ db, publish, basketline, secretsKey }: { db
      */
     async connect(input: ConnectInput) {
       const seed = seedPlan(randomUUID())
-      const onboarded = await basketline.onboard({
-        name: input.name.trim(),
-        tier: input.tier,
-        sellerManagers: [{ username: SELLER_MANAGER_USERNAME, sellerId: seed.sellers[0]!.sellerId }],
-      })
+      const onboarded = await basketline.onboard({ name: input.name.trim(), tier: input.tier })
       const sealedApiKey = sealSecret(onboarded.apiKey, secretsKey)
       const wanted: { username: string; role: RetailerRole }[] = [
         { username: STAFF_USERNAME, role: 'staff' },
@@ -55,7 +49,7 @@ export function createStoreService({ db, publish, basketline, secretsKey }: { db
         store,
         users: users.map(({ username, role }) => ({ username, role })),
         password: DEMO_PASSWORD,
-        // The store's dashboard users at Basketline (its onboarding manager and seller01).
+        // The store's dashboard user at Basketline (its onboarding campaign manager).
         basketlineUsers: onboarded.users,
         basketlinePassword: onboarded.password,
         seed: { products: seed.productIds.length, campaigns: seed.campaigns.length },

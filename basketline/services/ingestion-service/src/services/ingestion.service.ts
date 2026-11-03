@@ -1,6 +1,7 @@
-import { ANALYTICS_EVENT_TYPE, eventTypeOf, externalId, NO_STORE, topicOf, type AnalyticsEventPayload } from '@basketline/contracts'
+import { ANALYTICS_EVENT_TYPE, eventTypeOf, externalId, METRIC_EVENT_NAMES, NO_STORE, topicOf, type AnalyticsEventPayload } from '@basketline/contracts'
 import { AppError, serviceUnavailable, type BusMessage, type EventBus, type EventSender, type Logger } from '@basketline/platform'
 import type { IncomingEvent } from '../validators/analytics.validator.ts'
+import type { CampaignDirectory } from './campaign.directory.ts'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -33,18 +34,22 @@ export type IngestResult = { eventId: string; status: 'accepted' } | { eventId: 
 
 /**
  * Publishes each valid event to its topic (interactions or identity), with the
- * store it came from. Nothing is stored or looked up here: the Flink job
+ * store it came from. An impression or click counts only for one of the tenant's
+ * active campaigns (`campaigns`, a cached lookup); else it's rejected
+ * (UNKNOWN_CAMPAIGN). Nothing else is looked up here: the Flink job
  * (basketline/flink) credits basket additions to their click and writes both to
  * ClickHouse, which removes duplicates and keeps the daily totals.
  */
 export function createIngestionService({
   bus,
   logger,
+  campaigns,
   maxEventsPerMinute = MAX_EVENTS_PER_SENDER_PER_MINUTE,
   tenantEventsPerMinute = TENANT_EVENTS_PER_MINUTE,
 }: {
   bus: EventBus
   logger: Logger
+  campaigns: CampaignDirectory
   maxEventsPerMinute?: number
   tenantEventsPerMinute?: Record<string, number>
 }) {
@@ -134,7 +139,13 @@ export function createIngestionService({
           results.push({ eventId: event.eventId, status: 'rejected', reason: 'TIMESTAMP_OUT_OF_RANGE' })
           continue
         }
-        messages.push(toMessage(event, sender, store, receivedAt))
+        const message = toMessage(event, sender, store, receivedAt)
+        const { campaignId } = message.envelope.payload as AnalyticsEventPayload
+        if ((METRIC_EVENT_NAMES as readonly string[]).includes(event.eventName) && !(await campaigns.isActive(sender.tenantId, campaignId!))) {
+          results.push({ eventId: event.eventId, status: 'rejected', reason: 'UNKNOWN_CAMPAIGN' })
+          continue
+        }
+        messages.push(message)
         results.push({ eventId: event.eventId, status: 'accepted' })
       }
       try {

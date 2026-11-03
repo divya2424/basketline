@@ -1,4 +1,5 @@
 import type { CryptoKey } from 'jose'
+import { Counter } from 'prom-client'
 import {
   authenticateEvents,
   authenticateIntegration,
@@ -14,6 +15,7 @@ import { pingClickHouse, type ClickHouse } from '@basketline/platform/clickhouse
 import { createIngestionController } from './controllers/ingestion.controller.ts'
 import { createReferenceController } from './controllers/reference.controller.ts'
 import { analyticsRoutes, referenceRoutes } from './routes/analytics.routes.ts'
+import type { CampaignDirectory } from './services/campaign.directory.ts'
 import { createIngestionService } from './services/ingestion.service.ts'
 import { createReferenceService } from './services/reference.service.ts'
 
@@ -23,6 +25,8 @@ export interface IngestionAppDeps {
   clickhouse: ClickHouse
   logger: Logger
   publicKey: CryptoKey
+  /** The tenants' active campaigns: impressions and clicks for any other campaign are rejected. */
+  campaigns: CampaignDirectory
   /** Events one sender may send per minute (default MAX_EVENTS_PER_SENDER_PER_MINUTE). */
   maxEventsPerMinute?: number
   /** Events one tenant may send per minute, by tier (default TENANT_EVENTS_PER_MINUTE). */
@@ -41,6 +45,7 @@ export function buildIngestionApp({
   clickhouse,
   logger,
   publicKey,
+  campaigns,
   maxEventsPerMinute,
   tenantEventsPerMinute,
   health = createHealth({ started: true }),
@@ -48,7 +53,13 @@ export function buildIngestionApp({
   health.addCheck('clickhouse', () => pingClickHouse(clickhouse))
   const app = createBaseApp({ name: 'ingestion-service', logger, health })
 
-  const ingestion = createIngestionController(createIngestionService({ bus, logger, maxEventsPerMinute, tenantEventsPerMinute }))
+  const events = new Counter({
+    name: 'ingestion_events_total',
+    help: 'Events received, by outcome (accepted, rejected) and rejection reason',
+    labelNames: ['outcome', 'reason'] as const,
+    registers: [app.locals.metrics],
+  })
+  const ingestion = createIngestionController(createIngestionService({ bus, logger, campaigns, maxEventsPerMinute, tenantEventsPerMinute }), events)
 
   app.use('/api/v1/analytics', analyticsRoutes(ingestion, authenticateEvents(publicKey)))
   app.use('/api/v1/retail', referenceRoutes(createReferenceController(createReferenceService({ bus, logger })), authenticateIntegration(publicKey)))

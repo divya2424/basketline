@@ -1,6 +1,6 @@
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 
-/** Every table with a tenant's rows: staging, the daily aggregates, the campaign products' names, and its erasures. */
+/** Every table with a tenant's rows: staging, the daily aggregates, its campaigns and their products' names, and its erasures. */
 const TENANT_TABLES = [
   'events',
   'attributed_baskets',
@@ -10,6 +10,7 @@ const TENANT_TABLES = [
   'daily_campaign_sessions_aggregation',
   'daily_campaign_product_aggregation',
   'campaign_products',
+  'campaigns',
   'deleted_users',
 ]
 

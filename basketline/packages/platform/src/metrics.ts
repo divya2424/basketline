@@ -19,6 +19,8 @@ export interface HttpMetrics {
   middleware: RequestHandler
   /** GET /metrics. */
   routes: Router
+  /** For a service's own metrics, e.g. ingestion's events by outcome. */
+  registry: Registry
 }
 
 /** A registry per app, so tests can build many apps in one process. */
@@ -63,5 +65,5 @@ export function createHttpMetrics(service: string): HttpMetrics {
   routes.get('/metrics', async (_req, res) => {
     res.type(registry.contentType).send(await registry.metrics())
   })
-  return { middleware, routes }
+  return { middleware, routes, registry }
 }

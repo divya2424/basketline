@@ -4,7 +4,10 @@
   - :8123/pipeline-metrics: the pipeline's health, read from its tables in the
     Prometheus text format: the newest stored event's age, the hourly check, the
     newest backup's age, events in the last hour per store, and errors of the Kafka engine tables (e.g. offsets it can't commit,
-    which leave it re-reading the same messages). Asks for a ClickHouse user (Prometheus sends basic auth).
+    which leave it re-reading the same messages). And the data's quality: the share
+    of each tenant's events stored without a store, the newest row's age per
+    staging table, and the partitions each Kafka engine table is reading (0: it
+    stopped). Asks for a ClickHouse user (Prometheus sends basic auth).
 -->
 <clickhouse>
     <prometheus>
@@ -53,6 +56,28 @@
                         FROM analytics.events
                         WHERE ingested_at > now() - INTERVAL 1 HOUR
                         GROUP BY tenant_id, store_id
+                        UNION ALL
+                        SELECT 'basketline_events_without_store_share',
+                               countIf(store_id = toUUID('00000000-0000-0000-0000-000000000000')) / count(),
+                               'Share of the impressions and clicks stored in the last hour without a store, per tenant', 'gauge',
+                               map('tenant', toString(tenant_id))
+                        FROM analytics.events
+                        WHERE ingested_at > now() - INTERVAL 1 HOUR
+                        GROUP BY tenant_id
+                        UNION ALL
+                        SELECT 'basketline_newest_row_age_seconds', toFloat64(dateDiff('second', max(ingested_at), now64(3))),
+                               'Seconds since a staging table last got a row', 'gauge', map('table', 'attributed_baskets')
+                        FROM analytics.attributed_baskets
+                        UNION ALL
+                        SELECT 'basketline_newest_row_age_seconds', toFloat64(dateDiff('second', max(ingested_at), now64(3))),
+                               'Seconds since a staging table last got a row', 'gauge', map('table', 'sessions')
+                        FROM analytics.sessions
+                        UNION ALL
+                        SELECT 'basketline_kafka_assigned_partitions', toFloat64(sum(length(assignments.partition_id))),
+                               'Kafka partitions a queue table is reading (0: it left its consumer group and reads nothing)', 'gauge',
+                               map('table', table)
+                        FROM system.kafka_consumers WHERE database = 'analytics'
+                        GROUP BY table
                     ) ORDER BY name
                     FORMAT Prometheus
                 </query>

@@ -124,16 +124,26 @@ function browse(list: Campaign[], at: () => string, clicks: (c: number, p: numbe
   return events
 }
 
-/** Sends a shopper's events with their token, as the SDK does; returns how many Basketline accepted. */
-async function send(tenantId: string, token: string, userId: string, userType: 'visitor' | 'registered', events: unknown[]) {
+/**
+ * Sends a shopper's events with their token, as the SDK does; returns how many Basketline accepted.
+ * Basketline counts impressions and clicks only for campaigns it knows to be active, which a new
+ * marketplace's are a second or two after campaign-service has them: those are sent again for up to 30 s.
+ */
+async function send(tenantId: string, token: string, userId: string, userType: 'visitor' | 'registered', events: { eventId: string }[]) {
   let accepted = 0
   for (let i = 0; i < events.length; i += BATCH) {
-    const result = await call(`${BASKETLINE}/analytics/events`, {
-      headers: { authorization: `Bearer ${token}` },
-      body: { tenantId, userId, userType, events: events.slice(i, i + BATCH) },
-    })
-    if (result.rejected > 0) throw new Error(`Basketline rejected ${result.rejected} events: ${JSON.stringify(result.results.filter((r: { status: string }) => r.status !== 'accepted').slice(0, 3))}`)
-    accepted += result.accepted
+    let batch = events.slice(i, i + BATCH)
+    for (let attempt = 0; batch.length > 0; attempt++) {
+      const result = await call(`${BASKETLINE}/analytics/events`, { headers: { authorization: `Bearer ${token}` }, body: { tenantId, userId, userType, events: batch } })
+      accepted += result.accepted
+      const rejected = result.results.filter((r: { status: string }) => r.status !== 'accepted') as { eventId: string; reason: string }[]
+      const unknownCampaign = new Set(rejected.filter((r) => r.reason === 'UNKNOWN_CAMPAIGN').map((r) => r.eventId))
+      if (rejected.length > unknownCampaign.size || (unknownCampaign.size > 0 && attempt === 15)) {
+        throw new Error(`Basketline rejected ${rejected.length} events: ${JSON.stringify(rejected.slice(0, 3))}`)
+      }
+      batch = batch.filter((event) => unknownCampaign.has(event.eventId))
+      if (batch.length > 0) await pause(2000)
+    }
   }
   return accepted
 }

@@ -242,5 +242,8 @@ def test_refuses_days_the_lake_lacks_or_live_events_can_change(lake, ch):
     # The lake began with the cases' earliest click, 8 days before DAY.
     with pytest.raises(ValueError, match="isn't in the lake whole"):
         job.check_range(client, SOURCE, DAY - dt.timedelta(days=8), DAY, TODAY)
+    # The fixture lake ends a few days after DAY: a scheduled run waits for it to catch up.
+    with pytest.raises(ValueError, match="the lake is behind"):
+        job.check_lake_caught_up(client, SOURCE, DAY)
     with pytest.raises(ValueError, match="no such daily table"):
         job.backfill(client, SOURCE, DAY, DAY, [], ["daily_nothing"], database=database, scratch=scratch, today=TODAY)

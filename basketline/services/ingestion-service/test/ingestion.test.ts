@@ -7,6 +7,7 @@ import { createLogger, createMemoryEventBus, signIntegrationToken, signShopperTo
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 import { createTestClickHouse, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildIngestionApp } from '../src/app.ts'
+import { ANY_CAMPAIGN, createCampaignDirectory } from '../src/services/campaign.directory.ts'
 import { handleIdentityEvent } from '../src/events/identity.consumer.ts'
 import { handleTenantEvent } from '../src/events/tenant.consumer.ts'
 
@@ -36,7 +37,7 @@ beforeAll(async () => {
   db = await createTestClickHouse()
   clickhouse = db.clickhouse
   bus = createMemoryEventBus(logger)
-  app = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey })
+  app = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, campaigns: ANY_CAMPAIGN })
 })
 
 afterAll(async () => {
@@ -196,9 +197,43 @@ describe('ingestion: publish to the topic for each event type', () => {
     expect((await send([event], foreign)).status).toBe(401)
   })
 
-  it("accepts metric events for any campaign: Basketline keeps no campaign records to check them against", async () => {
-    const res = await send([{ campaignId: randomUUID(), eventName: 'impression' }, { campaignId: 'never-sent', eventName: 'click' }])
-    expect(res.body).toMatchObject({ accepted: 2, rejected: 0 })
+  it("counts impressions and clicks only for the tenant's active campaigns, and counts each outcome for the alerts", async () => {
+    const [active, paused, removed, othersCampaign, startedJustNow] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    const campaign = (campaign_id: string, status: string, tenant_id = TENANT) => ({ tenant_id, campaign_id, status, archived: false, updated_at: ago(HOUR) })
+    const record = (rows: object[]) => clickhouse.insert({ table: 'campaigns', values: rows, format: 'JSONEachRow', clickhouse_settings: { date_time_input_format: 'best_effort' } })
+    await record([campaign(active, 'active'), campaign(paused, 'paused'), campaign(removed, 'removed'), campaign(othersCampaign, 'active', OTHER_TENANT)])
+    // missMs 0: a campaign the cache doesn't know reloads the tenant's at once.
+    const checked = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, campaigns: createCampaignDirectory({ clickhouse, logger, missMs: 0 }) })
+
+    const res = await send(
+      [
+        { campaignId: active, eventName: 'impression' },
+        { campaignId: active, eventName: 'click' },
+        { campaignId: paused, eventName: 'impression' },
+        { campaignId: removed, eventName: 'click' },
+        { campaignId: othersCampaign, eventName: 'impression' },
+        // Other activity names a campaign or not, unchecked.
+        { campaignId: randomUUID(), eventName: 'product_click' },
+      ],
+      visitor,
+      checked,
+    )
+    expect(res.body).toMatchObject({ accepted: 3, rejected: 3 })
+    expect(res.body.results.filter((r: { status: string }) => r.status === 'rejected').map((r: { reason: string }) => r.reason)).toEqual(['UNKNOWN_CAMPAIGN', 'UNKNOWN_CAMPAIGN', 'UNKNOWN_CAMPAIGN'])
+
+    // A campaign created a moment ago counts as soon as ClickHouse has it.
+    await record([campaign(startedJustNow, 'active')])
+    expect((await send([{ campaignId: startedJustNow, eventName: 'impression' }], visitor, checked)).body).toMatchObject({ accepted: 1 })
+
+    const metrics = (await request(checked).get('/metrics')).text
+    expect(metrics).toMatch(/ingestion_events_total\{outcome="rejected",reason="UNKNOWN_CAMPAIGN"[^}]*\} 3/)
+    expect(metrics).toMatch(/ingestion_events_total\{outcome="accepted",reason=""[^}]*\} 4/)
+  })
+
+  it("accepts events unchecked when the tenant's campaigns can't be read: the check never stops ingestion", async () => {
+    const down = { query: async () => { throw new Error('ClickHouse is down') } } as unknown as ClickHouse
+    const unchecked = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, campaigns: createCampaignDirectory({ clickhouse: down, logger }) })
+    expect((await send([{ campaignId: randomUUID(), eventName: 'click' }], visitor, unchecked)).body).toMatchObject({ accepted: 1, rejected: 0 })
   })
 
   it("publishes the batch's store with each event: the store's own ID mapped to a UUID (as a seller's), a UUID as is", async () => {
@@ -214,7 +249,7 @@ describe('ingestion: publish to the topic for each event type', () => {
   })
 
   it('caps the events one sender can send per minute', async () => {
-    const capped = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, maxEventsPerMinute: 3 })
+    const capped = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, campaigns: ANY_CAMPAIGN, maxEventsPerMinute: 3 })
     const token = (await visitorTokenFor(keys, TENANT)).header
     expect((await send([{ eventName: 'home_view' }, { eventName: 'home_view' }], token, capped)).status).toBe(200)
     const over = await send([{ eventName: 'home_view' }, { eventName: 'home_view' }], token, capped)
@@ -226,7 +261,7 @@ describe('ingestion: publish to the topic for each event type', () => {
   })
 
   it("holds a busy tenant to its tier's budget, across its senders, while other tenants' events keep flowing", async () => {
-    const budgeted = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, tenantEventsPerMinute: { free: 3, pro: 6, enterprise: 100 } })
+    const budgeted = buildIngestionApp({ bus, clickhouse, logger, publicKey: keys.publicKey, campaigns: ANY_CAMPAIGN, tenantEventsPerMinute: { free: 3, pro: 6, enterprise: 100 } })
     const busy = randomUUID()
     const pro = randomUUID()
     // The tier is in the visitor or shopper token; a token without one counts as free.
@@ -281,7 +316,7 @@ describe('ingestion: publish to the topic for each event type', () => {
 
   it('answers 503 when Kafka is unavailable, so the client knows nothing was recorded', async () => {
     const broken: EventBus = { ...bus, publish: () => Promise.reject(new Error('broker down')) }
-    const brokenApp = buildIngestionApp({ bus: broken, clickhouse, logger, publicKey: keys.publicKey })
+    const brokenApp = buildIngestionApp({ bus: broken, clickhouse, logger, publicKey: keys.publicKey, campaigns: ANY_CAMPAIGN })
     const res = await send([{ eventName: 'home_view' }], undefined, brokenApp)
     expect(res.status).toBe(503)
     expect(res.body.error.code).toBe('EVENTS_NOT_DELIVERED')
@@ -383,10 +418,16 @@ describe('a deleted tenant (TenantDeleted)', () => {
     await insertAttributed([{ click_event_id: randomUUID(), campaign_id: campaignId, tenant_id: gone }])
     await insertSession({ tenant_id: gone })
     await insertSession({})
+    await clickhouse.insert({
+      table: 'campaigns',
+      values: [{ tenant_id: gone, campaign_id: campaignId, status: 'active', archived: false, updated_at: ago(HOUR) }, { tenant_id: TENANT, campaign_id: campaignId, status: 'active', archived: false, updated_at: ago(HOUR) }],
+      format: 'JSONEachRow',
+      clickhouse_settings: { date_time_input_format: 'best_effort' },
+    })
 
     const count = async (table: string, tenant: string) =>
       Number((await (await clickhouse.query({ query: `SELECT count() AS n FROM ${table} WHERE tenant_id = {t:UUID}`, query_params: { t: tenant }, format: 'JSONEachRow' })).json<{ n: string }>())[0]!.n)
-    const tables = ['events', 'attributed_baskets', 'sessions', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation', 'daily_campaign_sessions_aggregation']
+    const tables = ['events', 'attributed_baskets', 'sessions', 'daily_campaign_aggregation', 'daily_campaign_customers_aggregation', 'daily_campaign_sessions_aggregation', 'campaigns']
     for (const table of tables) expect(await count(table, gone), table).toBeGreaterThan(0)
     const othersBefore = await Promise.all(tables.map((table) => count(table, TENANT)))
 

@@ -43,9 +43,9 @@ SCHEMA = Path(os.environ.get("CLICKHOUSE_SCHEMA_DIR", "/opt/airflow/clickhouse")
 NO_STORE = "00000000-0000-0000-0000-000000000000"
 # A day can still get events until 2 days after it (ingestion-service's MAX_EVENT_AGE_MS).
 SETTLED_DAYS = 3
-# Live inserts into the staging tables (03_kafka.sql) and the hourly recount (02_materialized_views.sql).
+# Live inserts into the staging tables (03_kafka.sql) and the hourly recounts (02_materialized_views.sql).
 QUEUE_VIEWS = ["events_queue_mv", "attributed_baskets_queue_mv", "sessions_queue_mv"]
-CHECK_VIEW = "daily_campaign_aggregation_check_mv"
+CHECK_VIEWS = ["daily_campaign_aggregation_check_mv", "daily_campaign_product_aggregation_check_mv"]
 
 # The lake's interaction events between two Kafka times (the lake's hourly
 # partitions), with their fields as the Flink job reads them (flink/sql/views/).
@@ -169,6 +169,17 @@ def check_range(ch, source: str, start: dt.date, end: dt.date, today: dt.date) -
         raise ValueError(f"--from {start} isn't in the lake whole: it began {began}, so at the earliest {began.date() + dt.timedelta(days=1) if began else '-'}")
 
 
+def check_lake_caught_up(ch, source: str, end: dt.date) -> None:
+    """Refuses while the lake may still lack events of the days: the last one's can arrive until 3 days after it.
+
+    A lake that is behind (Kafka Connect stopped, or its storage down) would replace
+    correct live counts with partial ones, so a scheduled run waits for it."""
+    newest = ch.query(f"SELECT max(_kafka_metadata_timestamp) FROM {source}").result_rows[0][0]
+    needed = end + dt.timedelta(days=SETTLED_DAYS)
+    if newest is None or newest.date() < needed:
+        raise ValueError(f"the lake is behind: its newest event arrived {newest}, and {end} needs events from {needed} on")
+
+
 def recompute(ch, source: str, database: str, scratch: str, start: dt.date, end: dt.date, tenants: list[str]) -> None:
     """Creates the scratch database and fills its daily tables for the days, from the lake."""
     ch.command(f"DROP DATABASE IF EXISTS {scratch} SYNC")
@@ -194,9 +205,10 @@ def pause(ch, database: str) -> None:
     for view in QUEUE_VIEWS:
         if view in existing:
             ch.command(f"DETACH TABLE {database}.{view}")
-    if CHECK_VIEW in existing:
-        ch.command(f"SYSTEM STOP VIEW {database}.{CHECK_VIEW}")
-        ch.command(f"SYSTEM CANCEL VIEW {database}.{CHECK_VIEW}")
+    for view in CHECK_VIEWS:
+        if view in existing:
+            ch.command(f"SYSTEM STOP VIEW {database}.{view}")
+            ch.command(f"SYSTEM CANCEL VIEW {database}.{view}")
 
 
 def resume(ch, database: str) -> None:
@@ -213,8 +225,10 @@ def resume(ch, database: str) -> None:
                     if "still used by some query" not in str(error) or attempt == 29:
                         raise
                     time.sleep(2)
-    if CHECK_VIEW in tables_in(ch, database):
-        ch.command(f"SYSTEM START VIEW {database}.{CHECK_VIEW}")
+    existing = tables_in(ch, database)
+    for view in CHECK_VIEWS:
+        if view in existing:
+            ch.command(f"SYSTEM START VIEW {database}.{view}")
 
 
 def swap(ch, database: str, scratch: str, tables: list[str], start: dt.date, end: dt.date, tenants: list[str]) -> None:
@@ -236,10 +250,14 @@ def swap(ch, database: str, scratch: str, tables: list[str], start: dt.date, end
 
 
 def backfill(ch, source: str, start: dt.date, end: dt.date, tenants: list[str], tables: list[str] | None = None,
-             database: str = "analytics", scratch: str = "analytics_backfill", today: dt.date | None = None) -> dict[str, int]:
-    """Recomputes the days (of the tenants, or all) in the daily tables (or all); the recomputed rows per table."""
+             database: str = "analytics", scratch: str = "analytics_backfill", today: dt.date | None = None,
+             lake_caught_up: bool = False) -> dict[str, int]:
+    """Recomputes the days (of the tenants, or all) in the daily tables (or all); the recomputed rows per table.
+    lake_caught_up: refuse unless the lake holds every event that can still arrive for the days."""
     started = dt.datetime.now(dt.UTC)
     check_range(ch, source, start, end, today or started.date())
+    if lake_caught_up:
+        check_lake_caught_up(ch, source, end)
     recompute(ch, source, database, scratch, start, end, tenants)
     daily = sorted(name for name in tables_in(ch, scratch) if name.startswith("daily_") and not name.endswith("_mv"))
     unknown = set(tables or []) - set(daily)
@@ -282,6 +300,8 @@ def main() -> None:
     parser.add_argument("--tenant", dest="tenants", action="append", default=[], help="only this tenant's rows (repeatable)")
     parser.add_argument("--table", dest="tables", action="append", help="only this daily table (repeatable), e.g. a new one")
     parser.add_argument("--rollback", action="store_true", help="undo the latest backfill")
+    parser.add_argument("--only-if-lake-caught-up", dest="lake_caught_up", action="store_true",
+                        help="refuse while the lake may still lack events of the days (scheduled runs)")
     args = parser.parse_args()
     # Long scans of the lake, and whole months copied.
     ch = clickhouse_connect.get_client(dsn=os.environ["CLICKHOUSE_URL"], send_receive_timeout=3600)
@@ -293,7 +313,7 @@ def main() -> None:
     source = lake_source(os.environ["LAKE_INTERACTIONS_URL"],
                          os.environ.get("PYICEBERG_CATALOG__LAKE__S3__ACCESS_KEY_ID"),
                          os.environ.get("PYICEBERG_CATALOG__LAKE__S3__SECRET_ACCESS_KEY"))
-    rows = backfill(ch, source, args.start, args.end, [tenant.lower() for tenant in args.tenants], args.tables)
+    rows = backfill(ch, source, args.start, args.end, [tenant.lower() for tenant in args.tenants], args.tables, lake_caught_up=args.lake_caught_up)
     print(f"recomputed {args.start} to {args.end}{' for ' + ', '.join(args.tenants) if args.tenants else ''}: {rows}")
 
 

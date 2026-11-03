@@ -2,7 +2,7 @@
  * Sends every tracked event to POST /analytics/events. Campaign activity also
  * produces the two events the campaign metrics count:
  *
- *   campaign_impression (carousel slide shown)        → impression (sent instead)
+ *   campaign_impression (a campaign's product shown)  → impression (sent instead)
  *   product_click on a campaign card (opens the       → + click     (an ad click)
  *     product's page)
  *
@@ -18,14 +18,15 @@ import { randomEventId } from './analytics.js'
 import { getRequestContext } from '../api/requestContext.js'
 import { renewShopperToken } from '../features/auth/authService.js'
 
-/** The event as the backend stores it: campaignId/productId as columns, the rest as properties. */
+/** The event as the backend stores it: campaignId/productId/storeId (the seller) as columns, the rest as properties. */
 function activity(event) {
-  const { campaignId = null, productId = null, ...properties } = event.properties
+  const { campaignId = null, productId = null, storeId = null, ...properties } = event.properties
   return {
     eventId: event.eventId,
     eventName: event.eventName,
     campaignId,
     productId,
+    storeId,
     timestamp: event.timestamp,
     pageName: event.pageName,
     featureName: event.featureName,
@@ -37,6 +38,7 @@ function base(event, extra) {
   return {
     eventId: randomEventId(),
     campaignId: event.properties.campaignId,
+    storeId: event.properties.storeId ?? null,
     timestamp: event.timestamp,
     pageName: event.pageName,
     featureName: event.featureName,
@@ -50,7 +52,7 @@ export function toBackendEvents(event) {
   switch (event.eventName) {
     case 'campaign_impression':
       return campaignId
-        ? [base(event, { eventId: event.eventId, eventName: 'impression', properties: { position: event.properties.position } })]
+        ? [base(event, { eventId: event.eventId, eventName: 'impression', productId, properties: { position: event.properties.position, slot: event.properties.slot } })]
         : []
 
     case 'product_click': {
@@ -100,9 +102,9 @@ export function createBackendTransport({ apiUrl = import.meta.env.VITE_BASKETLIN
   return {
     send(event) {
       const sdk = clientFor(getRequestContext().tenantId)
-      for (const { eventName, campaignId, productId, pageName, featureName, properties } of toBackendEvents(event)) {
+      for (const { eventName, campaignId, productId, storeId, pageName, featureName, properties } of toBackendEvents(event)) {
         if (IDENTITY_EVENTS.includes(eventName)) sdk.identity(eventName, { pageName, featureName, properties })
-        else sdk.track(eventName, { campaignId, productId, pageName, featureName, properties })
+        else sdk.track(eventName, { campaignId, productId, storeId, pageName, featureName, properties })
       }
     },
     /** Sends what is queued now (tests; the SDK also does it when the page is hidden). */

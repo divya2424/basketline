@@ -4,7 +4,7 @@ import { users } from '../db/schema.ts'
 
 export type User = typeof users.$inferSelect
 
-export async function insertUser(db: DbOrTx, user: Pick<User, 'id' | 'tenantId' | 'username' | 'passwordHash' | 'role'>): Promise<User> {
+export async function insertUser(db: DbOrTx, user: Pick<User, 'id' | 'tenantId' | 'username' | 'passwordHash' | 'role'> & Partial<Pick<User, 'sellerId'>>): Promise<User> {
   const [inserted] = await db.insert(users).values(user).returning()
   return inserted!
 }

@@ -70,7 +70,7 @@ describe('connecting a store to Basketline', () => {
       basketlineUsers: [{ username: 'onboarding', role: 'campaign-manager' }],
       basketlinePassword: 'test',
     })
-    expect(res.body.users.map((u: { username: string }) => u.username)).toEqual(['staff', ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`)])
+    expect(res.body.users.map((u: { username: string }) => u.username)).toEqual(['staff', ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`), 'seller1', 'seller2'])
     expect(JSON.stringify(res.body)).not.toContain('bl_sk_')
 
     // The key is only ever kept sealed: in the database and on Kafka.
@@ -132,6 +132,15 @@ describe('signing in', () => {
     const staff = await login(tenantId, 'staff')
     expect(staff.body).toMatchObject({ user: { role: 'staff' }, basketline: null })
     expect((await request(app).post('/api/v1/auth/shopper-token').set('Authorization', `Bearer ${staff.body.accessToken}`).send({})).status).toBe(403)
+  })
+
+  it("signs each seeded seller in as its seller, with the seller in its token, and no shopper token", async () => {
+    const connected = (await connect({ name: 'Sellers', tier: 'free' })).body
+    const res = await login(connected.store.tenantId, 'seller1')
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ user: { role: 'seller', sellerId: expect.any(String) }, basketline: null })
+    const claims = await verifyRetailerToken(res.body.accessToken, keys.publicKey)
+    expect(claims).toMatchObject({ role: 'seller', sel: res.body.user.sellerId, tid: connected.store.tenantId })
   })
 
   it("signs a customer in even when Basketline is down (their events count as a visitor's)", async () => {

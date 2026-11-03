@@ -10,7 +10,7 @@ export const stores = pgTable('stores', {
  * `pnpm --filter @retailer-sim/campaign-service db:generate`; migrations apply on startup.
  */
 import { relations, sql } from 'drizzle-orm'
-import { bigint, boolean, check, index, integer, numeric, pgEnum, pgTable, text, unique, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, index, integer, numeric, pgEnum, pgTable, primaryKey, text, unique, uuid, varchar } from 'drizzle-orm/pg-core'
 // The tables module, not the package root: drizzle-kit loads this file with require(),
 // and the root also loads the Kafka bus, which is ESM only.
 import { timestamptz } from '@basketline/platform/tables'
@@ -28,7 +28,8 @@ export const campaigns = pgTable(
     // The seller who runs it; its products must be this seller's. Null: from before sellers.
     sellerId: uuid('seller_id'),
     title: varchar('title', { length: 255 }).notNull(),
-    type: varchar('type', { length: 100 }).notNull(),
+    // Where the storefront shows it: one of the tenant's placements (by key).
+    placement: varchar('placement', { length: 64 }).notNull().default('spotlight'),
     description: text('description'),
     status: campaignStatus('status').notNull().default('draft'),
     startTime: timestamptz('start_time'),
@@ -96,6 +97,25 @@ export const products = pgTable('products', {
   createdBy: uuid('created_by'),
   updatedBy: uuid('updated_by'),
 })
+
+/**
+ * The marketplace's placements: the storefront's campaign sections (Spotlight,
+ * Top rated, …), in order. Sellers put a campaign in one; staff manage them.
+ */
+export const placements = pgTable(
+  'placements',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    // How campaigns, the storefront and Basketline refer to it.
+    key: varchar('key', { length: 64 }).notNull(),
+    name: varchar('name', { length: 100 }).notNull(),
+    position: integer('position').notNull(),
+    // An inactive placement takes no new campaigns and isn't shown.
+    active: boolean('active').notNull().default(true),
+    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.tenantId, table.key] })],
+)
 
 export const campaignsRelations = relations(campaigns, ({ many }) => ({ products: many(campaignProducts) }))
 export const campaignProductsRelations = relations(campaignProducts, ({ one }) => ({

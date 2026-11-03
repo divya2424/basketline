@@ -353,9 +353,6 @@ importers:
       '@basketline/platform':
         specifier: workspace:*
         version: link:../../../basketline/packages/platform
-      '@divya2424/basketline-sdk':
-        specifier: ^0.4.0
-        version: 0.4.0
 
   retailer-sim/services/campaign-service:
     dependencies:

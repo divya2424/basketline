@@ -18,21 +18,25 @@ const chevronRight = (
 
 export const ITEMS_PER_SLIDE = 3
 
-/** Campaign cards have no cart controls: a click opens the product's page (an ad click), where it can be added. */
-export function CampaignCarousel({ campaigns, productsById, itemsPerSlide = ITEMS_PER_SLIDE }) {
+/**
+ * One placement's section (e.g. Spotlight): its campaigns' products, from every
+ * seller, mixed round-robin. Campaign cards have no cart controls: a click opens
+ * the product's page (an ad click), where it can be added.
+ */
+export function CampaignCarousel({ placement, campaigns, productsById, itemsPerSlide = ITEMS_PER_SLIDE }) {
   const slides = useMemo(
     () => chunk(buildCarouselItems(campaigns, productsById), itemsPerSlide),
     [campaigns, productsById, itemsPerSlide],
   )
   if (slides.length === 0) return null
   return (
-    <AnalyticsWrapper featureName="campaign_carousel">
-      <Carousel slides={slides} />
+    <AnalyticsWrapper featureName={placement.key}>
+      <Carousel slides={slides} placement={placement} />
     </AnalyticsWrapper>
   )
 }
 
-function Carousel({ slides }) {
+function Carousel({ slides, placement }) {
   const { track } = useAnalytics()
   const [activeIndex, setActiveIndex] = useState(0)
   const viewportRef = useRef(null)
@@ -45,16 +49,17 @@ function Carousel({ slides }) {
   const index = Math.min(activeIndex, count - 1)
   const slide = slides[index]
 
-  // One impression per campaign visible on the slide, carrying only that
-  // campaign's products on this slide.
+  // One impression per product shown on the slide, with its campaign and the
+  // campaign's seller (the store Basketline reports it under).
   const reportImpressions = useEffectEvent((slideIndex) => {
-    for (const group of groupByCampaign(slides[slideIndex])) {
+    for (const [slot, item] of slides[slideIndex].entries()) {
       track(EVENT_NAMES.CAMPAIGN_IMPRESSION, {
-        campaignId: group.campaignId,
-        productIds: group.productIds,
+        campaignId: item.campaign.id,
+        productId: item.product.id,
+        storeId: item.campaign.sellerId,
         position: slideIndex + 1,
-        slots: group.slots,
-        source: 'home_carousel',
+        slot: slot + 1,
+        source: placement.key,
       })
     }
   })
@@ -96,13 +101,13 @@ function Carousel({ slides }) {
     <section
       className="campaign-carousel"
       aria-roledescription="carousel"
-      aria-label="Promotional campaigns"
+      aria-label={placement.name}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
       <div className="campaign-carousel__header">
-        <h2 className="campaign-carousel__title">Deals &amp; campaigns</h2>
+        <h2 className="campaign-carousel__title">{placement.name}</h2>
         <p className="campaign-carousel__eyebrow">
           {index + 1} of {count}
         </p>
@@ -119,7 +124,7 @@ function Carousel({ slides }) {
           {slide.map((item, slot) => (
             <li key={item.key} className="campaign-item" data-campaign-id={item.campaign.id}>
               <p className="campaign-tag">{item.campaign.title}</p>
-              <AnalyticsWrapper featureName="product_card" properties={{ source: 'home_carousel', campaignId: item.campaign.id }}>
+              <AnalyticsWrapper featureName="product_card" properties={{ source: placement.key, campaignId: item.campaign.id }}>
                 <ProductCard product={item.product} position={slot + 1} />
               </AnalyticsWrapper>
             </li>

@@ -4,7 +4,9 @@ import { RETAILER_EVENTS, retailerAuth, type BasketlineSender } from '@retailer-
 import type { Db } from './db/client.ts'
 import { createCampaignController } from './controllers/campaign.controller.ts'
 import { campaignRoutes } from './routes/campaign.routes.ts'
+import { placementRoutes } from './routes/placement.routes.ts'
 import { createCampaignService } from './services/campaign.service.ts'
+import { createPlacementService } from './services/placement.service.ts'
 
 export interface CampaignAppDeps {
   db: Db
@@ -26,7 +28,9 @@ export function buildCampaignApp({ db, bus, logger, publicKey, basketline, healt
   const service = createCampaignService({ db, publish: createEventPublisher(bus, 'campaign-service', logger, { registry: RETAILER_EVENTS }), basketline })
   const controller = createCampaignController(service)
 
-  app.use('/api/v1/campaigns', campaignRoutes(controller, { authenticate: retailerAuth(publicKey), optionalAuth: retailerAuth(publicKey, { optional: true }) }))
+  const auth = { authenticate: retailerAuth(publicKey), optionalAuth: retailerAuth(publicKey, { optional: true }) }
+  app.use('/api/v1/campaigns', campaignRoutes(controller, auth))
+  app.use('/api/v1/placements', placementRoutes(createPlacementService({ db }), auth))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

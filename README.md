@@ -5,7 +5,7 @@
 Basketline is a multi-tenant ads analytics platform for online retailers (tenants, e.g. a Flipkart or a Walmart) and the marketers who advertise on them:
 - **Capture:** shopper and ad events as people browse, from every retailer's stores, sites and apps, in real time.
 - **Attribute:** it credits each add to cart to the ad click that led to it (last click on that product within 7 days), and groups each shopper's events into sessions (30 minutes without activity ends one).
-- **Integrate:** retailers add the browser SDK, [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk), to their site (`track()`, `identity()`). Their backend sends their stores, products and campaigns with the SDK's server entry (`/server`), and vouches for signed-in shoppers, with an API key.
+- **Integrate:** retailers add the browser SDK, [`@divya2424/basketline-sdk`](https://github.com/divya2424/basketline-sdk), to their site (`track()`, `identity()`). The SDK only captures shoppers' events: their backend calls Basketline's API itself with an API key, to send their sellers, products and campaigns, vouch for signed-in shoppers, and read results (e.g. for their sellers' portal).
 - **Report:** for each campaign, in one store or all of them:
   - the customers who saw the ad, clicked it, and added a product to the cart after clicking (`GET /ad/{campaignId}/impressions`, `clicks`, `clickToBasket`), with the event totals behind them;
   - unique customers, and sessions that saw the ad and converted in the same session (`uniqueCustomers`, `sessions`);

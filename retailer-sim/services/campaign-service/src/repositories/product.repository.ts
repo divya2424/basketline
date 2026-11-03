@@ -24,6 +24,15 @@ export async function findKnownProducts(db: DbOrTx, tenantId: string, productIds
   return new Map(rows.map(({ productId, ...known }) => [productId, known]))
 }
 
+/** The tenant's known products with their details (the name is null until the product's details arrive). */
+export async function findProductDetails(db: DbOrTx, tenantId: string, productIds: string[]) {
+  if (productIds.length === 0) return []
+  return db
+    .select({ productId: products.productId, sellerId: products.sellerId, name: products.name, price: products.price, category: products.category })
+    .from(products)
+    .where(and(eq(products.tenantId, tenantId), inArray(products.productId, productIds)))
+}
+
 export async function upsertProductState(db: DbOrTx, product: ProductState, version: number) {
   const values = {
     sellerId: product.sellerId ?? null,

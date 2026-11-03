@@ -7,6 +7,7 @@ const proxy = {
   '/api/v1/products': 'http://localhost:4002',
   '/api/v1/sellers': 'http://localhost:4002',
   '/api/v1/campaigns': 'http://localhost:4003',
+  '/api/v1/placements': 'http://localhost:4003',
   '/api/v1/auth': 'http://localhost:4006',
   '/api/v1/stores': 'http://localhost:4006',
 }

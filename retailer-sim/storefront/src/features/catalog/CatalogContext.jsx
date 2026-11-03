@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { fetchCatalog } from './catalogService.js'
 import { sharedRequest } from '../../api/sharedRequest.js'
 
-const EMPTY = { status: 'ready', products: [], campaigns: [], productsById: new Map(), error: null, reload: () => {} }
+const EMPTY = { status: 'ready', products: [], campaigns: [], placements: [], productsById: new Map(), error: null, reload: () => {} }
 const CatalogContext = createContext(EMPTY)
 
 /**
@@ -11,7 +11,7 @@ const CatalogContext = createContext(EMPTY)
  */
 export function CatalogProvider({ children, initialCatalog }) {
   const [state, setState] = useState(() =>
-    initialCatalog ? { status: 'ready', ...initialCatalog, error: null } : { status: 'loading', products: [], campaigns: [], error: null },
+    initialCatalog ? { status: 'ready', ...initialCatalog, error: null } : { status: 'loading', products: [], campaigns: [], placements: [], error: null },
   )
   const [attempt, setAttempt] = useState(0)
 

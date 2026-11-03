@@ -35,6 +35,8 @@ export async function lockCampaign(db: DbOrTx, tenantId: string, id: string): Pr
 
 export interface CampaignFilter {
   tenantId: string
+  /** One seller's campaigns (the seller portal). */
+  sellerId?: string
   status?: CampaignStatus
   includeArchived: boolean
   limit: number
@@ -45,6 +47,7 @@ export async function listCampaigns(db: DbOrTx, filter: CampaignFilter): Promise
   const conditions: SQL[] = [eq(campaigns.tenantId, filter.tenantId)]
   if (!filter.includeArchived) conditions.push(isNull(campaigns.archivedAt))
   if (filter.status) conditions.push(eq(campaigns.status, filter.status))
+  if (filter.sellerId) conditions.push(eq(campaigns.sellerId, filter.sellerId))
   const where = and(...conditions)
 
   const [items, [totals]] = await Promise.all([
@@ -62,7 +65,7 @@ export async function listCampaigns(db: DbOrTx, filter: CampaignFilter): Promise
 
 export async function insertCampaign(
   db: DbOrTx,
-  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'sellerId' | 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
+  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'sellerId' | 'title' | 'placement' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
 ): Promise<CampaignRow> {
   const [inserted] = await db.insert(campaigns).values(campaign).returning()
   return inserted!
@@ -73,7 +76,7 @@ export async function updateCampaign(
   db: DbOrTx,
   id: string,
   updatedBy: string,
-  changes: Partial<Pick<CampaignRow, 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'archivedAt'>> = {},
+  changes: Partial<Pick<CampaignRow, 'title' | 'placement' | 'description' | 'status' | 'startTime' | 'endTime' | 'archivedAt'>> = {},
 ): Promise<CampaignRow> {
   const [updated] = await db
     .update(campaigns)
@@ -131,7 +134,7 @@ export async function listCampaignProducts(db: DbOrTx, campaignId: string, limit
 /** Inserts the campaign unless its ID exists; returns it, or null when it already existed. */
 export async function insertCampaignIfAbsent(
   db: DbOrTx,
-  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'sellerId' | 'title' | 'type' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
+  campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'sellerId' | 'title' | 'placement' | 'description' | 'status' | 'startTime' | 'endTime' | 'createdBy' | 'updatedBy'>,
 ): Promise<CampaignRow | null> {
   const [inserted] = await db.insert(campaigns).values(campaign).onConflictDoNothing({ target: campaigns.id }).returning()
   return inserted ?? null
@@ -157,4 +160,14 @@ export async function fillCampaignSellers(db: DbOrTx): Promise<number> {
     ) s
     WHERE c.id = s.campaign_id AND c.seller_id IS NULL`)
   return result.rowCount ?? 0
+}
+
+/** The IDs of the campaigns a product is in. */
+export async function listCampaignsWithProduct(db: DbOrTx, tenantId: string, productId: string): Promise<string[]> {
+  const rows = await db
+    .select({ campaignId: campaigns.id })
+    .from(campaignProducts)
+    .innerJoin(campaigns, eq(campaigns.id, campaignProducts.campaignId))
+    .where(and(eq(campaignProducts.tenantId, tenantId), eq(campaignProducts.productId, productId)))
+  return rows.map((row) => row.campaignId)
 }

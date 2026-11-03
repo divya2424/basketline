@@ -10,16 +10,23 @@ afterEach(() => {
 })
 
 describe('catalog from the API', () => {
-  it('loads products and active campaigns, showing a loader meanwhile', async () => {
+  it("loads products, active campaigns and the marketplace's placements, showing a loader meanwhile", async () => {
     const { requests } = mockFetch(({ path }) =>
-      path.endsWith('/products') ? jsonResponse(200, page(SAMPLE_CATALOG.products)) : jsonResponse(200, page(SAMPLE_CATALOG.campaigns)),
+      path.endsWith('/products')
+        ? jsonResponse(200, page(SAMPLE_CATALOG.products))
+        : path.endsWith('/placements')
+          ? jsonResponse(200, { items: SAMPLE_CATALOG.placements })
+          : jsonResponse(200, page(SAMPLE_CATALOG.campaigns)),
     )
     renderApp('/store', { catalogProps: {} })
     expect(screen.getByText('Loading products…')).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'All products' })).toBeInTheDocument()
     expect(screen.getByText('10 items')).toBeInTheDocument()
+    // A section per placement with campaigns, in order (Customer picks has none).
+    expect([...document.querySelectorAll('[aria-roledescription="carousel"]')].map((section) => section.getAttribute('aria-label'))).toEqual(['Spotlight', 'Top rated', 'Deals'])
     expect(requests.map((request) => request.url).sort()).toEqual([
       'http://api.test/campaigns?status=active&limit=100',
+      'http://api.test/placements',
       'http://api.test/products?limit=100',
     ])
   })

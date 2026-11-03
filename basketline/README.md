@@ -155,6 +155,8 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 - **Roles:** `campaign-manager`, the dashboard user: every campaign and store of the tenant. Shoppers are the retailer's (shopper tokens, below).
 
+- **Stores are sellers:** a tenant is a marketplace; each seller on it is a store, and `storeId` is the seller's ID. A product's, campaign's or campaign product's store defaults to its `sellerId`, and each event can carry the store (seller) it's about. A seller sees its results through the marketplace's own seller portal, whose backend reads them with its API key (`GET /ad/:id/products`); sellers have no Basketline login.
+
 - **Shopper tokens (vendors' signed-in customers):**
 
   - **How:** a vendor's shoppers aren't Basketline users, so the vendor's backend vouches for them with its secret API key.
@@ -181,13 +183,14 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 
 | Method | Path | Who | What |
 | --- | --- | --- | --- |
-| POST | `/analytics/events` | visitor or shopper token | `{tenantId, storeId?, userId, userType, events: [...]}`, 1–100 events → `accepted`/`rejected` per event. `storeId`: which of the tenant's stores (its own ID or a UUID); without one, the zero store |
+| POST | `/analytics/events` | visitor or shopper token | `{tenantId, storeId?, userId, userType, events: [...]}`, 1–100 events → `accepted`/`rejected` per event. Each event's `storeId` (the seller of the ad or product; its own ID or a UUID), else the batch's, else the zero store |
 | GET | `/ad/campaigns` | campaign manager | The tenant's campaigns with activity, per store: `{items: [{id, storeId, lastDay}]}`, newest first (from the daily tables: Basketline keeps no campaign records) |
 | GET | `/ad/:campaignId/impressions` | `clicks` | `clickToBasket` | campaign manager | `?storeId&from&to` → `{count, customers, total_*, customers_*, period}` |
 | GET | `/ad/:campaignId/uniqueCustomers` | campaign manager | → `has_visited`, its web, mobile, both, registered and visitor splits |
 | GET | `/ad/:campaignId/sessions` | campaign manager | `?storeId&from&to` → `total_sessions` (that saw or clicked it), `total_web_sessions`, `total_mobile_sessions`, `total_converted_sessions` |
-| POST | `/retail/catalog` | integration token | `{events: [{eventName, updatedAt?, data}]}`, 1–500: `seller_upserted` `{sellerId, name}`, `product_upserted` `{productId, storeId?, sellerId?, name, category?, price?, isActive?}`, `product_removed` `{productId}` → 202 `{accepted}` |
-| POST | `/retail/campaigns` | integration token | `campaign_upserted` `{campaignId, storeId?, sellerId?, title, status, startTime?, endTime?, archived?, productIds}`, `campaign_removed` `{campaignId}`, `campaign_product_added` `{campaignId, productId, storeId?, sellerId?, productName, productPrice?, category?}`, `campaign_product_removed` `{campaignId, productId}` |
+| GET | `/ad/:campaignId/products` | campaign manager, or integration token | `?storeId&from&to` → `{items: [{productId, name, category, price, impressions, clicks, ctr, addToCarts, clickToBasket}]}`, most impressions first: the campaign's results per product, named as `campaign_product_added` last sent them; products without activity aren't listed |
+| POST | `/retail/catalog` | integration token | `{events: [{eventName, updatedAt?, data}]}`, 1–500: `seller_upserted` `{sellerId, name}`, `product_upserted` `{productId, storeId?, sellerId?, name, category?, price?, isActive?}` (store: default the seller), `product_removed` `{productId}` → 202 `{accepted}` |
+| POST | `/retail/campaigns` | integration token | `campaign_upserted` `{campaignId, storeId?, sellerId, placement?, title, status, startTime?, endTime?, archived?, productIds}` (`placement`: where the store's site shows it, e.g. `spotlight`; to the lake), `campaign_removed` `{campaignId}`, `campaign_product_added` `{campaignId, productId, storeId?, sellerId?, productName, productPrice?, category?}`, `campaign_product_removed` `{campaignId, productId}` |
 | POST | `/retail/identity` | integration token | `user_identified` `{userId, visitorId?}`, `user_deleted` `{userId}` (erasure) |
 
 - **Identity check on events:** the batch's tenant, user and user type must match its token (`registered` for a shopper or access token, `visitor` for a visitor token). Any difference, or a `tenant_id` header for another tenant, rejects the whole batch with `403 IDENTITY_MISMATCH`.
@@ -200,7 +203,7 @@ All paths are under http://localhost:8080/api/v1. Errors share one format, `{ "e
 - `/ad` **period:** the default is the last 30 days, at most 366, counted in whole UTC days: `from` rounds down to midnight and `to` up to the next one. The response's `period` shows the rounded bounds.
 - `/ad` **tenant and store:** counts cover the token's tenant only (a `tenant_id` header is ignored); `storeId` narrows them to one store, and without it every store's are merged (a customer or session counts once). An unknown campaign has `count: 0`.
 - `/ad` **limits:** each query is bounded to 10 s, 4 threads and 2 GB, so one tenant's long range can't hold ClickHouse's cores (daily-table reads take milliseconds).
-- **The retail API** is how a retailer's backend tells Basketline what exists in its stores: sellers, products, campaigns, the products added to each campaign, and server-side identity. The SDK's server entry (`@divya2424/basketline-sdk/server`) wraps it. Each update is the record's full state; `updatedAt` (default now) orders them, so the newest wins and retries or reordering are safe. IDs may be the retailer's own (a SKU, a code: letters, digits, `._:/-`, up to 128) or UUIDs; the API maps an own ID to a stable UUIDv5 of (tenant, kind, ID), the same in `/analytics/events`. The updates go to compacted Kafka topics and from there to the data lake, for later analysis; the `/ad` metrics don't depend on them.
+- **The retail API** is how a retailer's backend tells Basketline what exists in its stores: sellers, products, campaigns, the products added to each campaign, and server-side identity. The retailer's backend calls it directly with an integration token (the SDK is browser-only: it captures shoppers' events). Each update is the record's full state; `updatedAt` (default now) orders them, so the newest wins and retries or reordering are safe. IDs may be the retailer's own (a SKU, a code: letters, digits, `._:/-`, up to 128) or UUIDs; the API maps an own ID to a stable UUIDv5 of (tenant, kind, ID), the same in `/analytics/events`. The updates go to compacted Kafka topics and from there to the data lake, for later analysis; the `/ad` metrics don't depend on them.
 
 ## Analytics pipeline
 
@@ -217,7 +220,7 @@ Each event is `{eventId, eventName, timestamp, pageName?, featureName?, properti
   - the timestamp: at most 2 days old, at most 5 minutes ahead;
   - the rate: 300 events per sender per minute, and a budget per tenant set by its account tier (free 60k, pro 600k, enterprise 6M events per minute), each per instance. A tenant over its budget gets `429 TENANT_RATE_LIMITED` with `Retry-After` for the whole batch, so one busy tenant can't crowd out the others. The tier is in the visitor or shopper token (auth-service sets it from the account); a token without one counts as free. See [docs/platform-design.md](../docs/platform-design.md);
 
-- **What's added:** each event gets its `eventType` (`interaction` or `identity`, from its name), the batch's store (an own ID mapped to a UUID, as in the retail API) and `receivedAt`.
+- **What's added:** each event gets its `eventType` (`interaction` or `identity`, from its name), its store (its own `storeId`, else the batch's; an own ID mapped to a UUID as a seller ID, as in the retail API) and `receivedAt`.
 
   Interactions go to `retail.interactions.v1`, identity events to `retail.identity-events.v1`.
 
@@ -253,6 +256,8 @@ A user's interactions with no gap of 30 minutes or more form a session: Flink's 
 | `analytics.daily_campaign_aggregation` | Event counts per day, tenant, store and campaign, total and per client type (`SummingMergeTree`) | `/ad/:id/impressions`, `clicks`, `clickToBasket`; `/ad/campaigns` |
 | `analytics.daily_campaign_customers_aggregation` | `uniqCombined64` sketches of the customers per day: everyone (`has_visited*`) and per metric (`customers_*`) | `/ad/:id/uniqueCustomers`, and `customers` on the others |
 | `analytics.daily_campaign_sessions_aggregation` | Sketches of the sessions that saw each campaign: total, web, mobile, converted | `/ad/:id/sessions` |
+| `analytics.daily_campaign_product_aggregation` | Impressions, clicks and credited add-to-carts per day, tenant, store, campaign and product (live counts, no hourly check) | `/ad/:id/products` |
+| `analytics.campaign_products` | The products added to each campaign, with their latest name, price and category (from `retail.campaign-products.v1`) | names in `/ad/:id/products` |
 | `analytics.deleted_tenants`, `deleted_users` | Deleted tenants and erased shoppers, and when the lake was purged of them | The Kafka queue views, the backfill, the lake purge |
 | `analytics.backfill_runs` | Each history backfill: days, tenants, tables, rows; rolled back or not | Operators (not the `/ad` reader) |
 
@@ -455,7 +460,8 @@ B="S3('http://archive-storage:8333/ad-insights-archive/clickhouse-backups/$DAY',
 # Stop reading Kafka while restoring.
 ch -q "DETACH TABLE analytics.events_queue; DETACH TABLE analytics.attributed_baskets_queue; DETACH TABLE analytics.sessions_queue" < /dev/null
 ch -q "RESTORE TABLE analytics.daily_campaign_aggregation, TABLE analytics.daily_campaign_customers_aggregation,
-         TABLE analytics.daily_campaign_sessions_aggregation, TABLE analytics.deleted_tenants,
+         TABLE analytics.daily_campaign_sessions_aggregation, TABLE analytics.daily_campaign_product_aggregation,
+         TABLE analytics.campaign_products, TABLE analytics.deleted_tenants,
          TABLE analytics.deleted_users, TABLE analytics.backfill_runs
        FROM $B SETTINGS allow_non_empty_tables = true" < /dev/null
 # Flink's output since the backup; erasures and tenant deletions since then, applied again by ingestion-service.
@@ -518,6 +524,7 @@ Grafana's **Pipeline** dashboard (http://localhost:3000) shows each service's re
 | The data lake | `docker compose up -d --build connect connect-init airflow` (Kafka Connect registers `lake-sink`, which reads every topic from the start). ClickHouse: `migrations/007_lake_purges.sql` (when the lake was purged of each erased shopper) |
 | History backfills | ClickHouse: `migrations/008_backfill_runs.sql`; `docker compose up -d --build airflow` (its image now carries the schema files) |
 | User sessions | 1\. ClickHouse: `docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery < infra/clickhouse/migrations/009_sessions.sql`. 2. `docker compose up -d --build ingestion-service insights-service airflow` (ingestion-service creates `serving.sessions.v1`). 3. `docker compose up -d --build flink-streaming`: the session window changes the job graph, so reset its checkpoint with `KAFKA_STARTUP_MODE=group-offsets` (`flink/README.md`, "Resetting the checkpoint"). 4. Once settled, backfill past days' sessions: `history_backfill` with `--table daily_campaign_sessions_aggregation` |
+| Sellers as stores, results per product | 1\. ClickHouse: `docker compose exec -T clickhouse clickhouse-client --user basketline --password basketline_dev --multiquery < infra/clickhouse/migrations/010_campaign_products.sql`. 2. `docker compose up -d --build ingestion-service insights-service gateway`. 3. Once settled, backfill past days: `history_backfill` with `--table daily_campaign_product_aggregation` (impressions before this carried no product, so only clicks and add-to-carts come back for them). Store IDs sent as own IDs (not UUIDs) map to new UUIDs (as seller IDs); their older rows keep the old ones |
 | ClickHouse waits for `archive-storage` | Nothing: a ClickHouse started before its cold volume's storage left the tiered tables unloaded; compose now orders them. If it happens, `docker compose restart clickhouse` |
 
 ## Deleting a tenant
@@ -547,6 +554,7 @@ The Kafka topics keep the tenant's past messages until they expire (14 days at m
 - **Tenants are isolated in the data, not the infrastructure.** Every row and query is scoped by tenant, and the `/ad` reads are also enforced by ClickHouse: they run as `basketline_reader`, whose row policy (`infra/clickhouse/04_access.sql`) returns only the tenant named on each query (`SQL_tenant_id`, from the token) and nothing when none is named. Tenants still share the services, databases and topics.
 - **Any campaign ID counts.** Ingestion doesn't check that a campaign exists or is active (Basketline keeps no campaign records; the retail API's go to the lake), so a mistyped ID gets its own numbers. Join the lake's campaigns to filter them in analysis.
 - **History starts with the lake.** The history backfill recomputes only days the lake holds whole; days before it was set up keep their daily rows as they are.
+- **Results per product have no hourly check:** a copy of an event stored again after a Flink restart or a replay counts twice in `/ad/:id/products` until a history backfill recomputes the day (the campaign totals are corrected within the hour).
 - **Sessions are about 40 minutes behind,** and a quiet stack holds its last sessions open until the next event (no watermark heartbeat). Events more than 10 minutes late are left out of sessions until a backfill.
 - **Onboarding is open to anyone.** `GET` and `POST /accounts` need no sign-in, and onboarded dashboard users have the password `test`. That suits demos only: put these routes behind an admin role before real tenants use the platform.
 - **Deleting a tenant is open to anyone,** like onboarding: typing the tenant's name is a guard against mistakes, not a permission. Put `DELETE /accounts/:tenantId` behind an admin role too.

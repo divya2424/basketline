@@ -14,12 +14,11 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { Admin } from '@platformatic/kafka'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC, INTERACTIONS_TOPIC, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@basketline/contracts'
+import { CAMPAIGN_PRODUCTS_TOPIC, CAMPAIGN_TOPIC, CATALOG_TOPIC, IDENTITY_TOPIC, INTERACTIONS_TOPIC, TOPICS, type AnalyticsEventPayload, type EventEnvelope } from '@basketline/contracts'
 import { closeDb, createEventPublisher, createKafkaEventBus, createLogger, ensureTopics, idempotentHandler, type Database, type EventBus } from '@basketline/platform'
 import { createTestDatabase, createTestKeys } from '@basketline/platform/testing'
 import { createClickHouse } from '@basketline/platform/clickhouse'
 import { buildIngestionApp } from '../services/ingestion-service/src/app.ts'
-import { handleReferenceEvent } from '../services/ingestion-service/src/events/reference.consumer.ts'
 import { buildInsightsApp } from '../services/insights-service/src/app.ts'
 import { buildAuthApp } from '../services/auth-service/src/app.ts'
 import { createAuthDb, migrateAuthDb } from '../services/auth-service/src/db/client.ts'
@@ -61,6 +60,8 @@ let productUrl: string
 let campaignUrl: string
 /** What arrived on retail.interactions.v1 (read by the Flink job in production). */
 const analyticsMessages: { topic: string; envelope: EventEnvelope<AnalyticsEventPayload> }[] = []
+/** What the retail API wrote to the campaign topics (read by the data lake and ClickHouse in production). */
+const retailMessages: { topic: string; envelope: EventEnvelope<Record<string, unknown>> }[] = []
 const clickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_URL ?? 'http://basketline:basketline_dev@localhost:8123/analytics')
 // The insights API reads as the tenant-scoped reader user (infra/clickhouse/04_access.sql).
 const readerClickhouse = createClickHouse(process.env.TEST_CLICKHOUSE_READER_URL ?? 'http://basketline_reader:basketline_reader_dev@localhost:8123/analytics')
@@ -107,6 +108,7 @@ beforeAll(async () => {
     IDENTITY_TOPIC,
     CATALOG_TOPIC,
     CAMPAIGN_TOPIC,
+    CAMPAIGN_PRODUCTS_TOPIC,
     ...Object.values(RETAILER_TOPICS),
   ])
   const keys = await createTestKeys()
@@ -162,22 +164,22 @@ beforeAll(async () => {
     groupId: 'campaign-service',
     topics: [RETAILER_TOPICS.products, RETAILER_TOPICS.stores],
     handler: async (envelope) => {
-      await handleProductEvent(campaignDb, envelope)
+      await handleProductEvent(campaignDb, envelope, campaignSender)
       await connectCampaigns(envelope)
     },
   })
   campaignUrl = await listen(buildCampaignApp({ db: campaignDb, bus: campaignBus, logger, publicKey: retailerKeys.publicKey, basketline: campaignSender }))
 
   const ingestionBus = await kafka('ingestion-service')
-  await ingestionBus.subscribe({ groupId: 'ingestion-service', topics: [CATALOG_TOPIC, CAMPAIGN_TOPIC], handler: (envelope) => handleReferenceEvent(clickhouse, envelope) })
   const ingestionUrl = await listen(buildIngestionApp({ bus: ingestionBus, clickhouse, logger, publicKey: keys.publicKey }))
   const insightsUrl = await listen(buildInsightsApp({ clickhouse: readerClickhouse, logger, publicKey: keys.publicKey }))
   const reader = await kafka('e2e-analytics-reader')
   await reader.subscribe({
     groupId: 'e2e-analytics-reader',
-    topics: [INTERACTIONS_TOPIC],
+    topics: [INTERACTIONS_TOPIC, CAMPAIGN_TOPIC, CAMPAIGN_PRODUCTS_TOPIC],
     handler: async (envelope, { topic }) => {
-      analyticsMessages.push({ topic, envelope: envelope as EventEnvelope<AnalyticsEventPayload> })
+      if (topic.endsWith(INTERACTIONS_TOPIC)) analyticsMessages.push({ topic, envelope: envelope as EventEnvelope<AnalyticsEventPayload> })
+      else retailMessages.push({ topic, envelope: envelope as EventEnvelope<Record<string, unknown>> })
     },
   })
 
@@ -207,7 +209,7 @@ afterAll(async () => {
 }, 60_000)
 
 describe('the simulated retailer, through Basketline\'s public API', () => {
-  it('onboards a store, sends its catalog and campaigns, and its customer\'s events count for the campaign', async () => {
+  it("onboards a marketplace; a seller's campaign in a placement and its products reach Basketline, its customer's events count under the seller, and the seller reads the results", async () => {
     // The readiness probe's Kafka check works against the real broker.
     await expect(authBus.healthCheck()).resolves.toBeUndefined()
 
@@ -215,46 +217,50 @@ describe('the simulated retailer, through Basketline\'s public API', () => {
     const connected = await request(retailerAuthUrl).post('/api/v1/stores').send({ name: 'E2E store', tier: 'free' })
     expect(connected.status).toBe(201)
     const tenantId = connected.body.store.tenantId as string
-    expect(connected.body.basketlineUsers.map((user: { username: string }) => user.username)).toEqual(['onboarding', 'seller01'])
+    expect(connected.body.basketlineUsers.map((user: { username: string }) => user.username)).toEqual(['onboarding'])
 
-    // Its staff create a product and a campaign at the retailer's own services, with the retailer's own token.
-    const staff = await request(retailerAuthUrl).post('/api/v1/auth/login').set('tenant_id', tenantId).send({ username: 'staff', password: 'test' })
-    expect(staff.status).toBe(200)
-    const asStaff = `Bearer ${staff.body.accessToken}`
+    // A seller signs in to the marketplace's seller portal; the staff list a product for it.
+    const login = (username: string) => request(retailerAuthUrl).post('/api/v1/auth/login').set('tenant_id', tenantId).send({ username, password: 'test' })
+    const seller = await login('seller1')
+    expect(seller.status).toBe(200)
+    const sellerId = seller.body.user.sellerId as string
+    const asSeller = `Bearer ${seller.body.accessToken}`
+    const staff = await login('staff')
     // The store's sellers come with its seed (StoreConnected, over Kafka).
-    const { result: sellers } = await eventually(
-      async () => (await request(productUrl).get('/api/v1/sellers').set('tenant_id', tenantId)).body.sellers as { sellerId: string }[],
-      (list) => list.length > 0,
+    const { result: product } = await eventually(
+      () =>
+        request(productUrl)
+          .post('/api/v1/products')
+          .set('Authorization', `Bearer ${staff.body.accessToken}`)
+          .send({ sellerId, name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, category: 'Audio' }),
+      (res) => res.status === 201,
     )
-    const sellerId = sellers[0]!.sellerId
-    const product = await request(productUrl)
-      .post('/api/v1/products')
-      .set('Authorization', asStaff)
-      .send({ sellerId, name: 'Aurora Wireless Earbuds', description: 'ANC earbuds', price: 2999, category: 'Audio' })
     expect(product.status).toBe(201)
-    // The campaign service learns about the product only through Kafka.
+    const productId = product.body.id as string
+    // The seller puts it in a Spotlight campaign. The campaign service learns the
+    // product and the store's placements only through Kafka.
     const { result: campaign, elapsedMs: productLag } = await eventually(
       () =>
         request(campaignUrl)
           .post('/api/v1/campaigns')
-          .set('Authorization', asStaff)
-          .send({ sellerId, title: 'Festive Sale', type: 'seasonal', status: 'active', productIds: [product.body.id] }),
-      (res) => res.status !== 409,
+          .set('Authorization', asSeller)
+          .send({ title: 'Festive Sale', placement: 'spotlight', status: 'active', productIds: [productId] }),
+      (res) => res.status === 201,
     )
-    expect(campaign.status).toBe(201)
+    expect(campaign.body).toMatchObject({ sellerId, placement: 'spotlight' })
     logger.info({ productLag }, 'product projection lag')
     const campaignId = campaign.body.id as string
 
-    // Basketline's dashboard: the tenant's campaign manager sees the campaign the retailer sent through the retail API.
+    // Basketline's retail API: the campaign with its placement, and the product added to it, with the seller as their store.
+    const retail = (eventType: string) => retailMessages.find((m) => m.envelope.eventType === eventType && m.envelope.payload.campaignId === campaignId)?.envelope.payload
+    await eventually(async () => [retail('campaign_upserted'), retail('campaign_product_added')], (found) => found.every(Boolean))
+    expect(retail('campaign_upserted')).toMatchObject({ storeId: sellerId, sellerId, placement: 'spotlight', title: 'Festive Sale', productIds: [productId] })
+    expect(retail('campaign_product_added')).toMatchObject({ productId, storeId: sellerId, sellerId, productName: 'Aurora Wireless Earbuds', productPrice: 2999, category: 'Audio' })
+
+    // Basketline's dashboard: the tenant's campaign manager signs in.
     const manager = await request(gateway).post('/api/v1/auth/login').set('tenant_id', tenantId).send({ username: 'onboarding', password: connected.body.basketlinePassword, clientType: 'web' })
     expect(manager.status).toBe(200)
     const asManager = `Bearer ${manager.body.accessToken}`
-    const { result: listed, elapsedMs: campaignLag } = await eventually(
-      async () => (await request(gateway).get('/api/v1/ad/campaigns').set('Authorization', asManager)).body.items as { id: string; title: string }[],
-      (items) => items.some((item) => item.id === campaignId),
-    )
-    expect(listed.find((item) => item.id === campaignId)).toMatchObject({ title: 'Festive Sale', sellerId, status: 'active' })
-    logger.info({ campaignLag }, 'campaign projection lag')
 
     // A customer signs in at the store: its backend gets them a Basketline shopper token with the API key.
     const visitorId = randomUUID()
@@ -263,27 +269,30 @@ describe('the simulated retailer, through Basketline\'s public API', () => {
     const { userId, shopperToken } = customer.body.basketline as { userId: string; shopperToken: string }
     expect(userId).toBe(visitorId)
 
-    // The browser (SDK) sends their events with it: Basketline's ID for them, registered.
+    // The browser (SDK) sends their events with it: Basketline's ID for them,
+    // registered; each ad event with its seller as the store.
     const clickId = randomUUID()
     const now = Date.now()
     const analyticsEvents = [
-      { eventId: randomUUID(), eventName: 'impression', timestamp: new Date(now - 3000).toISOString(), properties: { campaignId } },
-      { eventId: clickId, eventName: 'click', timestamp: new Date(now - 2000).toISOString(), properties: { campaignId, productId: product.body.id } },
+      { eventId: randomUUID(), eventName: 'impression', storeId: sellerId, timestamp: new Date(now - 3000).toISOString(), properties: { campaignId, productId } },
+      { eventId: clickId, eventName: 'click', storeId: sellerId, timestamp: new Date(now - 2000).toISOString(), properties: { campaignId, productId } },
       // Credited to the click by the Flink job (test/flink.kafka.test.ts); the client sends no link.
-      { eventId: randomUUID(), eventName: 'add_to_cart', timestamp: new Date(now - 1000).toISOString(), properties: { productId: product.body.id } },
+      { eventId: randomUUID(), eventName: 'add_to_cart', storeId: sellerId, timestamp: new Date(now - 1000).toISOString(), properties: { productId } },
     ]
-    // Retried until ingestion-service has seen the campaign (its cache); add_to_cart is then re-sent with the same eventId (stored once).
-    const { result: ingest } = await eventually(
-      () => request(gateway).post('/api/v1/analytics/events').set('Authorization', `Bearer ${shopperToken}`).send({ tenantId, userId, userType: 'registered', events: analyticsEvents }),
-      (res) => res.body.accepted === 3,
-    )
+    const ingest = await request(gateway).post('/api/v1/analytics/events').set('Authorization', `Bearer ${shopperToken}`).send({ tenantId, userId, userType: 'registered', events: analyticsEvents })
     expect(ingest.body).toMatchObject({ accepted: 3, rejected: 0 })
 
     await eventually(async () => analyticsMessages.find((m) => m.envelope.eventId === clickId), Boolean)
     const click = analyticsMessages.find((m) => m.envelope.eventId === clickId)!
     expect(click.topic).toBe(INTERACTIONS_TOPIC)
-    // The product's seller, from the catalog the retail API received.
-    expect(click.envelope.payload).toMatchObject({ campaignId, productId: product.body.id, sellerId, eventType: 'interaction', userId, userType: 'registered', tenantId })
+    expect(click.envelope.payload).toMatchObject({ campaignId, productId, storeId: sellerId, eventType: 'interaction', userId, userType: 'registered', tenantId })
+
+    // The seller portal: the campaign's results per product, which the campaign
+    // service reads from Basketline (GET /ad/{id}/products) with the store's API key.
+    // Flink doesn't run here, so the product has no counts yet.
+    const results = await request(campaignUrl).get(`/api/v1/campaigns/${campaignId}/results`).set('Authorization', asSeller)
+    expect(results.status).toBe(200)
+    expect(results.body.items).toEqual([expect.objectContaining({ productId, name: 'Aurora Wireless Earbuds', impressions: 0, clicks: 0, addToCarts: 0 })])
 
     // Logout → SessionRevoked over Kafka → the gateway refuses the manager's token.
     expect((await request(gateway).post('/api/v1/auth/logout').set('Authorization', asManager)).status).toBe(200)

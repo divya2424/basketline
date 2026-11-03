@@ -30,16 +30,18 @@ export function createStoreService({ db, publish, basketline, secretsKey }: { db
       const seed = seedPlan(randomUUID())
       const onboarded = await basketline.onboard({ name: input.name.trim(), tier: input.tier })
       const sealedApiKey = sealSecret(onboarded.apiKey, secretsKey)
-      const wanted: { username: string; role: RetailerRole }[] = [
+      const wanted: { username: string; role: RetailerRole; sellerId?: string }[] = [
         { username: STAFF_USERNAME, role: 'staff' },
         ...Array.from({ length: CUSTOMERS }, (_, i) => ({ username: `user${String(i + 1).padStart(2, '0')}`, role: 'customer' as const })),
+        // A login for each seeded seller, for the seller portal.
+        ...seed.sellers.map(({ sellerId }, i) => ({ username: `seller${i + 1}`, role: 'seller' as const, sellerId })),
       ]
       const hashes = await Promise.all(wanted.map(() => hashPassword(DEMO_PASSWORD)))
       const { store, users } = await db.transaction(async (tx) => {
         const store = await insertStore(tx, { tenantId: onboarded.tenantId, name: onboarded.name, tier: onboarded.tier, sealedApiKey })
         const users = []
-        for (const [i, { username, role }] of wanted.entries()) {
-          users.push(await insertUser(tx, { id: randomUUID(), tenantId: store.tenantId, username, passwordHash: hashes[i]!, role }))
+        for (const [i, { username, role, sellerId }] of wanted.entries()) {
+          users.push(await insertUser(tx, { id: randomUUID(), tenantId: store.tenantId, username, passwordHash: hashes[i]!, role, sellerId }))
         }
         return { store, users }
       })

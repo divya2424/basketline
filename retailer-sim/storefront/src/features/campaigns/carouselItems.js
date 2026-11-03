@@ -1,7 +1,8 @@
-// How each campaign type contributes products to the carousel. Register a
-// function here to support a new campaign type; unknown types contribute nothing.
-const productIdsByCampaignType = {
-  product_collection: (campaign) => campaign.productIds,
+/** The placements that have campaigns, in order, each with its campaigns: the home page's sections. */
+export function sectionsByPlacement(placements, campaigns) {
+  return placements
+    .map((placement) => ({ placement, campaigns: campaigns.filter((campaign) => campaign.placement === placement.key) }))
+    .filter((section) => section.campaigns.length > 0)
 }
 
 /**
@@ -11,10 +12,7 @@ const productIdsByCampaignType = {
  * campaign it is reached through; references to missing products are skipped.
  */
 export function buildCarouselItems(campaigns, productsById) {
-  const sources = campaigns.map((campaign) => ({
-    campaign,
-    productIds: productIdsByCampaignType[campaign.type]?.(campaign) ?? [],
-  }))
+  const sources = campaigns.map((campaign) => ({ campaign, productIds: campaign.productIds }))
   let longest = 0
   for (const source of sources) longest = Math.max(longest, source.productIds.length)
 
@@ -26,7 +24,7 @@ export function buildCarouselItems(campaigns, productsById) {
       const product = productId ? productsById.get(productId) : undefined
       if (!product || seen.has(productId)) continue
       seen.add(productId)
-      items.push({ key: `${campaign.id}:${productId}`, campaign: { id: campaign.id, title: campaign.title }, product })
+      items.push({ key: `${campaign.id}:${productId}`, campaign: { id: campaign.id, title: campaign.title, sellerId: campaign.sellerId }, product })
     }
   }
   return items

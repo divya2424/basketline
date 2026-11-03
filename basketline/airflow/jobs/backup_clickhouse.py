@@ -27,6 +27,8 @@ TABLES = [
     "daily_campaign_aggregation",
     "daily_campaign_customers_aggregation",
     "daily_campaign_sessions_aggregation",
+    "daily_campaign_product_aggregation",
+    "campaign_products",
     "deleted_tenants",
     "deleted_users",
     "backfill_runs",

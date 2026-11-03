@@ -4,19 +4,23 @@ import { writeAudit, type PublishEvents } from '@basketline/platform'
 import { retailerEvent, type BasketlineSender, type RetailerEvent, type RetailerEventPayloads } from '@retailer-sim/shared'
 import type { Db } from '../db/client.ts'
 import { findCampaign, insertAssociation, insertCampaignIfAbsent } from '../repositories/campaign.repository.ts'
+import { insertPlacementsIfAbsent } from '../repositories/placement.repository.ts'
 import { saveStore } from '../repositories/store.repository.ts'
-import { basketlineCampaign, stateEvent } from '../services/campaign.service.ts'
+import { basketlineCampaign, basketlineCampaignProducts, stateEvent } from '../services/campaign.service.ts'
+import { DEFAULT_PLACEMENTS } from '../services/placement.service.ts'
 
 const TITLES = ['Launch Deals', 'Weekend Picks']
 
 /**
  * A store connected to Basketline (StoreConnected, from retailer-auth-service):
- * keeps its sealed API key, seeds the planned active campaigns, each with its
+ * keeps its sealed API key, adds the default placements, seeds the planned
+ * active campaigns (one placement after the other), each with its
  * planned products, created by its staff user, and sends them to Basketline.
  * Campaigns are inserted by their planned IDs, so a redelivered event creates
  * nothing twice. The products aren't checked against the local copy:
  * product-service creates them from the same plan, and their details arrive
- * over product.v1 shortly after.
+ * over product.v1 shortly after (the campaign products whose details are known
+ * go to Basketline now, the others then).
  */
 export function createStoreConnector({ db, publish, basketline }: { db: Db; publish: PublishEvents; basketline?: BasketlineSender }) {
   return async (envelope: EventEnvelope): Promise<void> => {
@@ -24,6 +28,7 @@ export function createStoreConnector({ db, publish, basketline }: { db: Db; publ
     const { tenantId, name, sealedApiKey, connectedBy, seed } = envelope.payload as RetailerEventPayloads['StoreConnected']
     const { events, seeded } = await db.transaction(async (tx) => {
       await saveStore(tx, tenantId, sealedApiKey)
+      await insertPlacementsIfAbsent(tx, tenantId, DEFAULT_PLACEMENTS)
       const events: RetailerEvent[] = []
       const seeded: string[] = []
       for (const [index, planned] of seed.campaigns.entries()) {
@@ -32,8 +37,7 @@ export function createStoreConnector({ db, publish, basketline }: { db: Db; publ
           tenantId,
           sellerId: planned.sellerId,
           title: `${name} ${TITLES[index % TITLES.length]}`,
-          // The storefront carousel shows only product_collection campaigns.
-          type: 'product_collection',
+          placement: DEFAULT_PLACEMENTS[index % DEFAULT_PLACEMENTS.length]!.key,
           description: `Hand-picked products from ${name}.`,
           status: 'active',
           startTime: null,
@@ -54,7 +58,12 @@ export function createStoreConnector({ db, publish, basketline }: { db: Db; publ
     })
     await publish(events)
     // As the store's backend: the seeded campaigns, with their products, to Basketline.
-    const campaigns = (await Promise.all(seeded.map(async (id) => basketlineCampaign((await findCampaign(db, tenantId, id))!)))).filter((campaign) => campaign !== null)
-    if (campaigns.length > 0) await basketline?.send(tenantId, (server) => server.campaigns.upsert(campaigns))
+    const found = await Promise.all(seeded.map(async (id) => (await findCampaign(db, tenantId, id))!))
+    const campaigns = found.map(basketlineCampaign).filter((campaign) => campaign !== null)
+    const products = (await Promise.all(found.map((campaign) => basketlineCampaignProducts(db, tenantId, campaign.id, campaign.productIds)))).flat()
+    if (campaigns.length > 0) await basketline?.send(tenantId, async (server) => {
+      await server.campaigns.upsert(campaigns)
+      if (products.length > 0) await server.campaigns.addProducts(products)
+    })
   }
 }

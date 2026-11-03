@@ -246,8 +246,8 @@ services:
       AUTH_SERVICE_URL: http://auth-service:4001
       INGESTION_SERVICE_URL: http://ingestion-service:4004
       INSIGHTS_SERVICE_URL: http://insights-service:4005
-      # The dashboard (dashboard/). Retailers' sites call only the SDK's routes, open to any origin.
-      CORS_ORIGINS: http://localhost:5173
+      # Browser origins allowed on every route (comma-separated); none: Basketline has no UI. Retailers' sites call only the SDK's routes, open to any origin.
+      CORS_ORIGINS: ""
       # Per client IP. Raised only for load tests (loadtest/README.md).
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
       EVENTS_RATE_LIMIT_PER_MINUTE: ${EVENTS_RATE_LIMIT_PER_MINUTE:-120}

@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express'
 import { badRequest, tenantHeader } from '@basketline/platform'
 import type { Store } from '../repositories/store.repository.ts'
+import { listDemoLogins } from '../repositories/user.repository.ts'
+import type { Db } from '../db/client.ts'
 import type { AuthService } from '../services/auth.service.ts'
 import type { StoreService } from '../services/store.service.ts'
 
@@ -13,10 +15,15 @@ function requireTenant(req: Request): string {
   return tenantId
 }
 
-export function createRetailerController(stores: StoreService, auth: AuthService) {
+export function createRetailerController(stores: StoreService, auth: AuthService, db: Db) {
   return {
     async listStores(_req: Request, res: Response) {
       res.json({ items: (await stores.list()).map(toPublicStore) })
+    },
+
+    /** A demo marketplace's sign-in accounts (password `test`), for its page's account picker: sellers and customers, never staff. */
+    async logins(req: Request<{ tenantId: string }>, res: Response) {
+      res.json({ items: (await listDemoLogins(db, req.params.tenantId)).map(({ sellerId, ...login }) => (sellerId ? { ...login, sellerId } : login)) })
     },
 
     async connect(req: Request, res: Response) {

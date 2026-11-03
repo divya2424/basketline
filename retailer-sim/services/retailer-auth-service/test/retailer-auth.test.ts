@@ -30,7 +30,7 @@ const fakeBasketline: typeof fetch = async (input, init) => {
   if (path === '/accounts') {
     if (body.name === 'Taken') return json(400, { error: { code: 'VALIDATION_FAILED', message: 'Request validation failed' } })
     const tenantId = randomUUID()
-    const users = [{ username: 'onboarding', role: 'campaign-manager' }, ...(body.sellerManagers as { username: string }[]).map(({ username }) => ({ username, role: 'seller-manager' }))]
+    const users = [{ username: 'onboarding', role: 'campaign-manager' }]
     return json(201, { account: { tenantId, name: body.name, tier: body.tier }, users, password: 'test', apiKey: { key: `bl_sk_key-of-${tenantId}`, prefix: 'bl_sk_key-of' } })
   }
   if (path === '/auth/shopper-token') {
@@ -67,10 +67,10 @@ describe('connecting a store to Basketline', () => {
     expect(res.body).toMatchObject({
       store: { tenantId, name: 'Acme Store', tier: 'pro' },
       password: 'test',
-      basketlineUsers: [{ username: 'onboarding' }, { username: 'seller01', role: 'seller-manager' }],
+      basketlineUsers: [{ username: 'onboarding', role: 'campaign-manager' }],
       basketlinePassword: 'test',
     })
-    expect(res.body.users.map((u: { username: string }) => u.username)).toEqual(['staff', ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`)])
+    expect(res.body.users.map((u: { username: string }) => u.username)).toEqual(['staff', ...Array.from({ length: 10 }, (_, i) => `user${String(i + 1).padStart(2, '0')}`), 'seller1', 'seller2'])
     expect(JSON.stringify(res.body)).not.toContain('bl_sk_')
 
     // The key is only ever kept sealed: in the database and on Kafka.
@@ -83,9 +83,9 @@ describe('connecting a store to Basketline', () => {
     expect(JSON.stringify(payload)).not.toContain('bl_sk_')
     expect(openSecret(payload.sealedApiKey, SECRETS_KEY)).toBe(`bl_sk_key-of-${tenantId}`)
     expect(payload.seed.campaigns.map((c) => c.productIds.length)).toEqual([2, 3])
-    // seller01 at Basketline manages the first seeded seller.
+    // Only what Basketline's POST /accounts accepts: it refuses unknown fields.
     const onboarding = calls.findLast((c) => c.path === '/accounts')!
-    expect(onboarding.body).toEqual({ name: 'Acme Store', tier: 'pro', sellerManagers: [{ username: 'seller01', sellerId: payload.seed.sellers[0]!.sellerId }] })
+    expect(onboarding.body).toEqual({ name: 'Acme Store', tier: 'pro' })
     const staff = await login(tenantId, 'staff')
     expect(payload.connectedBy).toBe(staff.body.user.id)
 
@@ -132,6 +132,22 @@ describe('signing in', () => {
     const staff = await login(tenantId, 'staff')
     expect(staff.body).toMatchObject({ user: { role: 'staff' }, basketline: null })
     expect((await request(app).post('/api/v1/auth/shopper-token').set('Authorization', `Bearer ${staff.body.accessToken}`).send({})).status).toBe(403)
+  })
+
+  it("signs each seeded seller in as its seller, with the seller in its token, and no shopper token", async () => {
+    const connected = (await connect({ name: 'Sellers', tier: 'free' })).body
+    const logins = (await request(app).get(`/api/v1/stores/${connected.store.tenantId}/logins`)).body.items as { username: string; role: string; sellerId?: string }[]
+    expect(logins.slice(0, 3)).toEqual([
+      { username: 'seller1', role: 'seller', sellerId: expect.any(String) },
+      { username: 'seller2', role: 'seller', sellerId: expect.any(String) },
+      { username: 'user01', role: 'customer' },
+    ])
+    expect(logins.some((login) => login.role === 'staff')).toBe(false)
+    const res = await login(connected.store.tenantId, 'seller1')
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ user: { role: 'seller', sellerId: logins[0]!.sellerId }, basketline: null })
+    const claims = await verifyRetailerToken(res.body.accessToken, keys.publicKey)
+    expect(claims).toMatchObject({ role: 'seller', sel: res.body.user.sellerId, tid: connected.store.tenantId })
   })
 
   it("signs a customer in even when Basketline is down (their events count as a visitor's)", async () => {

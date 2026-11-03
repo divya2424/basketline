@@ -3,7 +3,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addLine, decrementLine, getSubtotal, getTotalQuantity, removeLine, resolveCartLines, setLineQuantity } from './cartUtils.js'
 import { productsById } from '../products/productData.js'
-import { renderApp, eventsNamed } from '../../test/utils.jsx'
+import { renderApp, eventsNamed, SHOPPER } from '../../test/utils.jsx'
 import { setTransport } from '../../analytics/analytics.js'
 
 describe('cartUtils', () => {
@@ -109,7 +109,7 @@ describe('shopping cart flow', () => {
     await addFromCatalog(user, 'Nimbus Smartwatch')
     await user.click(screen.getByRole('link', { name: /^Cart,/ }))
     await screen.findByRole('heading', { name: 'Your cart' })
-    await user.click(screen.getByRole('link', { name: 'Home' }))
+    await user.click(screen.getByRole('link', { name: 'Shop' }))
     expect(badge()).toHaveTextContent('1')
   })
 
@@ -162,6 +162,25 @@ describe('shopping cart flow', () => {
     renderApp('/store', { cartProps: {} })
     expect(badge()).toHaveTextContent('1')
   })
+
+  it('keeps a cart per user: another user, or a visitor, starts with their own', async () => {
+    const user = userEvent.setup()
+    const as = (initialUser) => renderApp('/store', { cartProps: {}, authProps: { persist: false, initialUser } })
+    let view = as(SHOPPER)
+    await addFromCatalog(user, 'Nimbus Smartwatch')
+    view.unmount()
+
+    view = as({ ...SHOPPER, userId: '77777777-7777-4777-8777-777777777777', username: 'alex', displayName: 'alex' })
+    expect(badge()).toHaveTextContent('0')
+    view.unmount()
+
+    view = as(null)
+    expect(badge()).toHaveTextContent('0')
+    view.unmount()
+
+    as(SHOPPER)
+    expect(badge()).toHaveTextContent('1')
+  })
 })
 
 describe('layout', () => {
@@ -169,6 +188,7 @@ describe('layout', () => {
     renderApp(route)
     expect(await screen.findByRole('banner')).toBeInTheDocument()
     expect(screen.getByRole('contentinfo')).toHaveTextContent(/sample data/i)
-    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/store')
+    expect(screen.getByRole('link', { name: 'Shop' })).toHaveAttribute('href', '/store')
+    expect(screen.getByRole('link', { name: 'Marketplaces' })).toHaveAttribute('href', '/')
   })
 })

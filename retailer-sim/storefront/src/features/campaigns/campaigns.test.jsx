@@ -4,19 +4,22 @@ import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { CampaignCarousel } from './CampaignCarousel.jsx'
-import { campaigns } from './campaignData.js'
-import { buildCarouselItems, chunk, groupByCampaign } from './carouselItems.js'
+import { campaigns, placements } from './campaignData.js'
+import { buildCarouselItems, chunk, groupByCampaign, sectionsByPlacement } from './carouselItems.js'
 import { products, productsById } from '../products/productData.js'
 import { AnalyticsWrapper } from '../../components/common/AnalyticsWrapper.jsx'
 import { setAllVisible, setInitiallyVisible } from '../../test/intersectionObserver.js'
 import { localCollector } from '../../analytics/analytics.js'
+
+/** The carousel tests show every sample campaign in one placement. */
+const SPOTLIGHT = { key: 'spotlight', name: 'Spotlight' }
 
 function renderCarousel(list = campaigns) {
   const ui = (items) => (
     <StrictMode>
       <MemoryRouter>
         <AnalyticsWrapper pageName="home">
-          <CampaignCarousel campaigns={items} productsById={productsById} />
+          <CampaignCarousel placement={SPOTLIGHT} campaigns={items} productsById={productsById} />
         </AnalyticsWrapper>
       </MemoryRouter>
     </StrictMode>
@@ -45,15 +48,25 @@ describe('campaign data', () => {
   })
 })
 
+describe('sectionsByPlacement', () => {
+  it("gives each placement with campaigns its section, in the placements' order, mixing its sellers' campaigns", () => {
+    const sections = sectionsByPlacement(placements, campaigns)
+    expect(sections.map((s) => [s.placement.key, s.campaigns.map((c) => `${c.id}:${c.sellerId}`)])).toEqual([
+      ['spotlight', ['campaign_001:seller_northwind', 'campaign_003:seller_contoso']],
+      ['top_rated', ['campaign_002:seller_northwind']],
+      ['deals', ['campaign_004:seller_contoso']],
+    ])
+  })
+})
+
 describe('buildCarouselItems', () => {
   const list = [
-    { id: 'a', title: 'A', type: 'product_collection', productIds: ['product_001', 'product_002', 'product_003'] },
-    { id: 'b', title: 'B', type: 'product_collection', productIds: ['product_004', 'product_002'] },
-    { id: 'c', title: 'C', type: 'product_collection', productIds: ['missing', 'product_005'] },
-    { id: 'v', title: 'Video', type: 'video_banner', productIds: ['product_006'] },
+    { id: 'a', title: 'A', productIds: ['product_001', 'product_002', 'product_003'] },
+    { id: 'b', title: 'B', productIds: ['product_004', 'product_002'] },
+    { id: 'c', title: 'C', productIds: ['missing', 'product_005'] },
   ]
 
-  it('interleaves campaigns round-robin, dedupes products, skips missing and unsupported', () => {
+  it('interleaves campaigns round-robin, dedupes products, skips missing ones', () => {
     const items = buildCarouselItems(list, productsById)
     expect(items.map((i) => `${i.campaign.id}:${i.product.id}`)).toEqual([
       'a:product_001',
@@ -102,19 +115,19 @@ describe('CampaignCarousel', () => {
 
   it('supports arrow-key navigation when the carousel is focused', async () => {
     renderCarousel()
-    screen.getByRole('region', { name: 'Promotional campaigns' }).focus()
+    screen.getByRole('region', { name: 'Spotlight' }).focus()
     await userEvent.keyboard('{ArrowRight}')
     expect(slide()).toHaveAccessibleName('2 of 3')
   })
 
-  it('records one impression per campaign visible on the slide, with only its visible products', () => {
+  it("records one impression per product shown on the slide, with its campaign and the campaign's seller as the store", () => {
     renderCarousel()
     expect(impressions().map((e) => e.properties)).toEqual([
-      { campaignId: 'campaign_001', productIds: ['product_001'], position: 1, slots: [1], source: 'home_carousel' },
-      { campaignId: 'campaign_002', productIds: ['product_004'], position: 1, slots: [2], source: 'home_carousel' },
-      { campaignId: 'campaign_003', productIds: ['product_006'], position: 1, slots: [3], source: 'home_carousel' },
+      { campaignId: 'campaign_001', productId: 'product_001', storeId: 'seller_northwind', position: 1, slot: 1, source: 'spotlight' },
+      { campaignId: 'campaign_002', productId: 'product_004', storeId: 'seller_northwind', position: 1, slot: 2, source: 'spotlight' },
+      { campaignId: 'campaign_003', productId: 'product_006', storeId: 'seller_contoso', position: 1, slot: 3, source: 'spotlight' },
     ])
-    expect(impressions()[0]).toMatchObject({ featureName: 'campaign_carousel', pageName: 'home' })
+    expect(impressions()[0]).toMatchObject({ featureName: 'spotlight', pageName: 'home' })
   })
 
   it('does not record impressions while the carousel is off-screen', () => {
@@ -148,11 +161,11 @@ describe('CampaignCarousel', () => {
     expect(within(slide()).queryByRole('button', { name: /to cart/ })).not.toBeInTheDocument()
     await userEvent.click(within(slide()).getByRole('link', { name: 'Drift Cotton Hoodie' }))
     const click = localCollector.getEvents().find((e) => e.eventName === 'product_click')
-    expect(click.properties).toMatchObject({ productId: 'product_004', campaignId: 'campaign_002', source: 'home_carousel', position: 2 })
+    expect(click.properties).toMatchObject({ productId: 'product_004', storeId: 'seller_northwind', campaignId: 'campaign_002', source: 'spotlight', position: 2 })
   })
 
   it('renders nothing when no campaign has displayable products', () => {
-    const { container } = renderCarousel([{ id: 'x', title: 'X', type: 'video_banner', productIds: [] }])
+    const { container } = renderCarousel([{ id: 'x', title: 'X', placement: 'spotlight', productIds: [] }])
     expect(container).toBeEmptyDOMElement()
   })
 })

@@ -33,6 +33,7 @@ import argparse
 import datetime as dt
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -202,7 +203,16 @@ def resume(ch, database: str) -> None:
     detached = {row[0] for row in ch.query("SELECT table FROM system.detached_tables WHERE database = {db:String}", parameters={"db": database}).result_rows}
     for view in QUEUE_VIEWS:
         if view in detached:
-            ch.command(f"ATTACH TABLE {database}.{view}")
+            # A view detached moments ago can still be held by its last Kafka read ("still used by
+            # some query"): a short swap would leave ClickHouse not reading Kafka, so wait for it.
+            for attempt in range(30):
+                try:
+                    ch.command(f"ATTACH TABLE {database}.{view}")
+                    break
+                except Exception as error:
+                    if "still used by some query" not in str(error) or attempt == 29:
+                        raise
+                    time.sleep(2)
     if CHECK_VIEW in tables_in(ch, database):
         ch.command(f"SYSTEM START VIEW {database}.{CHECK_VIEW}")
 

@@ -11,7 +11,9 @@ import { createCampaignDb, migrateCampaignDb, type Db } from '../src/db/client.t
 import { handleProductEvent } from '../src/events/product.consumer.ts'
 import { fillCampaignSellers } from '../src/repositories/campaign.repository.ts'
 import { createStoreConnector } from '../src/events/store.consumer.ts'
+import { insertPlacementsIfAbsent } from '../src/repositories/placement.repository.ts'
 import { findSealedApiKey } from '../src/repositories/store.repository.ts'
+import { DEFAULT_PLACEMENTS } from '../src/services/placement.service.ts'
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>
 let db: Db
@@ -23,7 +25,7 @@ const SELLER = randomUUID()
 const OTHER_SELLER = randomUUID()
 
 /** What the service sent to Basketline with the SDK, as the store's backend. */
-const { basketline, sent } = createFakeBasketline()
+const { basketline, sent, results, metrics } = createFakeBasketline()
 const SECRETS_KEY = Buffer.alloc(32, 7).toString('base64')
 /** The store's staff (they write campaigns), customers, and another store's. */
 let manager: string
@@ -35,6 +37,9 @@ let user: string
 let otherManager: string
 let otherUser: string
 let otherTenant: string
+/** Sellers of TENANT: SELLER's and OTHER_SELLER's logins. */
+let seller: string
+let otherSeller: string
 let applyProductEvent: (envelope: EventEnvelope) => Promise<void>
 
 beforeAll(async () => {
@@ -55,7 +60,12 @@ beforeAll(async () => {
   otherTenant = randomUUID()
   otherManager = (await retailerTokenFor(keys.privateKey, 'staff', { tid: otherTenant })).header
   otherUser = (await retailerTokenFor(keys.privateKey, 'customer', { tid: otherTenant })).header
-  applyProductEvent = (envelope) => handleProductEvent(db, envelope)
+  applyProductEvent = (envelope) => handleProductEvent(db, envelope, basketline)
+  const sellerToken = await retailerTokenFor(keys.privateKey, 'seller', { tid: TENANT, sel: SELLER })
+  seller = sellerToken.header
+  otherSeller = (await retailerTokenFor(keys.privateKey, 'seller', { tid: TENANT, sel: OTHER_SELLER })).header
+  // The marketplaces' placements (a connected store gets them with StoreConnected).
+  for (const tenantId of [TENANT, otherTenant]) await insertPlacementsIfAbsent(db, tenantId, DEFAULT_PLACEMENTS)
 })
 
 afterAll(async () => {
@@ -105,16 +115,16 @@ const campaignCount = async () => (await db.$client.query('SELECT count(*)::int 
 describe('creating campaigns', () => {
   it("is one seller's, with only that seller's products, and goes to Basketline with them", async () => {
     const [ours, theirs] = [await knownProduct('Ours'), await knownProduct('Theirs', true, TENANT, OTHER_SELLER)]
-    expect((await create({ title: 'No seller', type: 'banner', sellerId: undefined })).status).toBe(400)
-    const mixed = await create({ title: 'Mixed', type: 'banner', productIds: [ours, theirs] })
+    expect((await create({ title: 'No seller', placement: 'spotlight', sellerId: undefined })).status).toBe(400)
+    const mixed = await create({ title: 'Mixed', placement: 'spotlight', productIds: [ours, theirs] })
     expect(mixed.status).toBe(422)
     expect(mixed.body.error).toMatchObject({ code: 'PRODUCT_OF_ANOTHER_SELLER', details: { productIds: [theirs] } })
     // Nor added later.
-    const { body } = await create({ title: 'Ours only', type: 'banner', productIds: [ours] })
+    const { body } = await create({ title: 'Ours only', placement: 'spotlight', productIds: [ours] })
     expect(body.sellerId).toBe(SELLER)
     expect((await request(app).post(`/api/v1/campaigns/${body.id}/products`).set('Authorization', manager).send({ productIds: [theirs] })).status).toBe(422)
 
-    const call = sent.findLast((s) => s.records.some((r) => r.campaignId === body.id))!
+    const call = sent.findLast((s) => s.call === 'campaigns.upsert' && s.records.some((r) => r.campaignId === body.id))!
     expect(call).toMatchObject({ tenantId: TENANT, call: 'campaigns.upsert' })
     expect(call.records[0]).toMatchObject({ campaignId: body.id, sellerId: SELLER, title: 'Ours only', productIds: [ours], archived: false })
   })
@@ -123,7 +133,7 @@ describe('creating campaigns', () => {
     const [a, b] = [await knownProduct('A'), await knownProduct('B')]
     const res = await create({
       title: 'Festive Electronics Sale',
-      type: 'seasonal',
+      placement: 'spotlight',
       description: 'Special seasonal offers',
       startTime: '2026-11-01T00:00:00Z',
       endTime: '2026-11-15T23:59:59Z',
@@ -143,7 +153,7 @@ describe('creating campaigns', () => {
   it('returns a retryable 409 for products the projection has not seen yet', async () => {
     const before = await campaignCount()
     const unknown = randomUUID()
-    const res = await create({ title: 'Too early', type: 'seasonal', productIds: [unknown] })
+    const res = await create({ title: 'Too early', placement: 'spotlight', productIds: [unknown] })
     expect(res.status).toBe(409)
     expect(res.headers['retry-after']).toBe('5')
     expect(res.body.error).toMatchObject({ code: 'PRODUCT_NOT_YET_AVAILABLE', details: { retryable: true, productIds: [unknown] } })
@@ -153,7 +163,7 @@ describe('creating campaigns', () => {
   it('rejects inactive products and rolls back the whole campaign', async () => {
     const before = await campaignCount()
     const publishedBefore = bus.published.length
-    const res = await create({ title: 'Has inactive', type: 'x', productIds: [await knownProduct('ok'), await knownProduct('off', false)] })
+    const res = await create({ title: 'Has inactive', placement: 'spotlight', productIds: [await knownProduct('ok'), await knownProduct('off', false)] })
     expect(res.status).toBe(422)
     expect(res.body.error.code).toBe('PRODUCT_INACTIVE')
     expect(await campaignCount()).toBe(before)
@@ -162,35 +172,35 @@ describe('creating campaigns', () => {
 
   it('rejects duplicate product IDs in the request', async () => {
     const id = await knownProduct()
-    const res = await create({ title: 'Dupes', type: 'x', productIds: [id, id] })
+    const res = await create({ title: 'Dupes', placement: 'spotlight', productIds: [id, id] })
     expect(res.status).toBe(400)
     expect(res.body.error.code).toBe('DUPLICATE_PRODUCT_IDS')
   })
 
   it('validates fields and schedules', async () => {
-    const bad = await create({ title: '', type: 'x', status: 'completed', startTime: 'tomorrow', extra: 1 })
+    const bad = await create({ title: '', placement: 'spotlight', status: 'completed', startTime: 'tomorrow', extra: 1 })
     expect(bad.status).toBe(400)
     expect(bad.body.error.details.errors).toEqual(
       expect.arrayContaining(['unknown field "extra"', 'title is required (max 255 characters)', 'status must be "draft" or "active" when creating']),
     )
-    const backwards = await create({ title: 'T', type: 'x', startTime: '2026-11-15T00:00:00Z', endTime: '2026-11-01T00:00:00Z' })
+    const backwards = await create({ title: 'T', placement: 'spotlight', startTime: '2026-11-15T00:00:00Z', endTime: '2026-11-01T00:00:00Z' })
     expect(backwards.body.error.code).toBe('INVALID_SCHEDULE')
   })
 
   it('forbids customers from creating or changing campaigns; anyone can read', async () => {
-    expect((await create({ title: 'Nope', type: 'x' }, user)).status).toBe(403)
-    const { body } = await create({ title: 'Readable', type: 'x' })
+    expect((await create({ title: 'Nope', placement: 'spotlight' }, user)).status).toBe(403)
+    const { body } = await create({ title: 'Readable', placement: 'spotlight' })
     expect((await request(app).patch(`/api/v1/campaigns/${body.id}`).set('Authorization', user).send({ title: 'x' })).status).toBe(403)
     expect((await request(app).get(`/api/v1/campaigns/${body.id}`).set('Authorization', user)).status).toBe(200)
     expect((await request(app).get('/api/v1/campaigns').set('tenant_id', TENANT)).status).toBe(200)
     expect((await request(app).get('/api/v1/campaigns')).body.error.code).toBe('TENANT_REQUIRED')
-    expect((await request(app).post('/api/v1/campaigns').send({ title: 'x', type: 'y' })).status).toBe(401)
+    expect((await request(app).post('/api/v1/campaigns').send({ title: 'x', placement: 'spotlight' })).status).toBe(401)
   })
 })
 
 describe('tenants', () => {
   it("shows, changes and lists only the caller's tenant's campaigns", async () => {
-    const { body } = await create({ title: 'Ours', type: 'x', productIds: [await knownProduct()] })
+    const { body } = await create({ title: 'Ours', placement: 'spotlight', productIds: [await knownProduct()] })
     const path = `/api/v1/campaigns/${body.id}`
     const ids = (res: request.Response) => res.body.items.map((c: { id: string }) => c.id)
 
@@ -214,9 +224,9 @@ describe('tenants', () => {
 
   it("can only use the manager's own tenant's products", async () => {
     const theirs = await knownProduct('Theirs', true, otherTenant)
-    const res = await create({ title: 'Borrowed', type: 'x', productIds: [theirs] })
+    const res = await create({ title: 'Borrowed', placement: 'spotlight', productIds: [theirs] })
     expect(res.body.error).toMatchObject({ code: 'PRODUCT_NOT_YET_AVAILABLE', details: { productIds: [theirs] } })
-    expect((await create({ title: 'Own', type: 'x', productIds: [theirs] }, otherManager)).status).toBe(201)
+    expect((await create({ title: 'Own', placement: 'spotlight', productIds: [theirs] }, otherManager)).status).toBe(201)
   })
 
   it('ignores product events from before products had tenants', async () => {
@@ -229,7 +239,7 @@ describe('tenants', () => {
 describe('campaign products', () => {
   it('adds and removes products, rejecting duplicate associations', async () => {
     const [a, b] = [await knownProduct('A'), await knownProduct('B')]
-    const { body: campaign } = await create({ title: 'Assoc', type: 'x', productIds: [a] })
+    const { body: campaign } = await create({ title: 'Assoc', placement: 'spotlight', productIds: [a] })
     const path = `/api/v1/campaigns/${campaign.id}/products`
 
     const added = await request(app).post(path).set('Authorization', manager).send({ productIds: [b] })
@@ -256,7 +266,7 @@ describe('campaign products', () => {
 
 describe('updating and archiving', () => {
   it('follows the allowed status transitions', async () => {
-    const { body } = await create({ title: 'Lifecycle', type: 'x' })
+    const { body } = await create({ title: 'Lifecycle', placement: 'spotlight' })
     const patch = (payload: object) => request(app).patch(`/api/v1/campaigns/${body.id}`).set('Authorization', manager).send(payload)
     expect((await patch({ status: 'paused' })).body.error.code).toBe('INVALID_STATUS_TRANSITION')
     expect((await patch({ status: 'active' })).body.status).toBe('active')
@@ -266,7 +276,7 @@ describe('updating and archiving', () => {
   })
 
   it('archives instead of deleting and blocks further changes', async () => {
-    const { body } = await create({ title: 'To archive', type: 'x' })
+    const { body } = await create({ title: 'To archive', placement: 'spotlight' })
     const archived = await request(app).delete(`/api/v1/campaigns/${body.id}`).set('Authorization', manager)
     expect(archived.body.archived).toBe(true)
     const event = bus.published.filter((m) => m.key === body.id).at(-1)!.envelope
@@ -282,7 +292,7 @@ describe('who created and changed what', () => {
   const row = async (sql: string, ...params: string[]) => (await db.$client.query(sql, params)).rows[0]
 
   it("records the campaign's creator and last updater", async () => {
-    const { body } = await create({ title: 'Audited', type: 'x' })
+    const { body } = await create({ title: 'Audited', placement: 'spotlight' })
     expect(body).toMatchObject({ createdBy: managerId, updatedBy: managerId })
     const patched = await request(app).patch(`/api/v1/campaigns/${body.id}`).set('Authorization', colleague).send({ title: 'Edited' })
     expect(patched.body).toMatchObject({ createdBy: managerId, updatedBy: colleagueId })
@@ -293,7 +303,7 @@ describe('who created and changed what', () => {
 
   it('records the tenant and who added each product to a campaign', async () => {
     const [a, b] = [await knownProduct('A'), await knownProduct('B')]
-    const { body } = await create({ title: 'Assoc audit', type: 'x', productIds: [a] })
+    const { body } = await create({ title: 'Assoc audit', placement: 'spotlight', productIds: [a] })
     await request(app).post(`/api/v1/campaigns/${body.id}/products`).set('Authorization', colleague).send({ productIds: [b] })
     const { rows } = await db.$client.query(
       'SELECT product_id, tenant_id, created_by, updated_by, updated_at = created_at AS unchanged FROM campaign_products WHERE campaign_id = $1 ORDER BY position',
@@ -361,8 +371,8 @@ describe('products copy (Kafka consumer)', () => {
 describe('campaigns from before sellers (cli.ts republish)', () => {
   it("get their products' seller when all of them share one, and only then", async () => {
     const [a, b, theirs] = [await knownProduct('A'), await knownProduct('B'), await knownProduct('Theirs', true, TENANT, OTHER_SELLER)]
-    const one = (await create({ title: 'One seller', type: 'banner', productIds: [a, b] })).body.id as string
-    const mixed = (await create({ title: 'Mixed', type: 'banner', productIds: [a] })).body.id as string
+    const one = (await create({ title: 'One seller', placement: 'spotlight', productIds: [a, b] })).body.id as string
+    const mixed = (await create({ title: 'Mixed', placement: 'spotlight', productIds: [a] })).body.id as string
     // As saved before sellers: no seller; the mixed one also got another seller's product.
     await db.$client.query('UPDATE campaigns SET seller_id = NULL WHERE id = ANY($1)', [[one, mixed]])
     await db.$client.query(
@@ -405,13 +415,16 @@ describe('a store connected to Basketline (StoreConnected)', () => {
     await connect(envelope)
     expect(openSecret((await findSealedApiKey(db, tenantId))!, SECRETS_KEY)).toBe('bl_sk_store-key')
 
+    const placements = await request(app).get('/api/v1/placements').set('tenant_id', tenantId)
+    expect(placements.body.items.map((p: { key: string }) => p.key)).toEqual(['spotlight', 'top_rated', 'customer_picks', 'deals'])
     const list = await request(app).get('/api/v1/campaigns').set('tenant_id', tenantId)
     expect(list.body.page.total).toBe(2)
     const byId = new Map(list.body.items.map((c: { id: string }) => [c.id, c]))
     for (const [index, planned] of plan.entries()) {
       expect(byId.get(planned.campaignId)).toMatchObject({
         title: `Seed Co ${['Launch Deals', 'Weekend Picks'][index]}`,
-        type: 'product_collection',
+        // The default placements, one after the other.
+        placement: ['spotlight', 'top_rated'][index],
         status: 'active',
         archived: false,
         createdBy: connectedBy,
@@ -425,5 +438,112 @@ describe('a store connected to Basketline (StoreConnected)', () => {
     // Once, with their products.
     const calls = sent.slice(sentBefore)
     expect(calls.map((c) => [c.tenantId, c.call, c.records.map((r) => r.productIds)])).toEqual([[tenantId, 'campaigns.upsert', plan.map((p) => p.productIds)]])
+  })
+})
+
+describe('placements (the marketplace\'s sections)', () => {
+  it('lists the active ones in order to anyone; staff add, rename, reorder and turn them off; a campaign needs an active one', async () => {
+    const list = async (auth?: string, query = '') => {
+      const req = request(app).get(`/api/v1/placements${query}`)
+      return (await (auth ? req.set('Authorization', auth) : req.set('tenant_id', TENANT))).body.items.map((p: { key: string }) => p.key)
+    }
+    expect(await list()).toEqual(expect.arrayContaining(['spotlight', 'top_rated', 'customer_picks', 'deals']))
+    expect((await request(app).post('/api/v1/placements').set('Authorization', seller).send({ key: 'new_in', name: 'New in', position: 5 })).status).toBe(403)
+    const added = await request(app).post('/api/v1/placements').set('Authorization', manager).send({ key: 'new_in', name: 'New in', position: 0 })
+    expect(added.status).toBe(201)
+    expect((await list())[0]).toBe('new_in')
+    expect((await request(app).post('/api/v1/placements').set('Authorization', manager).send({ key: 'new_in', name: 'Again', position: 1 })).status).toBe(409)
+    expect((await request(app).post('/api/v1/placements').set('Authorization', manager).send({ key: 'Bad Key', name: 'x', position: 1 })).status).toBe(400)
+
+    expect((await create({ title: 'In new', placement: 'new_in' })).status).toBe(201)
+    expect((await request(app).patch('/api/v1/placements/new_in').set('Authorization', manager).send({ active: false, name: 'New arrivals' })).body).toMatchObject({ name: 'New arrivals', active: false })
+    expect(await list()).not.toContain('new_in')
+    expect(await list(manager, '?all=true')).toContain('new_in')
+    const inactive = await create({ title: 'Too late', placement: 'new_in' })
+    expect(inactive.status).toBe(422)
+    expect(inactive.body.error.code).toBe('PLACEMENT_UNAVAILABLE')
+    expect((await create({ title: 'Nowhere', placement: 'nowhere' })).status).toBe(422)
+    expect((await request(app).patch('/api/v1/placements/nowhere').set('Authorization', manager).send({ name: 'x' })).status).toBe(404)
+  })
+})
+
+describe('sellers (the seller portal)', () => {
+  it('create campaigns for themselves only, and change only their own', async () => {
+    const ours = await knownProduct('Ours')
+    const res = await create({ title: 'Mine', placement: 'top_rated', status: 'active', productIds: [ours], sellerId: undefined }, seller)
+    expect(res.status).toBe(201)
+    expect(res.body).toMatchObject({ sellerId: SELLER, placement: 'top_rated' })
+    expect((await create({ title: 'For another', placement: 'spotlight' }, otherSeller)).status).toBe(403)
+
+    const id = res.body.id as string
+    expect((await request(app).patch(`/api/v1/campaigns/${id}`).set('Authorization', otherSeller).send({ title: 'Taken' })).status).toBe(404)
+    expect((await request(app).delete(`/api/v1/campaigns/${id}/products/${ours}`).set('Authorization', otherSeller)).status).toBe(404)
+    expect((await request(app).patch(`/api/v1/campaigns/${id}`).set('Authorization', seller).send({ status: 'paused', placement: 'deals' })).body).toMatchObject({ status: 'paused', placement: 'deals' })
+
+    const mine = await request(app).get(`/api/v1/campaigns?sellerId=${SELLER}`).set('Authorization', seller)
+    expect(mine.body.items.every((c: { sellerId: string }) => c.sellerId === SELLER)).toBe(true)
+    expect(mine.body.items.map((c: { id: string }) => c.id)).toContain(id)
+  })
+
+  it('send the products they add and take out to Basketline, with their details, and again when the details change', async () => {
+    const [a, b] = [await knownProduct('Earbuds'), await knownProduct('Cable')]
+    const before = sent.length
+    const { body } = await create({ title: 'Sent', placement: 'spotlight', productIds: [a], sellerId: undefined }, seller)
+    await request(app).post(`/api/v1/campaigns/${body.id}/products`).set('Authorization', seller).send({ productIds: [b] })
+    await request(app).delete(`/api/v1/campaigns/${body.id}/products/${a}`).set('Authorization', seller)
+    const calls = sent.slice(before).filter((c) => c.call !== 'campaigns.upsert')
+    expect(calls.map((c) => [c.call, c.records])).toEqual([
+      ['campaigns.addProducts', [{ campaignId: body.id, productId: a, sellerId: SELLER, productName: 'Earbuds', productPrice: 999, category: 'Audio' }]],
+      ['campaigns.addProducts', [{ campaignId: body.id, productId: b, sellerId: SELLER, productName: 'Cable', productPrice: 999, category: 'Audio' }]],
+      ['campaigns.removeProducts', [{ campaignId: body.id, productId: a }]],
+    ])
+    expect(sent.findLast((c) => c.call === 'campaigns.upsert')!.records[0]).toMatchObject({ campaignId: body.id, placement: 'spotlight' })
+
+    // b is renamed: its campaign product goes again, with the new name.
+    const afterAdd = sent.length
+    await applyProductEvent(productEvent('ProductUpdated', b, 2, productState('Braided cable')))
+    expect(sent.slice(afterAdd).map((c) => [c.call, c.records])).toEqual([
+      ['campaigns.addProducts', [{ campaignId: body.id, productId: b, sellerId: SELLER, productName: 'Braided cable', productPrice: 999, category: 'Audio' }]],
+    ])
+  })
+
+  it("see their campaign's totals and results per product from Basketline (their store), with zeros for products without activity", async () => {
+    const [a, b] = [await knownProduct('Earbuds'), await knownProduct('Cable')]
+    const { body } = await create({ title: 'Results', placement: 'spotlight', productIds: [a, b], sellerId: undefined }, seller)
+    results.splice(0, results.length, { productId: a, name: 'Earbuds', category: 'Audio', price: 999, impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5 })
+    Object.assign(metrics, {
+      impressions: { count: 10, total_web_impressions: 7, total_mobile_impressions: 3, customers_visitor_impressions: 5, customers_registered_impressions: 2 },
+      clicks: { count: 2, total_web_clicks: 2, total_mobile_clicks: 0, customers_visitor_clicks: 1, customers_registered_clicks: 1 },
+      clickToBasket: { count: 1, total_web_click_to_basket: 1, total_mobile_click_to_basket: 0, customers_visitor_click_to_basket: 0, customers_registered_click_to_basket: 1 },
+      uniqueCustomers: { count: 7, has_visited_in_web: 5, has_visited_in_mobile: 3, has_visited_in_both: 1, has_visited_visitor: 6, has_visited_registered: 2 },
+      sessions: { count: 8, total_converted_sessions: 1, total_web_sessions: 6, total_mobile_sessions: 2 },
+    })
+    try {
+      const res = await request(app).get(`/api/v1/campaigns/${body.id}/results?from=2026-10-01T00:00:00Z`).set('Authorization', seller)
+      expect(res.status).toBe(200)
+      expect(res.body.totals).toEqual({ impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5, uniqueCustomers: 7, sessions: 8, convertedSessions: 1 })
+      expect(res.body.byClient).toEqual({
+        web: { impressions: 7, clicks: 2, addToCarts: 1, customers: 5, sessions: 6 },
+        mobile: { impressions: 3, clicks: 0, addToCarts: 0, customers: 3, sessions: 2 },
+      })
+      expect(res.body.bothClients).toBe(1)
+      expect(res.body.byUserType).toEqual({
+        visitor: { customers: 6, viewed: 5, clicked: 1, addedToCart: 0 },
+        registered: { customers: 2, viewed: 2, clicked: 1, addedToCart: 1 },
+      })
+      // 6 + 2 - 7: one browsed signed out, then signed in.
+      expect(res.body.bothUserTypes).toBe(1)
+      expect(res.body.items).toEqual([
+        { productId: a, name: 'Earbuds', category: 'Audio', price: 999, impressions: 10, clicks: 2, ctr: 0.2, addToCarts: 1, clickToBasket: 0.5 },
+        { productId: b, name: 'Cable', category: 'Audio', price: 999, impressions: 0, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },
+      ])
+      expect(sent.findLast((c) => c.call === 'insights.campaignProducts')!.records[0]).toEqual({ campaignId: body.id, storeId: SELLER, from: '2026-10-01T00:00:00Z', to: undefined })
+    } finally {
+      results.splice(0, results.length)
+      for (const metric of Object.keys(metrics)) delete metrics[metric]
+    }
+    expect((await request(app).get(`/api/v1/campaigns/${body.id}/results`).set('Authorization', otherSeller)).status).toBe(404)
+    expect((await request(app).get(`/api/v1/campaigns/${body.id}/results`).set('Authorization', manager)).status).toBe(200)
+    expect((await request(app).get(`/api/v1/campaigns/${body.id}/results`).set('Authorization', user)).status).toBe(403)
   })
 })

@@ -2,22 +2,23 @@
 
 Basketline takes shoppers' interactions and ad engagements from retailers' sites and apps, processes them as they arrive, and serves campaign insights through an API to marketers and retailers. Every retailer is a tenant on one shared platform. This document is the design: what each part does, which technology and why, how it scales, stays accurate, isolates tenants and is operated. Where something is a proposal rather than built, it says so.
 
-Diagrams:
-
-- [`platform-architecture.svg`](platform-architecture.svg): the logical view, from the retailer's site to the insights API.
-- [`deployment-aws.svg`](deployment-aws.svg): the production deployment on AWS.
-- [`current-architecture.svg`](current-architecture.svg): what runs locally in Docker Compose (the code in this repository).
+Diagram: [`architecture.drawio.svg`](architecture.drawio.svg) (made with draw.io; open it there to edit). It shows the path from the marketplace's site to the insights API:
+- the marketplace: shoppers, its backend and seller portal, and the Basketline SDK;
+- the load balancer and API gateway; auth, ingestion and insights services;
+- MSK (Kafka), Flink streaming and ClickHouse;
+- Kafka Connect into Iceberg on S3, with Airflow backfills;
+- Prometheus, Grafana and Alertmanager.
 
 ## 1. Scope and the path of an event
 
 | Layer | Built with | Role |
 |---|---|---|
 | **Retailer** (simulated in `retailer-sim/`) | Its own services, storefront and the Basketline SDK | Sends shoppers' events from the browser or app, its catalog and campaigns from its backend (the retail API), and server-side identity (sign-in, erasure). Outside the platform. |
-| **Edge** | gateway, auth-service | Routing, per-IP limits, CORS per tenant's allowed origins; API keys, visitor, shopper, integration and dashboard tokens. |
+| **Edge** | gateway, auth-service | Routing, per-IP limits, CORS per tenant's allowed origins; API keys, visitor, shopper, integration and access tokens. |
 | **Ingestion** | ingestion-service | Validates each event, refuses bot traffic, holds each tenant to its budget, publishes to Kafka. |
 | **Stream** | Kafka | `retail.interactions.v1` (impressions, clicks, views, add-to-cart, …; 14 days), identity events, and compacted catalog, campaign, campaign-product and tenant topics. Shared by every tenant. |
 | **Processing** | Flink (SQL) | Validated ad events, click→basket attribution (7-day stateful join), user sessions (event-time session window). Writes three serving topics. |
-| **Serving** | ClickHouse, insights-service, dashboard | Daily aggregates per tenant, store, campaign and day, kept forever; the `/ad` API reads them as a user that sees one tenant per query. |
+| **Serving** | ClickHouse, insights-service | Daily aggregates per tenant, store, campaign and day, kept forever; the `/ad` API reads them as a user that sees one tenant per query. |
 | **Data lake** | Kafka Connect → Apache Iceberg on S3 | Every topic, every tenant, as typed Iceberg tables: the system of record. |
 | **Batch** | Airflow | History backfills from the lake, ClickHouse backups, tenant and shopper purges from the lake. |
 | **Observability** | Prometheus, Grafana, alerts; Loki and Alloy for logs | Every layer above. |
@@ -44,7 +45,7 @@ site / app ─► gateway ─► ingestion-service ─► Kafka ─┬─► Fli
 
 - **Clients** batch events (1–100 per request) through the SDK. A shopper's events carry a token that fixes the tenant, user and user type; the SDK keeps a visitor's UUID across sign-in, so a visitor who signs in stays one user.
 - **ingestion-service** checks the sender (bot user agents are refused and counted per tenant), the format, the timestamp (at most 2 days old, 5 minutes ahead), the campaign (active, of the sender's tenant), the rate (per sender, and per tenant by tier), then publishes to Kafka and answers. It doesn't wait for processing.
-- **Latency:** on one laptop with the whole stack, ingestion p99 is 58 ms at 1,000 events/s, and an event is in the dashboard's numbers 7.5 s later (p50; 22 s p99) ([`basketline/loadtest/README.md`](../basketline/loadtest/README.md)).
+- **Latency:** on one laptop with the whole stack, ingestion p99 is 58 ms at 1,000 events/s, and an event is in the `/ad` numbers 7.5 s later (p50; 22 s p99) ([`basketline/loadtest/README.md`](../basketline/loadtest/README.md)).
 - **Partitioning:** interactions are keyed by event ID, so every tenant's events spread over all partitions: no hot partition whatever the tenant mix. Stateful grouping happens in Flink, not by Kafka key. Size partitions for the peak (e.g. 48 for 100k events/s).
 
 ## 4. Real-time processing and state
@@ -79,13 +80,13 @@ One Flink SQL job reads `retail.interactions.v1` once and runs three pipelines i
 | **Everything raw, every tenant** | Iceberg on S3 (the lake), partitioned by tenant and hour | Forever, tiered: S3 Standard → Infrequent Access (30 d) → Glacier Instant Retrieval (180 d) | System of record: recompute, new metrics, analysts, ML |
 | Backups | S3 | Daily ClickHouse backups of what the lake can't rebuild (daily tables, erasure records, backfill runs) | Disaster recovery |
 
-**Real-time and batch from one design.** ClickHouse serves both live and historical numbers with millisecond reads. The lake is where batch analytics and recomputation read. S3 is never on the dashboard's path: a read there would cost per scan and take seconds.
+**Real-time and batch from one design.** ClickHouse serves both live and historical numbers with millisecond reads. The lake is where batch analytics and recomputation read. S3 is never on the `/ad` API's path: a read there would cost per scan and take seconds.
 
 **Corrections and new metrics without raw data in ClickHouse.** The history backfill (`airflow/jobs/backfill_daily.py`) reads the lake from ClickHouse (`icebergS3`). It recomputes whole days into a scratch database built from the live schema, so the same materialized views count them. Then it swaps each month in atomically (`REPLACE PARTITION`), keeping the replaced month for rollback. A new aggregate table is a new table plus view, and its history is one backfill run.
 
 ## 6. Insights API
 
-`GET /api/v1/ad/{campaignId}/{metric}?from&to&storeId`, for campaign managers:
+`GET /api/v1/ad/{campaignId}/{metric}?from&to&storeId` (code: [`insights-service`](../basketline/services/insights-service/README.md)):
 
 | Metric | Answers | Response |
 |---|---|---|
@@ -94,6 +95,17 @@ One Flink SQL job reads `retail.interactions.v1` once and runs three pipelines i
 | `clickToBasket` | customers who added a product to the cart after clicking the ad (same product, within 7 days, last click) | the same |
 | `uniqueCustomers` | everyone who saw or clicked | split web/mobile/both, registered/visitor |
 | `sessions` | sessions that saw the ad, and converted in the same session | `total_sessions`, web, mobile, `total_converted_sessions` |
+
+Two more read endpoints:
+- `GET /ad/{campaignId}/products`: the campaign's results per product (impressions, clicks, CTR, add-to-carts, click-to-basket), with each product's name and category.
+- `GET /ad/campaigns`: the tenant's campaigns with activity, per store.
+
+**Who reads, and what they see:**
+- **The retailer's backend,** with an integration token from its API key. It shows results in its own UI, e.g. a marketplace's seller portal (`retailer-sim/`).
+- **The tenant's campaign managers,** with an access token.
+- Either way, the tenant comes from the token, never from the request.
+- **`storeId` scopes a read to one store.** In a marketplace a store is a seller, so a seller sees only its own campaign's numbers. Without `storeId`, the read covers all the tenant's stores, and a customer active in two stores counts once.
+- Events carry their store per event, so one page mixing several sellers' campaigns credits each seller.
 
 - **Real-time and historical in one query.** The daily tables are updated as rows are stored (seconds), corrected hourly, and kept forever, so "today" and "last year" are the same query over different days. A year is 365 small rows per campaign and store.
 - **Performance:**
@@ -120,7 +132,7 @@ The rule: **a tenant's load spreads across the platform, and each tenant is capp
 
 **Peak events (e.g. Black Friday).**
 - Pre-scale ingestion pods and Flink parallelism ahead of the peak; partitions are already sized for it.
-- Kafka buffers whatever the consumers can't keep up with. The dashboard is then a little behind (consumer-lag panel and alert), but nothing is lost.
+- Kafka buffers whatever the consumers can't keep up with. The `/ad` numbers are then a little behind (consumer-lag panel and alert), but nothing is lost.
 - Clients retry `429`s once after `Retry-After`.
 
 **Known limit:** tenant budgets are counted per pod, so N pods give a tenant N× its budget. A shared counter (Redis) would make it exact.

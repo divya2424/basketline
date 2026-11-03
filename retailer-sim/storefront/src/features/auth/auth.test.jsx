@@ -176,33 +176,44 @@ describe('header', () => {
 describe('session handling', () => {
   it('keeps a customer’s Basketline shopper token for the SDK; staff and a Basketline outage get none', async () => {
     const user = userEvent.setup()
-    renderApp('/store', SIGNED_OUT)
-    await signIn(user, 'sam', 'another long password')
-    await screen.findByRole('button', { name: 'Logout' })
+    // Logout leaves the store: each sign-in starts in it again.
+    const signInFresh = async (username) => {
+      switchTenant(DEFAULT_TENANT_ID, STORE)
+      const view = renderApp('/store', SIGNED_OUT)
+      await signIn(user, username, 'another long password')
+      await screen.findByRole('button', { name: 'Logout' })
+      return view
+    }
+    let view = await signInFresh('sam')
     expect(getRequestContext().shopper).toMatchObject({ userId: SHOPPER.shopper.userId, token: SHOPPER.shopper.token })
-    await user.click(screen.getByRole('button', { name: 'Logout' }))
+    view.unmount()
 
-    await signIn(user, 'staff', 'another long password')
-    await screen.findByRole('button', { name: 'Logout' })
+    view = await signInFresh('staff')
     expect(getRequestContext()).toMatchObject({ userId: STAFF.userId, shopper: null })
-    await user.click(screen.getByRole('button', { name: 'Logout' }))
+    view.unmount()
 
     fetchApi.restore()
     fetchApi = fakeApi({ shopperToken: false })
-    await signIn(user, 'sam', 'another long password')
+    await signInFresh('sam')
     await screen.findByRole('button', { name: 'Logout' })
     expect(getRequestContext()).toMatchObject({ userId: SHOPPER.userId, shopper: null })
   })
 
-  it('logout forgets the session without a request and leaves a visitor in the store', async () => {
+  it('logout forgets the session without a request and leaves the marketplace for the Marketplaces page', async () => {
     const user = userEvent.setup()
     renderApp('/store', { authProps: {} })
     await signIn(user, 'sam', 'another long password')
     await user.click(await screen.findByRole('button', { name: 'Logout' }))
-    expect(await screen.findByRole('button', { name: 'Log in' })).toBeInTheDocument()
-    expect(requests.map((r) => r.path)).toEqual(['/auth/login'])
-    expect(getRequestContext()).toMatchObject({ userId: null, accessToken: null, shopper: null })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Marketplaces' })).toBeInTheDocument()
+    expect(requests.map((r) => r.path).filter((path) => path.startsWith('/auth'))).toEqual(['/auth/login'])
+    expect(getRequestContext()).toMatchObject({ userId: null, accessToken: null, shopper: null, tenantName: null })
+    expect(localStorage.getItem('basketline:tenant')).toBeNull()
     expect(sessionStorage.getItem('retailer:session:v1')).toBeNull()
+    // The app's own header: no marketplace nav, sign-in or cart.
+    const header = screen.getByRole('banner')
+    expect(within(header).queryByRole('link', { name: 'Shop' })).not.toBeInTheDocument()
+    expect(within(header).queryByRole('button', { name: 'Log in' })).not.toBeInTheDocument()
+    expect(within(header).queryByTestId('cart-badge')).not.toBeInTheDocument()
   })
 
   it('signs out when the API rejects the token (expired or revoked)', async () => {
@@ -232,7 +243,7 @@ describe('session handling', () => {
 })
 
 describe('user identity on analytics events', () => {
-  it('attributes store events to the signed-in user and tenant, and to the visitor after logout', async () => {
+  it('attributes store events to the signed-in user and tenant, and none after logout', async () => {
     const user = userEvent.setup()
     renderApp('/store', SIGNED_OUT)
     await signIn(user, 'sam', 'another long password')
@@ -241,7 +252,7 @@ describe('user identity on analytics events', () => {
     expect(eventsNamed('add_to_cart')[0]).toMatchObject({ tenantId: DEFAULT_TENANT_ID, userId: SHOPPER.userId })
 
     await user.click(screen.getByRole('button', { name: 'Logout' }))
-    await screen.findByRole('button', { name: 'Log in' })
+    await screen.findByRole('heading', { level: 1, name: 'Marketplaces' })
     expect(getRequestContext().userId).toBeNull()
   })
 

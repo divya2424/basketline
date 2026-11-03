@@ -254,3 +254,44 @@ AS SELECT
 FROM analytics.sessions
 ARRAY JOIN campaigns AS engaged
 GROUP BY day, tenant_id, store_id, campaign_id;
+
+-- Per product: impressions and clicks, as daily_campaign_aggregation_events_mv counts them.
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_product_aggregation_events_mv
+TO analytics.daily_campaign_product_aggregation
+AS SELECT
+    toDate(event_time) AS day,
+    tenant_id,
+    store_id,
+    campaign_id,
+    assumeNotNull(product_id) AS product_id,
+    toInt64(uniqExactIf(event_id, event_name = 'impression')) AS impressions,
+    toInt64(uniqExactIf(event_id, event_name = 'click')) AS clicks,
+    toInt64(0) AS click_to_basket
+-- Filtered in a subquery: in the outer WHERE, product_id would be the alias above.
+FROM (SELECT * FROM analytics.events WHERE event_name IN ('impression', 'click') AND product_id IS NOT NULL)
+GROUP BY day, tenant_id, store_id, campaign_id, product_id;
+
+-- Per product: basket additions credited to their latest click, as
+-- daily_campaign_aggregation_baskets_mv counts them.
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.daily_campaign_product_aggregation_baskets_mv
+TO analytics.daily_campaign_product_aggregation
+AS SELECT
+    toDate(basket_time) AS day,
+    tenant_id,
+    basket_store_id AS store_id,
+    winning_campaign_id AS campaign_id,
+    assumeNotNull(basket_product_id) AS product_id,
+    toInt64(0) AS impressions,
+    toInt64(0) AS clicks,
+    toInt64(uniqExact(winning_click_id)) AS click_to_basket
+FROM
+(
+    SELECT tenant_id, basket_event_id,
+           argMax(campaign_id, (click_time, click_event_id)) AS winning_campaign_id,
+           max((click_time, click_event_id)).2 AS winning_click_id,
+           any(store_id) AS basket_store_id, any(product_id) AS basket_product_id, any(event_time) AS basket_time
+    FROM analytics.attributed_baskets
+    GROUP BY tenant_id, basket_event_id
+)
+WHERE basket_product_id IS NOT NULL
+GROUP BY day, tenant_id, store_id, campaign_id, product_id;

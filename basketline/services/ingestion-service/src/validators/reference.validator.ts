@@ -46,11 +46,12 @@ const DATA: Record<string, { fields: string[]; check: (data: Record<string, unkn
   },
   product_removed: { fields: ['productId'], check: (d, e, at) => id(d, 'productId', e, at) },
   campaign_upserted: {
-    fields: ['campaignId', 'storeId', 'sellerId', 'title', 'status', 'startTime', 'endTime', 'archived', 'productIds'],
+    fields: ['campaignId', 'storeId', 'sellerId', 'placement', 'title', 'status', 'startTime', 'endTime', 'archived', 'productIds'],
     check: (d, e, at) => {
       id(d, 'campaignId', e, at)
       optionalId(d, 'storeId', e, at)
       id(d, 'sellerId', e, at)
+      if (d.placement != null && !isNonEmptyString(d.placement, 64)) e.push(`${at}.data.placement must be a string (max 64 characters)`)
       if (!isNonEmptyString(d.title, 200)) e.push(`${at}.data.title must be a string (max 200 characters)`)
       if (!isOneOf(d.status, STATUSES)) e.push(`${at}.data.status must be one of ${STATUSES.join(', ')}`)
       for (const field of ['startTime', 'endTime']) if (d[field] != null && !isIsoDate(d[field])) e.push(`${at}.data.${field} must be an ISO 8601 date-time`)

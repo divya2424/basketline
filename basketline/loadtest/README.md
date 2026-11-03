@@ -20,7 +20,7 @@ Measures three p99s for the analytics path:
   Targets: ingestion p99 < 500 ms, reads p99 < 1 s, errors < 1%.
 - `run.sh`: runs `analytics.js` once per rate in `RATES`, then prints that run's freshness.
 - `freshness.sql`: the freshness p99 for one run.
-- `cleanup.sql`: deletes all test events from ClickHouse. They stay in Kafka until retention ends, so a Flink checkpoint reset would load them again.
+- `cleanup.sql`: deletes all test events from ClickHouse. They stay in Kafka until retention ends (a Flink checkpoint reset would load them again) and in the data lake: remove them there with `purge_tenants.py --tenant` (the command is in the file), or a history backfill would count them again.
 
 ## Run it locally
 
@@ -83,7 +83,7 @@ Docker Desktop with **12 vCPUs and 8 GB**, and **everything on that one machine*
 - **Flink made the dashboards fresher.** Up to the ingestion limit, events are stored a median 7.5 s after they're sent (p99 22 s) at 1,000 events/s, against 24 s with the earlier Spark loader's 30 s micro-batches (2026-10-28). Most of the rest is ClickHouse's 15 s Kafka flush, kept for cheaper inserts (`infra/clickhouse/03_kafka.sql`).
 - **Reads are cheap:** `/ad` reads pre-aggregated daily rows, so 40 reads/s had a 60 ms p99, and the 15 s cache absorbs repeats.
 - **Nothing accepted was lost.** Every event the API accepted was stored once; under overload, clients get latency and then timeouts.
-- **Found by this test: overload crashed two services.** At 1,000 req/s, Kafka's consumer-group sync failed (`syncGroup failed 4 times`, from the broker starved of CPU). The Kafka client library (`@divya2424/basketline-kafka`) raised it as an uncaught exception, and the gateway and ingestion-service shut down. Compose has no restart policy, so they stayed down (Kubernetes would restart them). The fix belongs in the library: retry and rejoin the group instead of throwing.
+- **Found by this test: overload crashed two services.** At 1,000 req/s, Kafka's consumer-group sync failed (`syncGroup failed 4 times`, from the broker starved of CPU). The Kafka client library (`@divya2424/basketline-kafka`) raised it as an uncaught exception, and the gateway and ingestion-service shut down. Compose has no restart policy, so they stayed down (Kubernetes would restart them). Fixed since: the library (0.1.2) starts the consumer again instead of throwing, and the services restart on their own (`restart: unless-stopped`).
 
 **Capacity model** (per-core figures from this laptop, so a conservative first estimate; re-measure on the target machines):
 

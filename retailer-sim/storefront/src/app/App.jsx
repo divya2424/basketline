@@ -9,6 +9,11 @@ import { Spinner } from '../components/common/Spinner.jsx'
 import { AuthProvider } from '../features/auth/AuthContext.jsx'
 import { CatalogProvider } from '../features/catalog/CatalogContext.jsx'
 import { StoresPage } from '../features/stores/StoresPage.jsx'
+import { MarketplacePage } from '../features/marketplace/MarketplacePage.jsx'
+
+// The seller portal is for sellers only.
+const SellerPortalPage = lazy(() => import('../features/seller/SellerPortalPage.jsx').then((m) => ({ default: m.SellerPortalPage })))
+const CampaignAnalyticsPage = lazy(() => import('../features/seller/CampaignAnalyticsPage.jsx').then((m) => ({ default: m.CampaignAnalyticsPage })))
 
 // The product page and cart aren't needed for the first paint of the store.
 const CartPage = lazy(() => import('../features/cart/CartPage.jsx').then((m) => ({ default: m.CartPage })))
@@ -34,12 +39,16 @@ export function App({ cartProps, authProps, catalogProps, storesProps }) {
             <main id="main" className="site-main">
               <Suspense fallback={pageFallback}>
                 <Routes>
+                  {/* The marketplaces; each one's page offers selling (as a seller) or shopping. */}
+                  <Route path="/" element={<StoresPage {...storesProps} />} />
+                  <Route path="/m/:tenantId" element={<MarketplacePage />} />
                   {/* Visitors browse and shop signed out; signing in is optional. */}
-                  <Route path="/" element={<Navigate to="/store" replace />} />
                   <Route path="/store" element={<HomePage />} />
                   <Route path="/store/products/:productId" element={<ProductDetailPage />} />
                   <Route path="/cart" element={<CartPage />} />
-                  <Route path="/stores" element={<StoresPage {...storesProps} />} />
+                  <Route path="/stores" element={<Navigate to="/" replace />} />
+                  <Route path="/seller" element={<SellerPortalPage />} />
+                  <Route path="/seller/campaigns/:campaignId" element={<CampaignAnalyticsPage />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>

@@ -30,7 +30,8 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
     const updatedAt = event.updatedAt ? new Date(event.updatedAt).toISOString() : now
     const d = event.data as Record<string, any>
     const seller = (value: string | null | undefined) => externalId(tenantId, 'seller', value ?? FIRST_PARTY_SELLER)
-    const store = (value: string | null | undefined) => (value ? externalId(tenantId, 'store', value) : NO_STORE)
+    // A record's store is its seller unless the client sent another (a store ID is a seller ID).
+    const store = (storeId: string | null | undefined, sellerId: string | null | undefined) => seller(storeId ?? sellerId)
     const reference = <N extends keyof ReferencePayloads>(topic: string, name: N, entityId: string, state: Omit<ReferenceEventPayload<N>, 'tenantId' | 'updatedAt'>): BusMessage =>
       ({ topic, key: entityId, envelope: envelope(name, entityId, updatedAt, { ...state, tenantId, updatedAt }) })
     switch (event.eventName) {
@@ -42,7 +43,7 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
         const productId = externalId(tenantId, 'product', d.productId)
         const sellerId = seller(d.sellerId)
         const product = reference(CATALOG_TOPIC, 'product_upserted', productId, {
-          productId, storeId: store(d.storeId), sellerId, name: d.name, category: d.category ?? null, price: d.price ?? null, isActive: d.isActive ?? true,
+          productId, storeId: store(d.storeId, d.sellerId), sellerId, name: d.name, category: d.category ?? null, price: d.price ?? null, isActive: d.isActive ?? true,
         })
         // A product sent without a seller is the tenant's own: its first-party seller exists too.
         return d.sellerId == null ? [reference(CATALOG_TOPIC, 'seller_upserted', sellerId, { sellerId, name: 'First party' }), product] : [product]
@@ -55,8 +56,9 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
         const campaignId = externalId(tenantId, 'campaign', d.campaignId)
         return [reference(CAMPAIGN_TOPIC, 'campaign_upserted', campaignId, {
           campaignId,
-          storeId: store(d.storeId),
+          storeId: store(d.storeId, d.sellerId),
           sellerId: seller(d.sellerId),
+          placement: d.placement ?? null,
           title: d.title,
           status: d.status,
           startTime: d.startTime ?? null,
@@ -76,7 +78,7 @@ export function createReferenceService({ bus, logger }: { bus: EventBus; logger:
         return [reference(CAMPAIGN_PRODUCTS_TOPIC, 'campaign_product_added', `${campaignId}:${productId}`, {
           campaignId,
           productId,
-          storeId: store(d.storeId),
+          storeId: store(d.storeId, d.sellerId),
           sellerId: d.sellerId == null ? null : seller(d.sellerId),
           productName: d.productName,
           productPrice: d.productPrice ?? null,

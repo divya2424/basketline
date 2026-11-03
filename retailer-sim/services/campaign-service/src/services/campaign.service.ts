@@ -2,14 +2,16 @@ import { randomUUID } from 'node:crypto'
 import {
   badRequest,
   conflict,
+  forbidden,
   isUniqueViolation,
   notFound,
   retryLater,
+  serviceUnavailable,
   unprocessable,
   writeAudit,
   type PublishEvents,
 } from '@basketline/platform'
-import { retailerEvent, type BasketlineSender, type CampaignStatus, type RetailerEvent } from '@retailer-sim/shared'
+import { retailerEvent, type BasketlineSender, type CampaignMetric, type CampaignStatus, type RetailerClaims, type RetailerEvent } from '@retailer-sim/shared'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   deleteAssociation,
@@ -24,7 +26,8 @@ import {
   type Campaign,
   type CampaignFilter,
 } from '../repositories/campaign.repository.ts'
-import { findKnownProducts } from '../repositories/product.repository.ts'
+import { findKnownProducts, findProductDetails } from '../repositories/product.repository.ts'
+import { activePlacement } from './placement.service.ts'
 import type { CreateCampaignInput, UpdateCampaignInput } from '../validators/campaign.validator.ts'
 
 const RETRY_AFTER_SECONDS = 5
@@ -73,6 +76,24 @@ async function assertProductsAssociable(tx: DbOrTx, tenantId: string, productIds
   if (otherSellers.length > 0) throw unprocessable('PRODUCT_OF_ANOTHER_SELLER', "A campaign can only include its own seller's products", { productIds: otherSellers })
 }
 
+/** A placement a campaign can be put in: one of the tenant's active ones. */
+async function assertPlacement(tx: DbOrTx, tenantId: string, key: string) {
+  if (!(await activePlacement(tx, tenantId, key))) throw unprocessable('PLACEMENT_UNAVAILABLE', `"${key}" is not one of the store's active placements (GET /placements)`)
+}
+
+/**
+ * The seller a campaign is created for: a seller's is its own (another one named
+ * is refused); staff name it.
+ */
+export function campaignSeller(actor: RetailerClaims, sellerId: string | undefined): string {
+  if (actor.role === 'seller') {
+    if (sellerId && sellerId.toLowerCase() !== actor.sel) throw forbidden('NOT_YOUR_SELLER', 'A seller creates campaigns for itself only')
+    return actor.sel!
+  }
+  if (!sellerId) throw badRequest('VALIDATION_FAILED', 'Request validation failed', { errors: ['sellerId is required: the seller running the campaign (GET /sellers)'] })
+  return sellerId.toLowerCase()
+}
+
 async function lockWritable(tx: DbOrTx, tenantId: string, id: string) {
   const campaign = await lockCampaign(tx, tenantId, id)
   if (!campaign) throw notFound('CAMPAIGN_NOT_FOUND', 'Campaign not found')
@@ -92,7 +113,7 @@ export function stateEvent(campaign: Omit<Campaign, 'productIds'>, eventType: 'C
     tenantId: campaign.tenantId,
     sellerId: campaign.sellerId,
     title: campaign.title,
-    type: campaign.type,
+    placement: campaign.placement,
     status: campaign.status,
     startTime: campaign.startTime?.toISOString() ?? null,
     endTime: campaign.endTime?.toISOString() ?? null,
@@ -130,6 +151,7 @@ export function basketlineCampaign(campaign: Campaign) {
   return {
     campaignId: campaign.id,
     sellerId: campaign.sellerId,
+    placement: campaign.placement,
     title: campaign.title,
     status: campaign.status,
     startTime: campaign.startTime?.toISOString() ?? null,
@@ -141,28 +163,48 @@ export function basketlineCampaign(campaign: Campaign) {
 }
 
 /**
+ * Products added to a campaign, as Basketline's SDK takes them: with their details
+ * from the local products copy (their store is their seller, Basketline's
+ * default). A product whose details haven't arrived yet is left out; it is sent
+ * when they do (events/product.consumer.ts).
+ */
+export async function basketlineCampaignProducts(db: DbOrTx, tenantId: string, campaignId: string, productIds: string[]) {
+  const details = await findProductDetails(db, tenantId, productIds)
+  return details.flatMap(({ productId, sellerId, name, price, category }) =>
+    name === null ? [] : [{ campaignId, productId, sellerId: sellerId ?? undefined, productName: name, productPrice: price, category }],
+  )
+}
+
+/**
  * Business rules for campaigns. Events are published after each transaction commits,
  * and the campaign's full state goes to Basketline with the store's API key, as a retailer's backend does.
  */
 export function createCampaignService({ db, publish, basketline }: { db: Db; publish: PublishEvents; basketline?: BasketlineSender }) {
-  const sendToBasketline = async (campaign: Campaign) => {
+  /** The campaign's full state, then the products added to it or taken out. */
+  const sendToBasketline = async (campaign: Campaign, { added = [], removed }: { added?: string[]; removed?: string } = {}) => {
     const update = basketlineCampaign(campaign)
-    if (update) await basketline?.send(campaign.tenantId, (server) => server.campaigns.upsert(update))
+    const addedProducts = await basketlineCampaignProducts(db, campaign.tenantId, campaign.id, added)
+    await basketline?.send(campaign.tenantId, async (server) => {
+      if (update) await server.campaigns.upsert(update)
+      if (addedProducts.length > 0) await server.campaigns.addProducts(addedProducts)
+      if (removed) await server.campaigns.removeProducts({ campaignId: campaign.id, productId: removed })
+    })
   }
   return {
-    /** The campaign and all its product associations are saved in one transaction. */
-    async create(tenantId: string, actorId: string, input: CreateCampaignInput): Promise<Campaign> {
+    /** The campaign and all its product associations are saved in one transaction; sellerId: campaignSeller(). */
+    async create(tenantId: string, actorId: string, sellerId: string, input: CreateCampaignInput): Promise<Campaign> {
       const productIds = input.productIds ?? []
       assertSchedule(toDate(input.startTime), toDate(input.endTime))
       assertNoDuplicates(productIds)
       const { campaign, events } = await db.transaction(async (tx) => {
-        await assertProductsAssociable(tx, tenantId, productIds, input.sellerId)
+        await assertPlacement(tx, tenantId, input.placement)
+        await assertProductsAssociable(tx, tenantId, productIds, sellerId)
         const created = await insertCampaign(tx, {
           id: randomUUID(),
           tenantId,
-          sellerId: input.sellerId.toLowerCase(),
+          sellerId,
           title: input.title.trim(),
-          type: input.type.trim(),
+          placement: input.placement,
           description: input.description ?? null,
           status: input.status ?? 'draft',
           startTime: toDate(input.startTime),
@@ -175,7 +217,7 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         return { campaign: await requireCampaign(tx, tenantId, created.id), events: [stateEvent(created, 'CampaignCreated'), ...associated] }
       })
       await publish(events)
-      await sendToBasketline(campaign)
+      await sendToBasketline(campaign, { added: productIds })
       return campaign
     },
 
@@ -187,18 +229,98 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
       return requireCampaign(db, tenantId, id)
     },
 
+    /** Staff manage every campaign; a seller only its own (another's is not found). Its seller never changes, so this holds for the change that follows. */
+    async assertCanManage(actor: RetailerClaims, id: string): Promise<void> {
+      const campaign = await requireCampaign(db, actor.tid, id)
+      if (actor.role === 'seller' && campaign.sellerId !== actor.sel) throw notFound('CAMPAIGN_NOT_FOUND', 'Campaign not found')
+    },
+
+    /**
+     * The campaign's analytics over [from, to) (default the last 30 days), from
+     * Basketline for its seller's store: its totals, and its results per product,
+     * each product in the campaign now (zeros if it had no activity) and any
+     * product taken out that had some, most impressions first.
+     */
+    async results(tenantId: string, id: string, { from, to }: { from?: string; to?: string } = {}) {
+      const campaign = await requireCampaign(db, tenantId, id)
+      if (!basketline) throw serviceUnavailable('BASKETLINE_NOT_CONFIGURED', 'This service has no Basketline connection')
+      const scope = { campaignId: id, ...(campaign.sellerId ? { storeId: campaign.sellerId } : {}), from, to }
+      const [items, impressions, clicks, clickToBasket, uniqueCustomers, sessions] = await basketline.read(tenantId, (server) =>
+        Promise.all([
+          server.insights.campaignProducts(scope),
+          ...(['impressions', 'clicks', 'clickToBasket', 'uniqueCustomers', 'sessions'] as const).map((metric) => server.insights.campaignMetric({ ...scope, metric })),
+        ]),
+      )
+      const rate = (part: number, whole: number) => (whole > 0 ? part / whole : 0)
+      const totals = {
+        impressions: impressions!.count,
+        clicks: clicks!.count,
+        ctr: rate(clicks!.count, impressions!.count),
+        addToCarts: clickToBasket!.count,
+        clickToBasket: rate(clickToBasket!.count, clicks!.count),
+        uniqueCustomers: uniqueCustomers!.count,
+        sessions: sessions!.count,
+        convertedSessions: Number(sessions!.total_converted_sessions ?? 0),
+      }
+      // The same per app (web, mobile), from the metrics' columns; a customer seen on both counts in each.
+      const column = (metric: CampaignMetric, name: string) => Number(metric[name] ?? 0)
+      const byClient = Object.fromEntries(
+        (['web', 'mobile'] as const).map((client) => [
+          client,
+          {
+            impressions: column(impressions!, `total_${client}_impressions`),
+            clicks: column(clicks!, `total_${client}_clicks`),
+            addToCarts: column(clickToBasket!, `total_${client}_click_to_basket`),
+            customers: column(uniqueCustomers!, `has_visited_in_${client}`),
+            sessions: column(sessions!, `total_${client}_sessions`),
+          },
+        ]),
+      )
+      const bothClients = column(uniqueCustomers!, 'has_visited_in_both')
+      // The people per user type: visitors (signed out) and registered (signed in). Someone who
+      // browsed signed out and then signed in counts in each (bothUserTypes of them).
+      const byUserType = Object.fromEntries(
+        (['visitor', 'registered'] as const).map((type) => [
+          type,
+          {
+            customers: column(uniqueCustomers!, `has_visited_${type}`),
+            viewed: column(impressions!, `customers_${type}_impressions`),
+            clicked: column(clicks!, `customers_${type}_clicks`),
+            addedToCart: column(clickToBasket!, `customers_${type}_click_to_basket`),
+          },
+        ]),
+      )
+      const bothUserTypes = Math.max(0, byUserType.visitor!.customers + byUserType.registered!.customers - uniqueCustomers!.count)
+      const reported = new Set(items.map((item) => item.productId))
+      const quiet = campaign.productIds.filter((productId) => !reported.has(productId))
+      const names = new Map((await findProductDetails(db, tenantId, quiet)).map((product) => [product.productId, product]))
+      const zeros = quiet.map((productId) => ({
+        productId,
+        name: names.get(productId)?.name ?? null,
+        category: names.get(productId)?.category ?? null,
+        price: names.get(productId)?.price ?? null,
+        impressions: 0,
+        clicks: 0,
+        ctr: 0,
+        addToCarts: 0,
+        clickToBasket: 0,
+      }))
+      return { campaignId: id, totals, byClient, bothClients, byUserType, bothUserTypes, items: [...items, ...zeros] }
+    },
+
     async update(tenantId: string, actorId: string, id: string, input: UpdateCampaignInput): Promise<Campaign> {
       const { campaign, events } = await db.transaction(async (tx) => {
         const current = await lockWritable(tx, tenantId, id)
         if (input.status && input.status !== current.status && !TRANSITIONS[current.status].includes(input.status)) {
           throw unprocessable('INVALID_STATUS_TRANSITION', `Cannot change status from ${current.status} to ${input.status}`)
         }
+        if (input.placement && input.placement !== current.placement) await assertPlacement(tx, tenantId, input.placement)
         const startTime = input.startTime === undefined ? current.startTime : toDate(input.startTime)
         const endTime = input.endTime === undefined ? current.endTime : toDate(input.endTime)
         assertSchedule(startTime, endTime)
         const updated = await updateCampaign(tx, id, actorId, {
           title: input.title?.trim(),
-          type: input.type?.trim(),
+          placement: input.placement,
           description: input.description,
           status: input.status,
           startTime,
@@ -238,7 +360,7 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         return { campaign: await requireCampaign(tx, tenantId, id), events: associated }
       })
       await publish(events)
-      await sendToBasketline(campaign)
+      await sendToBasketline(campaign, { added: productIds })
       return campaign
     },
 
@@ -256,7 +378,7 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         return [retailerEvent('CampaignProductRemoved', id, version, { campaignId: id, productId })]
       })
       await publish(events)
-      await sendToBasketline(await requireCampaign(db, tenantId, id))
+      await sendToBasketline(await requireCampaign(db, tenantId, id), { removed: productId })
     },
   }
 }

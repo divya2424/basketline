@@ -36,7 +36,7 @@ function visitorId(tenantId) {
 const toShopper = (basketline) =>
   basketline ? { userId: basketline.userId, token: basketline.shopperToken, expiresAt: new Date(Date.now() + basketline.expiresIn * 1000).toISOString() } : null
 
-/** Returns { userId, username, displayName, role, accessToken, expiresAt, shopper }; shopper: a customer's Basketline identity, else null. */
+/** Returns { userId, username, displayName, role, sellerId, accessToken, expiresAt, shopper }; sellerId: a seller's, else null; shopper: a customer's Basketline identity, else null. */
 export async function authenticate(username, password) {
   try {
     const result = await apiRequest('/auth/login', {
@@ -48,6 +48,7 @@ export async function authenticate(username, password) {
       username: result.user.username,
       displayName: result.user.username,
       role: result.user.role,
+      sellerId: result.user.sellerId ?? null,
       accessToken: result.accessToken,
       expiresAt: result.session.expiresAt,
       shopper: toShopper(result.basketline),

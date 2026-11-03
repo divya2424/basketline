@@ -85,7 +85,7 @@ export function createIngestionService({
       eventName: event.eventName,
       campaignId: sentCampaign ? externalId(sender.tenantId, 'campaign', sentCampaign) : null,
       productId: sentProduct ? externalId(sender.tenantId, 'product', sentProduct) : null,
-      storeId,
+      storeId: event.storeId ? externalId(sender.tenantId, 'seller', event.storeId) : storeId,
       userId: sender.userId,
       userType: sender.userType,
       clientType: sender.clientType,
@@ -114,7 +114,7 @@ export function createIngestionService({
   }
 
   return {
-    /** storeId: the batch's store as the client sent it (its own ID or a UUID); without one, NO_STORE. */
+    /** storeId: the batch's store (seller) as the client sent it (its own ID or a UUID), for events without their own; without either, NO_STORE. */
     async ingest(events: IncomingEvent[], sender: EventSender, userAgent = '', storeId?: string): Promise<IngestResult[]> {
       const now = Date.now()
       if (BOT_USER_AGENT.test(userAgent)) {
@@ -124,7 +124,7 @@ export function createIngestionService({
       assertWithinLimit(sender, events.length, now)
       assertTenantWithinBudget(sender.tenantId, sender.tier, events.length, now)
       const receivedAt = new Date(now).toISOString()
-      const store = storeId ? externalId(sender.tenantId, 'store', storeId) : NO_STORE
+      const store = storeId ? externalId(sender.tenantId, 'seller', storeId) : NO_STORE
 
       const results: IngestResult[] = []
       const messages: BusMessage[] = []

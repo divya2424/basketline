@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useCart } from '../../features/cart/CartContext.jsx'
 import { useAuth } from '../../features/auth/AuthContext.jsx'
 import { LoginModal } from '../../features/auth/LoginModal.jsx'
-import { getRequestContext } from '../../api/requestContext.js'
+import { getRequestContext, leaveTenant } from '../../api/requestContext.js'
 import { trackEvent } from '../../analytics/analytics.js'
 import { EVENT_NAMES } from '../../analytics/eventSchema.js'
 import { Button } from '../common/Button.jsx'
@@ -18,38 +18,63 @@ const cartIcon = (
 
 const navClass = ({ isActive }) => (isActive ? 'nav-link nav-link--active' : 'nav-link')
 
-/** The store's name, Home and Stores, the signed-in user and Logout (or Log in for visitors), and the cart. */
+/**
+ * In a marketplace: its name (to its page), Marketplaces, Shop, the seller portal (for sellers), the
+ * signed-in user and Logout (or Log in for visitors), and the cart. On the Marketplaces page: the app's own.
+ */
 export function Header() {
   const { totalQuantity } = useCart()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const [loginOpen, setLoginOpen] = useState(false)
 
-  const tenantName = getRequestContext().tenantName || 'Basketline'
+  const { tenantId, tenantName = null } = getRequestContext()
+  const brand = tenantName || 'Marketplace'
   const cartLabel = `Cart, ${totalQuantity} ${totalQuantity === 1 ? 'item' : 'items'}`
   const openLogin = () => {
     setLoginOpen(true)
     trackEvent({ featureName: 'header', pageName: 'store', eventName: EVENT_NAMES.LOGIN_CLICK, properties: {} })
   }
+  // Signing out leaves the marketplace: back to the Marketplaces page.
   const signOut = async () => {
+    leaveTenant()
     await logout()
-    navigate('/store')
+    navigate('/')
+  }
+
+  if (pathname === '/') {
+    return (
+      <header className="site-header">
+        <div className="container site-header__inner">
+          <Link to="/" className="brand">
+            <span className="brand__mark" aria-hidden="true" />
+            Marketplaces
+          </Link>
+        </div>
+      </header>
+    )
   }
 
   return (
     <header className="site-header">
       <div className="container site-header__inner">
-        <Link to="/store" className="brand" aria-label={`${tenantName} home`}>
+        <Link to={`/m/${tenantId}`} className="brand" aria-label={`${brand} home`}>
           <span className="brand__mark" aria-hidden="true" />
-          {tenantName}
+          {brand}
         </Link>
         <nav className="site-nav" aria-label="Main">
+          <NavLink to="/" end className={navClass}>
+            Marketplaces
+          </NavLink>
           <NavLink to="/store" end className={navClass}>
-            Home
+            Shop
           </NavLink>
-          <NavLink to="/stores" className={navClass}>
-            Stores
-          </NavLink>
+          {user?.role === 'seller' ? (
+            <NavLink to="/seller" className={navClass}>
+              Seller portal
+            </NavLink>
+          ) : null}
         </nav>
         <div className="site-header__actions">
           {user ? (
@@ -74,7 +99,7 @@ export function Header() {
           </NavLink>
         </div>
       </div>
-      {loginOpen ? <LoginModal title={`Sign in to ${tenantName}`} onClose={() => setLoginOpen(false)} /> : null}
+      {loginOpen ? <LoginModal title={`Sign in to ${brand}`} onClose={() => setLoginOpen(false)} /> : null}
     </header>
   )
 }

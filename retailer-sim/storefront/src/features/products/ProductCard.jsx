@@ -20,7 +20,8 @@ export const ProductCard = memo(function ProductCard({ product, quantity = 0, on
   const { track } = useAnalytics()
   const nameId = useId()
 
-  const handleOpen = () => track(EVENT_NAMES.PRODUCT_CLICK, { productId: product.id, position, action: 'view_details' })
+  // storeId: the product's seller, the store Basketline counts its clicks and basket additions under.
+  const handleOpen = () => track(EVENT_NAMES.PRODUCT_CLICK, { productId: product.id, storeId: product.sellerId, position, action: 'view_details' })
 
   return (
     <article className="product-card" aria-labelledby={nameId}>
@@ -52,7 +53,7 @@ export function ProductCartControls({ product, quantity, onAddToCart, onDecremen
 
   const handleAdd = () => {
     onAddToCart(product)
-    track(EVENT_NAMES.ADD_TO_CART, { productId: product.id, quantity: 1, unitPrice: product.price, position })
+    track(EVENT_NAMES.ADD_TO_CART, { productId: product.id, storeId: product.sellerId, quantity: 1, unitPrice: product.price, position })
   }
 
   const handleDecrement = () => {

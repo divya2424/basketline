@@ -39,7 +39,8 @@ export interface CampaignState {
   /** The seller (UUID) who runs it; its products are this seller's. Null: a campaign from before sellers. */
   sellerId: string | null
   title: string
-  type: string
+  /** Where the storefront shows it: one of the marketplace's placements (e.g. spotlight). */
+  placement: string
   status: CampaignStatus
   startTime: string | null
   endTime: string | null

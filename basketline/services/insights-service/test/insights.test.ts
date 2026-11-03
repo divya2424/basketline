@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { NO_STORE } from '@basketline/contracts'
-import { createLogger, signShopperToken } from '@basketline/platform'
+import { createLogger, signIntegrationToken, signShopperToken } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
 import { createTestClickHouse, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildInsightsApp } from '../src/app.ts'
@@ -594,5 +594,57 @@ describe('the campaign list (GET /ad/campaigns)', () => {
       { id: older, storeId: web, lastDay: dayString(2) },
     ])
     expect((await request(app).get('/api/v1/ad/campaigns').set('Authorization', visitor)).status).toBe(401)
+  })
+})
+
+describe("a campaign's results per product (GET /ad/:campaignId/products)", () => {
+  it("lists each product's impressions, clicks and credited add-to-carts, named, for a store or all, to a manager or the tenant's backend", async () => {
+    const campaignId = randomUUID()
+    const [seller, otherSeller] = [randomUUID(), randomUUID()]
+    const [earbuds, cable, unnamed] = [randomUUID(), randomUUID(), randomUUID()]
+    const click = randomUUID()
+    await insert([
+      ...[1, 2, 3].map(() => ({ event_name: 'impression', campaign_id: campaignId, store_id: seller, product_id: earbuds })),
+      { event_name: 'impression', campaign_id: campaignId, store_id: seller, product_id: cable },
+      { event_id: click, event_name: 'click', campaign_id: campaignId, store_id: seller, product_id: earbuds },
+      { event_name: 'impression', campaign_id: campaignId, store_id: otherSeller, product_id: unnamed },
+      // Without a product: only in the campaign's totals.
+      { event_name: 'impression', campaign_id: campaignId, store_id: seller },
+    ])
+    await insertAttributed([{ click_event_id: click, campaign_id: campaignId, store_id: seller, product_id: earbuds }])
+    const named = (product_id: string, product_name: string, updated_at: string) => ({
+      tenant_id: TENANT, campaign_id: campaignId, product_id, store_id: seller, product_name, product_price: 29.99, category: 'Audio', updated_at,
+    })
+    await clickhouse.insert({
+      table: 'campaign_products',
+      format: 'JSONEachRow',
+      clickhouse_settings: { date_time_input_format: 'best_effort' },
+      values: [named(earbuds, 'Old name', ago(2 * HOUR)), named(earbuds, 'Earbuds', ago(HOUR)), named(cable, 'Cable', ago(HOUR))],
+    })
+
+    const res = await metric(campaignId, 'products', `?storeId=${seller}`)
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ campaignId, storeId: seller })
+    expect(res.body.items).toEqual([
+      { productId: earbuds, name: 'Earbuds', category: 'Audio', price: 29.99, impressions: 3, clicks: 1, ctr: 1 / 3, addToCarts: 1, clickToBasket: 1 },
+      { productId: cable, name: 'Cable', category: 'Audio', price: 29.99, impressions: 1, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },
+    ])
+    const all = await metric(campaignId, 'products')
+    // Most impressions first (ties by product ID); a product never named has no name.
+    const names = all.body.items.map((item: { productId: string; name: string | null }) => [item.productId, item.name])
+    expect(names[0]).toEqual([earbuds, 'Earbuds'])
+    expect(names.slice(1)).toEqual([[cable, 'Cable'], [unnamed, null]].sort(([a], [b]) => a!.localeCompare(b!)))
+
+    // The tenant's backend, with its integration token (its API key), e.g. for its sellers' portal; never another tenant's rows.
+    const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, TENANT)).token}`
+    expect((await metric(campaignId, 'products', `?storeId=${seller}`, backend)).body.items).toHaveLength(2)
+    // And the campaign's totals for the seller.
+    expect((await metric(campaignId, 'impressions', `?storeId=${seller}`, backend)).body).toMatchObject({ storeId: seller, count: 5 })
+    expect((await request(app).get('/api/v1/ad/campaigns').set('Authorization', backend)).status).toBe(401)
+    const foreign = `Bearer ${(await signIntegrationToken(keys.privateKey, OTHER_TENANT)).token}`
+    expect((await metric(campaignId, 'products', '', foreign)).body.items).toEqual([])
+    expect((await metric(campaignId, 'products', '', visitor)).status).toBe(401)
+    const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId: randomUUID() })).token}`
+    expect((await metric(campaignId, 'products', '', shopper)).status).toBe(401)
   })
 })

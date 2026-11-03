@@ -1,9 +1,9 @@
 /**
  * Identity attached to every API request and analytics event.
  *
- *   tenantId     the store's tenant (a UUID): the one last opened from the Basketline
- *                dashboard (?tenant=, kept in localStorage), else VITE_TENANT_ID (always set)
- *   tenantName   that tenant's name, shown as the header's brand inside the store
+ *   tenantId     the marketplace's tenant (a UUID): the one last visited from the
+ *                Marketplaces page (kept in localStorage), else VITE_TENANT_ID (always set)
+ *   tenantName   that tenant's name, shown as the header's brand
  *   userId       the signed-in user's ID at the store, or null for visitors
  *   accessToken  the signed-in user's token from the store's auth service, sent as Authorization: Bearer …
  *   shopper      a signed-in customer's Basketline identity, for the SDK: { userId, token, expiresAt },
@@ -63,4 +63,16 @@ export function switchTenant(tenantId, tenantName = null) {
   }
   setRequestTenant(tenantId)
   context.tenantName = tenantName
+}
+
+/** Forgets the chosen marketplace (back to the default tenant), now and after a reload. */
+export function leaveTenant() {
+  try {
+    localStorage.removeItem(TENANT_KEY)
+    localStorage.removeItem(TENANT_NAME_KEY)
+  } catch {
+    // Storage unavailable: nothing was kept.
+  }
+  setRequestTenant(import.meta.env.VITE_TENANT_ID)
+  context.tenantName = null
 }

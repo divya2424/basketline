@@ -351,11 +351,21 @@ a {
   .brand__mark {
     display: none;
   }
+  /* The nav takes a row of its own, under the brand and the account and cart. */
   .site-header__inner {
+    flex-wrap: wrap;
     gap: 4px;
+    padding-top: 8px;
+  }
+  .site-nav {
+    order: 3;
+    width: 100%;
+    padding-bottom: 6px;
+    overflow-x: auto;
   }
   .nav-link {
     padding: 8px;
+    white-space: nowrap;
   }
   .site-header__actions {
     gap: 0;

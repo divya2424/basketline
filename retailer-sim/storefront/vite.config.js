@@ -7,13 +7,15 @@ const proxy = {
   '/api/v1/products': 'http://localhost:4002',
   '/api/v1/sellers': 'http://localhost:4002',
   '/api/v1/campaigns': 'http://localhost:4003',
+  '/api/v1/placements': 'http://localhost:4003',
   '/api/v1/auth': 'http://localhost:4006',
   '/api/v1/stores': 'http://localhost:4006',
 }
 
 export default defineConfig({
   plugins: [react()],
-  // The Basketline dashboard runs on 5173.
+  // Served as installed (plain ESM): a prebundled copy outlives SDK upgrades while the dev server runs.
+  optimizeDeps: { exclude: ['@divya2424/basketline-sdk'] },
   server: { port: 5174, strictPort: true, proxy },
   preview: { port: 5174, strictPort: true, proxy },
   test: {

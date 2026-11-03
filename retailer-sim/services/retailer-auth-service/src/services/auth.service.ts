@@ -50,12 +50,12 @@ export function createAuthService({
       // Verify against a dummy hash for unknown users so timing doesn't reveal which names exist.
       const valid = await verifyPassword(user?.passwordHash ?? (await getDummyHash()), input.password)
       if (!user || !valid) throw unauthorized('INVALID_CREDENTIALS', 'Invalid username or password')
-      const { token, expiresAt } = await signRetailerToken(privateKey, { userId: user.id, tenantId, role: user.role })
+      const { token, expiresAt } = await signRetailerToken(privateKey, { userId: user.id, tenantId, role: user.role, sellerId: user.sellerId })
       return {
         accessToken: token,
         tokenType: 'Bearer',
         expiresIn: RETAILER_TOKEN_TTL_SECONDS,
-        user: { id: user.id, username: user.username, role: user.role },
+        user: { id: user.id, username: user.username, role: user.role, ...(user.sellerId ? { sellerId: user.sellerId } : {}) },
         session: { expiresAt: expiresAt.toISOString() },
         basketline: user.role === 'customer' ? await shopperTokenFor(store, user.id, input) : null,
       }

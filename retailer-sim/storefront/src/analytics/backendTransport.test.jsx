@@ -10,6 +10,7 @@ import { jsonResponse, mockFetch } from '../test/mockFetch.js'
 
 const CAMPAIGN = '11111111-aaaa-4aaa-8aaa-111111111111'
 const PRODUCT = '22222222-bbbb-4bbb-8bbb-222222222222'
+const SELLER = '33333333-cccc-4ccc-8ccc-333333333333'
 const inMinutes = (minutes) => new Date(Date.now() + minutes * 60_000).toISOString()
 const customer = (shopper) => ({ userId: 'user_1001', accessToken: 'store-token', shopper })
 
@@ -17,26 +18,28 @@ const frontendEvent = (eventName, properties, featureName = 'product_card') =>
   createEvent({ featureName, pageName: 'home', eventName, properties })
 
 describe('toBackendEvents', () => {
-  it('turns a campaign impression into an impression', () => {
-    const event = frontendEvent('campaign_impression', { campaignId: CAMPAIGN, productIds: [PRODUCT], position: 1 }, 'campaign_carousel')
+  it("turns a campaign's product shown into an impression, with the product and its seller as the store", () => {
+    const event = frontendEvent('campaign_impression', { campaignId: CAMPAIGN, productId: PRODUCT, storeId: SELLER, position: 1, slot: 2 }, 'spotlight')
     expect(toBackendEvents(event)).toEqual([
       {
         eventId: event.eventId,
         campaignId: CAMPAIGN,
+        productId: PRODUCT,
+        storeId: SELLER,
         eventName: 'impression',
         timestamp: event.timestamp,
         pageName: 'home',
-        featureName: 'campaign_carousel',
-        properties: { position: 1 },
+        featureName: 'spotlight',
+        properties: { position: 1, slot: 2 },
       },
     ])
   })
 
   it('counts opening a campaign card as an ad click, with the product the backend credits a later add to cart to', () => {
-    const details = frontendEvent('product_click', { campaignId: CAMPAIGN, productId: PRODUCT, source: 'home_carousel' })
+    const details = frontendEvent('product_click', { campaignId: CAMPAIGN, productId: PRODUCT, storeId: SELLER, source: 'spotlight' })
     const [activity, click] = toBackendEvents(details)
-    expect(activity).toMatchObject({ eventId: details.eventId, eventName: 'product_click', campaignId: CAMPAIGN, productId: PRODUCT })
-    expect(click).toMatchObject({ eventName: 'click', campaignId: CAMPAIGN, productId: PRODUCT })
+    expect(activity).toMatchObject({ eventId: details.eventId, eventName: 'product_click', campaignId: CAMPAIGN, productId: PRODUCT, storeId: SELLER })
+    expect(click).toMatchObject({ eventName: 'click', campaignId: CAMPAIGN, productId: PRODUCT, storeId: SELLER })
     expect(click.eventId).not.toBe(details.eventId)
 
     // Added later from the catalog grid (no campaign on that card): sent as is.
@@ -62,6 +65,7 @@ describe('toBackendEvents', () => {
         eventName: 'cart_quantity_update',
         campaignId: null,
         productId: PRODUCT,
+        storeId: null,
         timestamp: update.timestamp,
         pageName: 'home',
         featureName: 'cart_item',
@@ -155,18 +159,27 @@ describe('sending events from the running app', () => {
     renderApp('/store')
 
     const sent = () => clients.flatMap((c) => c.tracked)
-    // Slide 1 shows three campaigns → three impressions.
-    expect(sent().filter((e) => e.eventName === 'impression').map((e) => e.campaignId)).toEqual(['campaign_001', 'campaign_002', 'campaign_003'])
+    // A section per placement; each product shown is an impression, with its campaign's seller as the store.
+    const impressions = sent().filter((e) => e.eventName === 'impression')
+    expect(impressions.map((e) => `${e.featureName} ${e.campaignId} ${e.productId} ${e.storeId}`)).toEqual([
+      'spotlight campaign_001 product_001 seller_northwind',
+      'spotlight campaign_003 product_006 seller_contoso',
+      'spotlight campaign_001 product_002 seller_northwind',
+      'top_rated campaign_002 product_004 seller_northwind',
+      'top_rated campaign_002 product_007 seller_northwind',
+      'top_rated campaign_002 product_002 seller_northwind',
+      'deals campaign_004 product_005 seller_contoso',
+    ])
 
-    const carousel = screen.getByRole('region', { name: 'Promotional campaigns' })
+    const carousel = screen.getByRole('region', { name: 'Top rated' })
     await user.click(within(carousel).getByRole('link', { name: 'Drift Cotton Hoodie' }))
     await screen.findByRole('heading', { level: 1, name: 'Drift Cotton Hoodie' })
     await user.click(screen.getByRole('button', { name: 'Add Drift Cotton Hoodie to cart' }))
 
     await waitFor(() => expect(sent().filter((e) => e.eventName === 'add_to_cart')).toHaveLength(1))
-    expect(sent().filter((e) => e.eventName === 'click')).toMatchObject([{ campaignId: 'campaign_002', productId: 'product_004' }])
+    expect(sent().filter((e) => e.eventName === 'click')).toMatchObject([{ campaignId: 'campaign_002', productId: 'product_004', storeId: 'seller_northwind' }])
     // The backend credits it to that click; the browser sends no link between them.
-    expect(sent().filter((e) => e.eventName === 'add_to_cart')).toMatchObject([{ productId: 'product_004', campaignId: null }])
+    expect(sent().filter((e) => e.eventName === 'add_to_cart')).toMatchObject([{ productId: 'product_004', storeId: 'seller_northwind', campaignId: null }])
     expect(sent().some((e) => 'attributionId' in e || e.eventName === 'click_to_basket')).toBe(false)
     // Shopping never waits on or fails because of event delivery.
     expect(screen.getByTestId('cart-badge')).toHaveTextContent('1')

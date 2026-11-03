@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useAuth } from '../auth/AuthContext.jsx'
 import { useCatalog } from '../catalog/CatalogContext.jsx'
 import { addLine, decrementLine, getSubtotal, getTotalQuantity, removeLine, resolveCartLines, setLineQuantity } from './cartUtils.js'
 import { loadCart, saveCart } from './cartStorage.js'
@@ -12,11 +13,18 @@ const CartActionsContext = createContext(null)
 export function CartProvider({ children, initialLines, persist = true }) {
   // Product details (name, price, image) come from the catalog loaded from the API.
   const { productsById: catalog } = useCatalog()
-  const [lines, setLines] = useState(() => initialLines ?? (persist ? loadCart() : []))
+  // Each user (or the guest) has their own cart: signing in or out switches to theirs.
+  const userId = useAuth().user?.userId ?? null
+  const [owner, setOwner] = useState(userId)
+  const [lines, setLines] = useState(() => initialLines ?? (persist ? loadCart(userId) : []))
+  if (owner !== userId) {
+    setOwner(userId)
+    setLines(persist ? loadCart(userId) : [])
+  }
 
   useEffect(() => {
-    if (persist) saveCart(lines)
-  }, [lines, persist])
+    if (persist) saveCart(lines, owner)
+  }, [lines, owner, persist])
 
   const actions = useMemo(
     () => ({

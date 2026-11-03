@@ -37,14 +37,15 @@ const basketline = createBasketlineSender({
 })
 // One consumer for both topics (each handler ignores the other's event types):
 // - product.v1 keeps the local products copy up to date. There is no inbox table:
-//   events apply by product version, so a redelivered one changes nothing.
+//   events apply by product version, so a redelivered one changes nothing (but
+//   its campaign products go to Basketline again, harmlessly: newest wins).
 // - retailer.store.v1 seeds each newly connected store's campaigns, by their planned IDs.
 const connectStore = createStoreConnector({ db, publish: createEventPublisher(bus, 'campaign-service', logger, { registry: RETAILER_EVENTS }), basketline })
 await bus.subscribe({
   groupId: 'campaign-service',
   topics: [RETAILER_TOPICS.products, RETAILER_TOPICS.stores],
   handler: async (envelope) => {
-    await handleProductEvent(db, envelope)
+    await handleProductEvent(db, envelope, basketline)
     await connectStore(envelope)
   },
 })

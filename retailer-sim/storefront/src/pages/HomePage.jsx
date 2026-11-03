@@ -4,6 +4,7 @@ import { Spinner } from '../components/common/Spinner.jsx'
 import { EVENT_NAMES } from '../analytics/eventSchema.js'
 import { useTrackOnMount } from '../analytics/useTrackOnMount.js'
 import { CampaignCarousel } from '../features/campaigns/CampaignCarousel.jsx'
+import { sectionsByPlacement } from '../features/campaigns/carouselItems.js'
 import { ProductGrid } from '../features/products/ProductGrid.jsx'
 import { useAddToCart, useDecrementFromCart } from '../features/cart/useAddToCart.js'
 import { useCart } from '../features/cart/CartContext.jsx'
@@ -30,7 +31,7 @@ export function HomePage() {
             <p>No products yet.</p>
           </div>
         ) : (
-          <Storefront products={catalog.products} productsById={catalog.productsById} campaigns={catalog.campaigns} />
+          <Storefront products={catalog.products} productsById={catalog.productsById} campaigns={catalog.campaigns} placements={catalog.placements} />
         )}
       </div>
     </AnalyticsWrapper>
@@ -38,7 +39,7 @@ export function HomePage() {
 }
 
 /** Rendered once the catalog has loaded, so home_view carries the real counts. */
-function Storefront({ products, productsById, campaigns }) {
+function Storefront({ products, productsById, campaigns, placements }) {
   const handleAddToCart = useAddToCart()
   const handleDecrement = useDecrementFromCart()
   const { quantities } = useCart()
@@ -46,7 +47,10 @@ function Storefront({ products, productsById, campaigns }) {
 
   return (
     <>
-      <CampaignCarousel campaigns={campaigns} productsById={productsById} />
+      {/* The marketplace's placements, in order: each mixes its sellers' campaigns. */}
+      {sectionsByPlacement(placements, campaigns).map((section) => (
+        <CampaignCarousel key={section.placement.key} placement={section.placement} campaigns={section.campaigns} productsById={productsById} />
+      ))}
 
       <section className="catalog" aria-labelledby="catalog-title">
         <div className="section-heading">

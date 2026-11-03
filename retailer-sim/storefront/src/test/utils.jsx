@@ -3,11 +3,11 @@ import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { App } from '../app/App.jsx'
 import { localCollector } from '../analytics/analytics.js'
-import { campaigns } from '../features/campaigns/campaignData.js'
+import { campaigns, placements } from '../features/campaigns/campaignData.js'
 import { products } from '../features/products/productData.js'
 
-/** The sample catalog, standing in for GET /products and /campaigns. */
-export const SAMPLE_CATALOG = { products, campaigns }
+/** The sample catalog, standing in for GET /products, /campaigns and /placements. */
+export const SAMPLE_CATALOG = { products, campaigns, placements }
 
 /** Renders the whole store under StrictMode, like production, at `route`; by default signed in as a shopper. */
 export function renderApp(

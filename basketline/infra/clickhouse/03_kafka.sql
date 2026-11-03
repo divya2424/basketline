@@ -1,6 +1,7 @@
 -- Loads the Flink job's serving topics (basketline/flink/sql/) into the staging
--- tables analytics.events, analytics.attributed_baskets and analytics.sessions: a Kafka engine table
--- reads each topic, and a materialized view inserts what it reads.
+-- tables analytics.events, analytics.attributed_baskets and analytics.sessions, and
+-- retail.campaign-products.v1 into analytics.campaign_products: a Kafka engine
+-- table reads each topic, and a materialized view inserts what it reads.
 --
 -- ClickHouse schema, part 3 of 4. Kept apart: the tests load 01_tables.sql and
 -- 02_materialized_views.sql into throwaway databases, which must not consume these topics.
@@ -91,3 +92,32 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.sessions_queue_mv TO analytics.
 AS SELECT * FROM analytics.sessions_queue
 WHERE tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants)
   AND (tenant_id, user_id) NOT IN (SELECT tenant_id, user_id FROM analytics.deleted_users);
+
+-- The products added to campaigns (retail.campaign-products.v1, written by
+-- ingestion-service's retail API), to name them in the per-product results. The
+-- topic is compacted, so a new consumer group reads every pair's latest state.
+-- Its messages are event envelopes: read whole, the payload extracted.
+CREATE TABLE IF NOT EXISTS analytics.campaign_products_queue
+(
+    message String
+)
+ENGINE = Kafka
+SETTINGS kafka_broker_list = 'kafka:19092',
+         kafka_topic_list = 'retail.campaign-products.v1',
+         kafka_group_name = 'clickhouse-campaign-products',
+         kafka_format = 'JSONAsString',
+         kafka_flush_interval_ms = 15000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.campaign_products_queue_mv TO analytics.campaign_products
+AS SELECT
+    toUUID(JSONExtractString(message, 'payload', 'tenantId')) AS tenant_id,
+    toUUID(JSONExtractString(message, 'payload', 'campaignId')) AS campaign_id,
+    toUUID(JSONExtractString(message, 'payload', 'productId')) AS product_id,
+    toUUID(JSONExtractString(message, 'payload', 'storeId')) AS store_id,
+    JSONExtractString(message, 'payload', 'productName') AS product_name,
+    JSONExtract(message, 'payload', 'productPrice', 'Nullable(Float64)') AS product_price,
+    JSONExtract(message, 'payload', 'category', 'Nullable(String)') AS category,
+    parseDateTime64BestEffort(JSONExtractString(message, 'payload', 'updatedAt'), 3, 'UTC') AS updated_at
+FROM analytics.campaign_products_queue
+WHERE JSONExtractString(message, 'eventType') = 'campaign_product_added'
+  AND tenant_id NOT IN (SELECT tenant_id FROM analytics.deleted_tenants);

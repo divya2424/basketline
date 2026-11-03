@@ -1,0 +1,51 @@
+.marketplace__doors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.marketplace__door {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.marketplace__accounts {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.marketplace__accounts li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.marketplace__accounts--inline {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.marketplace__signin {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.marketplace__signin-actions {
+  display: flex;
+  gap: 8px;
+}

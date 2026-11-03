@@ -9,7 +9,7 @@ import { index, pgEnum, pgTable, text, uniqueIndex, uuid, varchar } from 'drizzl
 import { timestamptz } from '@basketline/platform/tables'
 
 // RETAILER_ROLES (@retailer-sim/shared), which drizzle-kit can't load.
-export const userRole = pgEnum('user_role', ['customer', 'staff'])
+export const userRole = pgEnum('user_role', ['customer', 'staff', 'seller'])
 
 /** The retailer's stores, each connected to Basketline: its tenant there, and its API key, sealed. */
 export const stores = pgTable('stores', {
@@ -20,7 +20,7 @@ export const stores = pgTable('stores', {
   createdAt: timestamptz('created_at').notNull().defaultNow(),
 })
 
-/** A store's customers and staff: the retailer's own logins, never Basketline users. */
+/** A store's customers, staff and sellers: the retailer's own logins, never Basketline users. */
 export const users = pgTable(
   'users',
   {
@@ -31,6 +31,8 @@ export const users = pgTable(
     username: varchar('username', { length: 100 }).notNull(),
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
     role: userRole('role').notNull(),
+    // A seller's login: the seller (product-service's sellers) it acts for.
+    sellerId: uuid('seller_id'),
     createdAt: timestamptz('created_at').notNull().defaultNow(),
   },
   // Usernames are unique within a store, regardless of case.

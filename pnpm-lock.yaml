@@ -240,49 +240,6 @@ importers:
         specifier: workspace:*
         version: link:packages/platform
 
-  basketline/dashboard:
-    dependencies:
-      axios:
-        specifier: 1.20.0
-        version: 1.20.0(debug@4.4.3)
-      react:
-        specifier: ^19.3.1
-        version: 19.3.1
-      react-dom:
-        specifier: ^19.3.1
-        version: 19.3.1(react@19.3.1)
-      react-router-dom:
-        specifier: ^7.18.4
-        version: 7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-    devDependencies:
-      '@testing-library/dom':
-        specifier: ^10.4.2
-        version: 10.4.2
-      '@testing-library/jest-dom':
-        specifier: ^7.0.1
-        version: 7.0.1(@testing-library/dom@10.4.2)(vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.5)(jsdom@30.1.3(@noble/hashes@1.8.0))(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)))
-      '@testing-library/react':
-        specifier: ^16.3.3
-        version: 16.3.3(@testing-library/dom@10.4.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@testing-library/user-event':
-        specifier: ^14.6.8
-        version: 14.6.8(@testing-library/dom@10.4.2)
-      '@vitejs/plugin-react':
-        specifier: ^6.1.2
-        version: 6.1.2(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15))
-      jsdom:
-        specifier: ^30.1.3
-        version: 30.1.3(@noble/hashes@1.8.0)
-      oxlint:
-        specifier: 1.88.0
-        version: 1.88.0
-      vite:
-        specifier: ^8.3.5
-        version: 8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)
-      vitest:
-        specifier: ^5.0.5
-        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.5)(jsdom@30.1.3(@noble/hashes@1.8.0))(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15))
-
   basketline/packages/contracts:
     dependencies:
       '@divya2424/basketline-kafka':
@@ -353,9 +310,6 @@ importers:
       '@basketline/platform':
         specifier: workspace:*
         version: link:../../../basketline/packages/platform
-      '@divya2424/basketline-sdk':
-        specifier: ^0.3.0
-        version: 0.3.0
 
   retailer-sim/services/campaign-service:
     dependencies:
@@ -405,8 +359,8 @@ importers:
   retailer-sim/storefront:
     dependencies:
       '@divya2424/basketline-sdk':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.6.0
+        version: 0.6.0
       axios:
         specifier: 1.20.0
         version: 1.20.0(debug@4.4.3)
@@ -521,8 +475,8 @@ packages:
     resolution: {integrity: sha512-TX69xUcGHzuS4C0GRcjvdSWXiQ5X1o+m5RGg2Q+LzwEggAumbc4nGqPLlCbLNH7y3PPihUh5cFqbqZy114zitw==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-kafka/0.1.2/d7f6ff5b9ab2f7d56deb632024b7ab66a39090fd}
     engines: {node: '>=24'}
 
-  '@divya2424/basketline-sdk@0.3.0':
-    resolution: {integrity: sha512-OZIp2Orkb0xYclQSqxyubzqhrP2xz885zD5JuI/nn6+Ddr63KjXEhFbsVTsLvFGLYCTpvkPxZPtkueMTC1qBHA==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-sdk/0.3.0/c403ec11ace92a3b2a2d4453663f2d295a5d2a5b}
+  '@divya2424/basketline-sdk@0.6.0':
+    resolution: {integrity: sha512-EmO3Al6N7OM0RiGgK6IovbcrrY+zmz8GVnqZ0M/aQF+aAFzrPwj0KFP/Kf7xPt9SxRAeDjDRxmxIgj0CsPDAAQ==, tarball: https://npm.pkg.github.com/download/@divya2424/basketline-sdk/0.6.0/43e8f017661ab1c631a2fcbc64e7afdc43a5cbee}
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
@@ -2894,7 +2848,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@divya2424/basketline-sdk@0.3.0': {}
+  '@divya2424/basketline-sdk@0.6.0': {}
 
   '@drizzle-team/brocli@0.10.2': {}
 

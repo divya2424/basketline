@@ -2,11 +2,12 @@
 
 Basketline takes shoppers' interactions and ad engagements from retailers' sites and apps, processes them as they arrive, and serves campaign insights through an API to marketers and retailers. Every retailer is a tenant on one shared platform. This document is the design: what each part does, which technology and why, how it scales, stays accurate, isolates tenants and is operated. Where something is a proposal rather than built, it says so.
 
-Diagrams:
-
-- [`platform-architecture.svg`](platform-architecture.svg): the logical view, from the retailer's site to the insights API.
-- [`deployment-aws.svg`](deployment-aws.svg): the production deployment on AWS.
-- [`current-architecture.svg`](current-architecture.svg): what runs locally in Docker Compose (the code in this repository).
+Diagram: [`architecture.drawio.svg`](architecture.drawio.svg) (made with draw.io; open it there to edit). It shows the path from the marketplace's site to the insights API:
+- the marketplace: shoppers, its backend and seller portal, and the Basketline SDK;
+- the load balancer and API gateway; auth, ingestion and insights services;
+- MSK (Kafka), Flink streaming and ClickHouse;
+- Kafka Connect into Iceberg on S3, with Airflow backfills;
+- Prometheus, Grafana and Alertmanager.
 
 ## 1. Scope and the path of an event
 

@@ -34,9 +34,7 @@ The repo has two folders:
 
 **Design documents:**
 - [Platform design](docs/platform-design.md): the design proposal: technology choices, ingestion, stateful processing (attribution, sessions), storage and retention, the insights API, scalability, monitoring, multi-tenancy, trade-offs, cost, and extending it.
-- [Platform architecture](docs/platform-architecture.svg): the logical view, from the retailer's site to the `/ad` API and the lake.
-- [Production deployment on AWS](docs/deployment-aws.svg): EKS node pools, MSK, Kafka Connect, ClickHouse shards and replicas, S3 + Glue + Iceberg, RDS, secrets, CI/CD, sized for 100k events/s.
-- [Local architecture](docs/current-architecture.svg): what runs in Docker Compose.
+- [Architecture diagram](docs/architecture.drawio.svg) (draw.io): the marketplace and its SDK, the gateway, ingestion, MSK, Flink, ClickHouse and the insights API, the Iceberg lake on S3 with Airflow, and monitoring.
 
 ## Technology choices
 

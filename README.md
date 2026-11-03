@@ -136,6 +136,7 @@ docker compose down                    # stop (volumes kept); add -v to delete t
 | Folder | What it is | Docs |
 |---|---|---|
 | [`basketline/`](basketline/) | **The product:** the gateway and four services, Kafka contracts, Postgres and ClickHouse schemas | [basketline/README.md](basketline/README.md) |
+| [`basketline/services/insights-service/`](basketline/services/insights-service/) | The `/ad` insights API (the code walkthrough): routes → controller → service → repository over ClickHouse | [insights-service/README.md](basketline/services/insights-service/README.md) |
 | [`basketline/flink/`](basketline/flink/) | The Flink SQL job: ad events, click→basket attribution, sessions | [flink/README.md](basketline/flink/README.md) |
 | [`basketline/connect/`](basketline/connect/) | Kafka Connect with the Iceberg sink: every topic into the lake | [basketline/README.md](basketline/README.md) |
 | [`basketline/airflow/`](basketline/airflow/) | The history backfill from the lake, ClickHouse backups, tenant and shopper purges | [airflow/README.md](basketline/airflow/README.md) |

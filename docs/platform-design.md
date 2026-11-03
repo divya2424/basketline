@@ -85,7 +85,7 @@ One Flink SQL job reads `retail.interactions.v1` once and runs three pipelines i
 
 ## 6. Insights API
 
-`GET /api/v1/ad/{campaignId}/{metric}?from&to&storeId`, for campaign managers:
+`GET /api/v1/ad/{campaignId}/{metric}?from&to&storeId` (code: [`insights-service`](../basketline/services/insights-service/README.md)):
 
 | Metric | Answers | Response |
 |---|---|---|
@@ -94,6 +94,17 @@ One Flink SQL job reads `retail.interactions.v1` once and runs three pipelines i
 | `clickToBasket` | customers who added a product to the cart after clicking the ad (same product, within 7 days, last click) | the same |
 | `uniqueCustomers` | everyone who saw or clicked | split web/mobile/both, registered/visitor |
 | `sessions` | sessions that saw the ad, and converted in the same session | `total_sessions`, web, mobile, `total_converted_sessions` |
+
+Two more read endpoints:
+- `GET /ad/{campaignId}/products`: the campaign's results per product (impressions, clicks, CTR, add-to-carts, click-to-basket), with each product's name and category.
+- `GET /ad/campaigns`: the tenant's campaigns with activity, per store.
+
+**Who reads, and what they see:**
+- **The retailer's backend,** with an integration token from its API key. It shows results in its own UI, e.g. a marketplace's seller portal (`retailer-sim/`).
+- **The tenant's campaign managers,** with an access token.
+- Either way, the tenant comes from the token, never from the request.
+- **`storeId` scopes a read to one store.** In a marketplace a store is a seller, so a seller sees only its own campaign's numbers. Without `storeId`, the read covers all the tenant's stores, and a customer active in two stores counts once.
+- Events carry their store per event, so one page mixing several sellers' campaigns credits each seller.
 
 - **Real-time and historical in one query.** The daily tables are updated as rows are stored (seconds), corrected hourly, and kept forever, so "today" and "last year" are the same query over different days. A year is 365 small rows per campaign and store.
 - **Performance:**

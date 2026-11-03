@@ -5,7 +5,7 @@ export function createReferenceController(service: ReferenceService) {
   return {
     /** The tenant comes from the integration token, never from the body. */
     async publish(req: Request, res: Response) {
-      const accepted = await service.publish(req.integration!.tid, req.body.events)
+      const accepted = await service.publish(req.caller!.tenantId, req.body.events)
       res.status(202).json({ accepted })
     },
   }

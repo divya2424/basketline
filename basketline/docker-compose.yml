@@ -3,7 +3,6 @@ name: basketline
 x-service-env: &service-env
   NODE_ENV: production
   KAFKA_BROKERS: kafka:19092
-  JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
   LOG_LEVEL: info
 
 services:
@@ -86,6 +85,7 @@ services:
       <<: *service-env
       PORT: 4001
       DATABASE_URL: postgres://identity_svc:identity_svc_dev@postgres:5432/identity_db
+      JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
       JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
     volumes: ["./keys:/run/keys:ro"]
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
@@ -107,7 +107,7 @@ services:
       TENANT_EVENTS_PER_MINUTE_FREE: ${TENANT_EVENTS_PER_MINUTE_FREE:-60000}
       TENANT_EVENTS_PER_MINUTE_PRO: ${TENANT_EVENTS_PER_MINUTE_PRO:-600000}
       TENANT_EVENTS_PER_MINUTE_ENTERPRISE: ${TENANT_EVENTS_PER_MINUTE_ENTERPRISE:-6000000}
-    volumes: ["./keys:/run/keys:ro"]
+      # No token keys: it trusts the caller the gateway verified.
     depends_on: { clickhouse: { condition: service_healthy }, kafka: { condition: service_healthy } }
 
   # The read path: the insights API (/ad). ClickHouse only, as the reader user,
@@ -118,11 +118,9 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
       LOG_LEVEL: info
       PORT: 4005
       CLICKHOUSE_READER_URL: http://basketline_reader:basketline_reader_dev@clickhouse:8123/analytics
-    volumes: ["./keys:/run/keys:ro"]
     depends_on: { clickhouse: { condition: service_healthy } }
 
   # Reads the retail.interactions.v1 topic, credits basket additions to clicks, and writes ad
@@ -242,6 +240,7 @@ services:
     environment:
       <<: *service-env
       PORT: 8080
+      JWT_PUBLIC_KEY_FILE: /run/keys/jwt-public.pem
       DATABASE_URL: postgres://gateway_svc:gateway_svc_dev@postgres:5432/gateway_db
       AUTH_SERVICE_URL: http://auth-service:4001
       INGESTION_SERVICE_URL: http://ingestion-service:4004

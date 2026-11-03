@@ -386,7 +386,7 @@ Compose and the Helm charts use a 35 s grace period.
 | `TENANT_EVENTS_PER_MINUTE_FREE`, `_PRO`, `_ENTERPRISE` | ingestion-service | Each tenant's ingestion budget per instance, by tier (defaults 60000, 600000, 6000000). Across N instances a tenant gets N times this |
 | `KAFKA_BROKERS` | all | e.g. `kafka:19092` |
 | `KAFKA_TOPIC_PREFIX`, `KAFKA_REPLICATION` | all | Environment isolation; the replication factor of created topics (default 1) |
-| `JWT_PUBLIC_KEY_FILE` / `JWT_PRIVATE_KEY_FILE` | all / auth-service | Verify / sign tokens |
+| `JWT_PUBLIC_KEY_FILE` / `JWT_PRIVATE_KEY_FILE` | gateway, auth-service / auth-service | Verify / sign tokens (ingestion and insights trust the caller the gateway verified) |
 | `LOGIN_RATE_LIMIT` | auth-service | Attempts per IP and username per 15 minutes (default 10) |
 | `AUTH_/PRODUCT_/CAMPAIGN_/INGESTION_/INSIGHTS_SERVICE_URL` | gateway | Where to route requests |
 | `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `EVENTS_RATE_LIMIT_PER_MINUTE`, `VISITOR_RATE_LIMIT_PER_MINUTE` | gateway | Allowed origins; per-IP limits (defaults 300, 120 and 10 per minute). The SDK's endpoints (`/auth/visitor`, `/analytics/events`) accept any origin (they take bearer tokens, never cookies), unless the tenant lists allowed websites |

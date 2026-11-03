@@ -172,8 +172,8 @@ beforeAll(async () => {
   campaignUrl = await listen(buildCampaignApp({ db: campaignDb, bus: campaignBus, logger, publicKey: retailerKeys.publicKey, basketline: campaignSender }))
 
   const ingestionBus = await kafka('ingestion-service')
-  const ingestionUrl = await listen(buildIngestionApp({ bus: ingestionBus, clickhouse, logger, publicKey: keys.publicKey, campaigns: createCampaignDirectory({ clickhouse, logger }) }))
-  const insightsUrl = await listen(buildInsightsApp({ clickhouse: readerClickhouse, logger, publicKey: keys.publicKey }))
+  const ingestionUrl = await listen(buildIngestionApp({ bus: ingestionBus, clickhouse, logger, campaigns: createCampaignDirectory({ clickhouse, logger }) }))
+  const insightsUrl = await listen(buildInsightsApp({ clickhouse: readerClickhouse, logger }))
   const reader = await kafka('e2e-analytics-reader')
   await reader.subscribe({
     groupId: 'e2e-analytics-reader',

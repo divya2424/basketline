@@ -1,8 +1,5 @@
-import type { CryptoKey } from 'jose'
 import { Counter } from 'prom-client'
 import {
-  authenticateEvents,
-  authenticateIntegration,
   createBaseApp,
   createHealth,
   errorHandler,
@@ -24,7 +21,6 @@ export interface IngestionAppDeps {
   /** For the readiness probe: the consumers (index.ts) apply deletions there. */
   clickhouse: ClickHouse
   logger: Logger
-  publicKey: CryptoKey
   /** The tenants' active campaigns: impressions and clicks for any other campaign are rejected. */
   campaigns: CampaignDirectory
   /** Events one sender may send per minute (default MAX_EVENTS_PER_SENDER_PER_MINUTE). */
@@ -44,7 +40,6 @@ export function buildIngestionApp({
   bus,
   clickhouse,
   logger,
-  publicKey,
   campaigns,
   maxEventsPerMinute,
   tenantEventsPerMinute,
@@ -61,8 +56,8 @@ export function buildIngestionApp({
   })
   const ingestion = createIngestionController(createIngestionService({ bus, logger, campaigns, maxEventsPerMinute, tenantEventsPerMinute }), events)
 
-  app.use('/api/v1/analytics', analyticsRoutes(ingestion, authenticateEvents(publicKey)))
-  app.use('/api/v1/retail', referenceRoutes(createReferenceController(createReferenceService({ bus, logger })), authenticateIntegration(publicKey)))
+  app.use('/api/v1/analytics', analyticsRoutes(ingestion))
+  app.use('/api/v1/retail', referenceRoutes(createReferenceController(createReferenceService({ bus, logger }))))
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app

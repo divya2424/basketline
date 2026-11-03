@@ -12,7 +12,7 @@ import { isUuid } from './checks.ts'
 import { AppError, badRequest, forbidden, unauthorized } from './errors.ts'
 import { healthRoutes, type Health } from './health.ts'
 import { createHttpMetrics } from './metrics.ts'
-import { verifyAccessToken, verifyEventToken, verifyIntegrationToken, type AccessTokenClaims, type EventSender, type IntegrationTokenClaims } from './jwt.ts'
+import { verifyAccessToken, type AccessTokenClaims, type EventSender } from './jwt.ts'
 import type { Logger } from './logger.ts'
 
 declare global {
@@ -20,10 +20,8 @@ declare global {
     interface Request {
       /** Set by authenticate / optionalAuth. */
       auth?: AccessTokenClaims
-      /** Set by authenticateEvents. */
-      sender?: EventSender
-      /** Set by authenticateIntegration: the store's backend, for its tenant. */
-      integration?: IntegrationTokenClaims
+      /** Set by gatewayCaller. */
+      caller?: Caller
     }
   }
 }
@@ -116,35 +114,28 @@ export function optionalAuth(publicKey: CryptoKey): RequestHandler {
   }
 }
 
-/**
- * Requires an access token or a visitor token and sets req.sender. Analytics
- * events take their tenant and user from it, never from headers or the body.
- */
-export function authenticateEvents(publicKey: CryptoKey): RequestHandler {
-  return async (req, _res, next) => {
-    const token = bearerToken(req)
-    if (!token) throw unauthorized('UNAUTHENTICATED', 'A bearer token (access or visitor) is required')
-    try {
-      req.sender = await verifyEventToken(token, publicKey)
-    } catch {
-      throw unauthorized('INVALID_TOKEN', 'Token is invalid or expired')
-    }
-    next()
-  }
-}
+/** An event's sender, as the gateway verified it from the token. */
+export type Sender = Omit<EventSender, 'claims'>
 
-/** Requires an integration token (a store's backend, from its API key) and sets req.integration. */
-export function authenticateIntegration(publicKey: CryptoKey): RequestHandler {
-  return async (req, _res, next) => {
-    const token = bearerToken(req)
-    if (!token) throw unauthorized('UNAUTHENTICATED', 'An integration token is required (POST /auth/integration-token with your API key)')
-    try {
-      req.integration = await verifyIntegrationToken(token, publicKey)
-    } catch {
-      throw unauthorized('INVALID_TOKEN', 'Token is invalid or expired, or not an integration token')
-    }
-    next()
-  }
+/** Who is calling: the tenant, plus the sender for events (an events token). */
+export type Caller = Pick<Sender, 'tenantId'> & Partial<Sender>
+
+/**
+ * The caller the gateway verified, as JSON. The gateway drops any client-supplied
+ * one; only it can reach the services (the NetworkPolicy in deploy/helm), so they
+ * trust it instead of verifying the token again.
+ */
+export const CALLER_HEADER = 'x-basketline-caller'
+
+/** Requires the gateway's caller header and sets req.caller. */
+export const gatewayCaller: RequestHandler = (req, _res, next) => {
+  let caller: Caller | undefined
+  try {
+    caller = JSON.parse(String(req.headers[CALLER_HEADER]))
+  } catch {}
+  if (!isUuid(caller?.tenantId)) throw unauthorized('UNAUTHENTICATED', 'A bearer token is required')
+  req.caller = caller
+  next()
 }
 
 /** Use after authenticate. */

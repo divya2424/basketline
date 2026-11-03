@@ -1,4 +1,4 @@
-import { createHealth, createLogger, handleShutdown, intEnv, loadPublicKey, requireEnv, secretEnv } from '@basketline/platform'
+import { createHealth, createLogger, handleShutdown, intEnv, requireEnv } from '@basketline/platform'
 import { createClickHouse } from '@basketline/platform/clickhouse'
 import { buildInsightsApp } from './app.ts'
 
@@ -9,7 +9,7 @@ const health = createHealth()
 const clickhouse = createClickHouse(requireEnv('CLICKHOUSE_READER_URL'))
 // Dashboards refresh every 20 s; reusing a count for 15 s keeps their cost flat as viewers grow.
 const metricsCacheMs = intEnv('METRICS_CACHE_MS', 15_000)
-const app = buildInsightsApp({ clickhouse, logger, health, metricsCacheMs, publicKey: await loadPublicKey(secretEnv('JWT_PUBLIC_KEY')) })
+const app = buildInsightsApp({ clickhouse, logger, health, metricsCacheMs })
 const port = intEnv('PORT', 4005)
 const server = app.listen(port, () => {
   health.markStarted()

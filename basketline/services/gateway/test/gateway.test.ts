@@ -4,7 +4,7 @@ import express from 'express'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { EventEnvelope } from '@basketline/contracts'
-import { closeDb, createLogger, idempotentHandler, signIntegrationToken, signShopperToken } from '@basketline/platform'
+import { CALLER_HEADER, closeDb, createLogger, idempotentHandler, signIntegrationToken, signShopperToken } from '@basketline/platform'
 import { createTestDatabase, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
 import { buildGateway } from '../src/app.ts'
 import { createGatewayDb, migrateGatewayDb, type Db } from '../src/db/client.ts'
@@ -162,7 +162,7 @@ describe('permissions', () => {
     expect((await request(gateway).get('/api/v1/auth/api-keys').set('Authorization', manager)).body).toEqual({ from: 'auth', url: '/api/v1/auth/api-keys' })
   })
 
-  it("limits campaign metrics to campaign managers (and the tenant's backend), never events-only tokens", async () => {
+  it("limits campaign metrics to the tenant's users (and its backend), never events-only tokens", async () => {
     const path = '/api/v1/ad/abc/clicks'
     const shopper = await signShopperToken(keys.privateKey, { tenantId: randomUUID(), userId: randomUUID() })
     expect((await request(gateway).get(path)).status).toBe(401)
@@ -171,7 +171,7 @@ describe('permissions', () => {
     expect((await request(gateway).get(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header)).status).toBe(200)
   })
 
-  it("lets a campaign manager or the tenant's backend (integration token) read a campaign's metrics and results; only managers list campaigns", async () => {
+  it("lets a user or the tenant's backend (integration token) read a campaign's metrics and results; only users list campaigns", async () => {
     const path = '/api/v1/ad/abc/products'
     const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, randomUUID())).token}`
     expect((await request(gateway).get(path)).status).toBe(401)
@@ -180,6 +180,15 @@ describe('permissions', () => {
     expect((await request(gateway).get(path).set('Authorization', backend)).status).toBe(200)
     expect((await request(gateway).get('/api/v1/ad/abc/clicks').set('Authorization', backend)).status).toBe(200)
     expect((await request(gateway).get('/api/v1/ad/campaigns').set('Authorization', backend)).status).toBe(401)
+  })
+
+  it("takes reference data only from a store's backend, with an integration token", async () => {
+    const path = '/api/v1/retail/catalog'
+    expect((await request(gateway).post(path).send({ events: [] })).status).toBe(401)
+    expect((await request(gateway).post(path).set('Authorization', (await visitorTokenFor(keys)).header).send({ events: [] })).status).toBe(401)
+    expect((await request(gateway).post(path).set('Authorization', (await tokenFor(keys, 'campaign-manager')).header).send({ events: [] })).status).toBe(401)
+    const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, randomUUID())).token}`
+    expect((await request(gateway).post(path).set('Authorization', backend).send({ events: [] })).status).toBe(200)
   })
 
   it("doesn't route a retailer's own APIs: its catalog and campaigns are its business", async () => {
@@ -199,6 +208,41 @@ describe('permissions', () => {
     const visitor = await visitorTokenFor(keys)
     await request(gateway).post('/api/v1/analytics/events').set('Authorization', visitor.header).set('user_id', 'spoofed').send({ events: [] })
     expect(hits[1]!.headers.user_id).toBeUndefined()
+  })
+
+  it('passes on the caller it verified, which the services trust, and drops a client-supplied one', async () => {
+    const caller = (hit = 0) => JSON.parse(String(hits[hit]!.headers[CALLER_HEADER]))
+    const spoofed = JSON.stringify({ tenantId: randomUUID() })
+
+    const visitor = await visitorTokenFor(keys, randomUUID(), 'mobile')
+    await request(gateway).post('/api/v1/analytics/events').set('Authorization', visitor.header).set(CALLER_HEADER, spoofed).send({ events: [] })
+    expect(caller()).toEqual({ tenantId: visitor.tid, userId: visitor.sub, userType: 'visitor', clientType: 'mobile', tier: null })
+
+    // A vendor's shopper and a user count as registered.
+    const shopper = { tenantId: randomUUID(), userId: randomUUID() }
+    hits = []
+    await request(gateway).post('/api/v1/analytics/events').set('Authorization', `Bearer ${(await signShopperToken(keys.privateKey, shopper)).token}`).send({ events: [] })
+    expect(caller()).toEqual({ ...shopper, userType: 'registered', clientType: 'web', tier: null })
+    const user = await tokenFor(keys, 'campaign-manager')
+    hits = []
+    await request(gateway).post('/api/v1/analytics/events').set('Authorization', user.header).send({ events: [] })
+    expect(caller()).toEqual({ tenantId: user.tid, userId: user.sub, userType: 'registered', clientType: 'web', tier: null })
+
+    // Reads and reference data: the tenant only.
+    hits = []
+    await request(gateway).get('/api/v1/ad/campaigns').set('Authorization', user.header).set(CALLER_HEADER, spoofed)
+    expect(caller()).toEqual({ tenantId: user.tid })
+    const tenantId = randomUUID()
+    const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, tenantId)).token}`
+    hits = []
+    await request(gateway).get('/api/v1/ad/abc/products').set('Authorization', backend)
+    await request(gateway).post('/api/v1/retail/catalog').set('Authorization', backend).send({ events: [] })
+    expect([caller(0), caller(1)]).toEqual([{ tenantId }, { tenantId }])
+
+    // Without a token, a spoofed caller never reaches a service.
+    hits = []
+    await request(gateway).get('/api/v1/accounts').set(CALLER_HEADER, spoofed)
+    expect(hits[0]!.headers[CALLER_HEADER]).toBeUndefined()
   })
 })
 

@@ -43,6 +43,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{ include "basketline.workload" . }}
 {{ include "basketline.service" . }}
 {{ include "basketline.ingress" . }}
+{{ include "basketline.networkPolicy" . }}
 {{ include "basketline.hpa" . }}
 {{ include "basketline.pdb" . }}
 {{- end -}}

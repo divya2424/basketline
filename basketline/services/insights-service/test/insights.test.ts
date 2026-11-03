@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { NO_STORE } from '@basketline/contracts'
-import { createLogger, signIntegrationToken, signShopperToken } from '@basketline/platform'
+import { CALLER_HEADER, createLogger } from '@basketline/platform'
 import type { ClickHouse } from '@basketline/platform/clickhouse'
-import { createTestClickHouse, createTestKeys, tokenFor, visitorTokenFor, type TestKeys } from '@basketline/platform/testing'
+import { createTestClickHouse } from '@basketline/platform/testing'
 import { buildInsightsApp } from '../src/app.ts'
 
 const HOUR = 3_600_000
@@ -13,11 +13,9 @@ const OTHER_TENANT = '20000000-0000-4000-8000-000000000002'
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 const logger = createLogger('insights-test')
 
-let keys: TestKeys
-/** A campaign manager of TENANT. */
-let reader: string
-/** A visitor of TENANT (not allowed to read metrics). */
-let visitor: string
+/** A caller of the tenant, as the gateway passes it on (CALLER_HEADER): a user's or its backend's token. */
+const callerOf = (tenantId: string) => JSON.stringify({ tenantId })
+const reader = callerOf(TENANT)
 let db: Awaited<ReturnType<typeof createTestClickHouse>>
 /** The services' own user: these tests seed rows with it, as ingestion and Flink would. */
 let clickhouse: ClickHouse
@@ -26,13 +24,10 @@ let readClickhouse: ClickHouse
 let app: ReturnType<typeof buildInsightsApp>
 
 beforeAll(async () => {
-  keys = await createTestKeys()
-  reader = (await tokenFor(keys, 'campaign-manager', { tid: TENANT })).header
-  visitor = (await visitorTokenFor(keys, TENANT)).header
   db = await createTestClickHouse()
   clickhouse = db.clickhouse
   readClickhouse = db.reader
-  app = buildInsightsApp({ clickhouse: readClickhouse, logger, publicKey: keys.publicKey })
+  app = buildInsightsApp({ clickhouse: readClickhouse, logger })
 })
 
 afterAll(async () => {
@@ -145,7 +140,7 @@ async function insertSessions(rows: Session[]) {
 }
 
 const metric = (campaignId: string, name: string, query = '', auth = reader) =>
-  request(app).get(`/api/v1/ad/${campaignId}/${name}${query}`).set('Authorization', auth)
+  request(app).get(`/api/v1/ad/${campaignId}/${name}${query}`).set(CALLER_HEADER, auth)
 
 describe('the /ad metrics, read from ClickHouse', () => {
   it('counts impressions and clicks per campaign, counting a redelivered event once', async () => {
@@ -214,17 +209,11 @@ describe('the /ad metrics, read from ClickHouse', () => {
     ])
     expect((await metric(campaignId, 'clicks')).body.count).toBe(1)
     expect((await metric(campaignId, 'clicks').set('tenant_id', OTHER_TENANT)).body.count).toBe(1)
-    const otherManager = (await tokenFor(keys, 'campaign-manager', { tid: OTHER_TENANT })).header
+    const otherManager = callerOf(OTHER_TENANT)
     expect((await metric(campaignId, 'clicks', '', otherManager)).body.count).toBe(2)
   })
 
-  it("is only for campaign managers: not shoppers' or visitors' tokens", async () => {
-    const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId: randomUUID() })).token}`
-    expect((await metric(randomUUID(), 'clicks', '', shopper)).status).toBe(401)
-    expect((await metric(randomUUID(), 'clicks', '', visitor)).status).toBe(401)
-  })
-
-  it('returns 0 for an unknown campaign, and requires a token and a known metric', async () => {
+  it('returns 0 for an unknown campaign, and requires the caller from the gateway and a known metric', async () => {
     expect((await metric(randomUUID(), 'clicks')).body.count).toBe(0)
     expect((await metric(randomUUID(), 'uniqueCustomers')).body.count).toBe(0)
     expect((await request(app).get(`/api/v1/ad/${randomUUID()}/clicks`)).status).toBe(401)
@@ -511,7 +500,7 @@ describe('/ad query limits', () => {
   it("bounds every query's time, threads and memory, so one tenant's long range can't hold every core", async () => {
     const query = vi.spyOn(readClickhouse, 'query')
     try {
-      const res = await request(app).get(`/api/v1/ad/${randomUUID()}/clicks`).set('Authorization', reader)
+      const res = await request(app).get(`/api/v1/ad/${randomUUID()}/clicks`).set(CALLER_HEADER, reader)
       expect(res.status).toBe(200)
       const settings = query.mock.calls.map(([params]) => params.clickhouse_settings)
       expect(settings.length).toBeGreaterThan(0)
@@ -541,9 +530,9 @@ describe("ClickHouse's tenant isolation (the reader user's row policy)", () => {
 
 describe('the /ad cache', () => {
   it('reuses a count for the same campaign, metric and days, and fetches new days afresh', async () => {
-    const cached = buildInsightsApp({ clickhouse: readClickhouse, logger, publicKey: keys.publicKey, metricsCacheMs: 15_000 })
+    const cached = buildInsightsApp({ clickhouse: readClickhouse, logger, metricsCacheMs: 15_000 })
     const campaignId = randomUUID()
-    const clicks = (query = '') => request(cached).get(`/api/v1/ad/${campaignId}/clicks${query}`).set('Authorization', reader)
+    const clicks = (query = '') => request(cached).get(`/api/v1/ad/${campaignId}/clicks${query}`).set(CALLER_HEADER, reader)
     await insert([{ campaign_id: campaignId, event_name: 'click' }])
     expect((await clicks()).body.count).toBe(1)
 
@@ -585,7 +574,7 @@ describe('the campaign list (GET /ad/campaigns)', () => {
       { event_name: 'click', campaign_id: newer, event_time: ago(60_000) },
       { event_name: 'impression', campaign_id: foreign, tenant_id: OTHER_TENANT },
     ])
-    const res = await request(app).get('/api/v1/ad/campaigns').set('Authorization', reader)
+    const res = await request(app).get('/api/v1/ad/campaigns').set(CALLER_HEADER, reader)
     expect(res.status).toBe(200)
     const items = (res.body.items as { id: string }[]).filter((item) => [older, newer, foreign].some((id) => id === item.id))
     expect(items).toEqual([
@@ -593,12 +582,12 @@ describe('the campaign list (GET /ad/campaigns)', () => {
       { id: older, storeId: app2, lastDay: dayString(1) },
       { id: older, storeId: web, lastDay: dayString(2) },
     ])
-    expect((await request(app).get('/api/v1/ad/campaigns').set('Authorization', visitor)).status).toBe(401)
+    expect((await request(app).get('/api/v1/ad/campaigns')).status).toBe(401)
   })
 })
 
 describe("a campaign's results per product (GET /ad/:campaignId/products)", () => {
-  it("lists each product's impressions, clicks and credited add-to-carts, named, for a store or all, to a manager or the tenant's backend", async () => {
+  it("lists each product's impressions, clicks and credited add-to-carts, named, for a store or all, to a user or the tenant's backend", async () => {
     const campaignId = randomUUID()
     const [seller, otherSeller] = [randomUUID(), randomUUID()]
     const [earbuds, cable, unnamed] = [randomUUID(), randomUUID(), randomUUID()]
@@ -636,16 +625,11 @@ describe("a campaign's results per product (GET /ad/:campaignId/products)", () =
     expect(names.slice(1)).toEqual([[cable, 'Cable'], [unnamed, null]].sort(([a], [b]) => a!.localeCompare(b!)))
 
     // The tenant's backend, with its integration token (its API key), e.g. for its sellers' portal; never another tenant's rows.
-    const backend = `Bearer ${(await signIntegrationToken(keys.privateKey, TENANT)).token}`
+    const backend = callerOf(TENANT)
     expect((await metric(campaignId, 'products', `?storeId=${seller}`, backend)).body.items).toHaveLength(2)
     // And the campaign's totals for the seller.
     expect((await metric(campaignId, 'impressions', `?storeId=${seller}`, backend)).body).toMatchObject({ storeId: seller, count: 5 })
-    expect((await request(app).get('/api/v1/ad/campaigns').set('Authorization', backend)).status).toBe(401)
-    const foreign = `Bearer ${(await signIntegrationToken(keys.privateKey, OTHER_TENANT)).token}`
-    expect((await metric(campaignId, 'products', '', foreign)).body.items).toEqual([])
-    expect((await metric(campaignId, 'products', '', visitor)).status).toBe(401)
-    const shopper = `Bearer ${(await signShopperToken(keys.privateKey, { tenantId: TENANT, userId: randomUUID() })).token}`
-    expect((await metric(campaignId, 'products', '', shopper)).status).toBe(401)
+    expect((await metric(campaignId, 'products', '', callerOf(OTHER_TENANT))).body.items).toEqual([])
   })
 
   it('counts a copy stored in another batch until its hourly check corrects the product', async () => {

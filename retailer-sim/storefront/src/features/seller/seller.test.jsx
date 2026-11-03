@@ -12,12 +12,20 @@ const CAMPAIGN = {
   placement: 'deals',
   status: 'active',
   sellerId: 'seller_contoso',
-  productIds: ['product_006'],
+  productIds: ['product_006', 'product_010'],
 }
 const RESULTS = {
   campaignId: 'c1',
   totals: { impressions: 40, clicks: 4, ctr: 0.1, addToCarts: 1, clickToBasket: 0.25, uniqueCustomers: 30, sessions: 35, convertedSessions: 1 },
-  items: [{ productId: 'product_006', name: 'Lumen LED Desk Lamp', impressions: 40, clicks: 4, ctr: 0.1, addToCarts: 1, clickToBasket: 0.25 }],
+  byClient: {
+    web: { impressions: 30, clicks: 3, addToCarts: 1, customers: 22, sessions: 26 },
+    mobile: { impressions: 10, clicks: 1, addToCarts: 0, customers: 10, sessions: 9 },
+  },
+  bothClients: 2,
+  items: [
+    { productId: 'product_006', name: 'Lumen LED Desk Lamp', category: 'Home', impressions: 40, clicks: 4, ctr: 0.1, addToCarts: 1, clickToBasket: 0.25 },
+    { productId: 'product_010', name: 'Glide Ergonomic Wireless Mouse', category: 'Accessories', impressions: 0, clicks: 0, ctr: 0, addToCarts: 0, clickToBasket: 0 },
+  ],
 }
 
 let api
@@ -30,6 +38,7 @@ function campaignService() {
     if (path.endsWith('/campaigns') && method === 'GET') return jsonResponse(200, { items: [CAMPAIGN], page: { limit: 100, offset: 0, total: 1 } })
     if (path.endsWith('/campaigns') && method === 'POST') return jsonResponse(201, { ...CAMPAIGN, id: 'c2' })
     if (path.endsWith('/c1/results')) return jsonResponse(200, RESULTS)
+    if (path.endsWith('/c1') && method === 'GET') return jsonResponse(200, CAMPAIGN)
     if (path.endsWith('/c1') && method === 'PATCH') return jsonResponse(200, { ...CAMPAIGN, status: 'paused' })
     return jsonResponse(404, { error: { code: 'NOT_FOUND' } })
   })
@@ -64,23 +73,51 @@ describe('the seller portal', () => {
     expect(api.requests.find((r) => r.method === 'POST').body).toEqual({ title: 'Spotlight lamps', placement: 'spotlight', status: 'active', productIds: ['product_006'] })
   })
 
-  it("shows a campaign's analytics, its totals and per product, for a chosen period, and pauses it", async () => {
+  it("shows each campaign as a card, linking to its analytics", async () => {
+    api = campaignService()
+    renderApp('/seller', { authProps: { persist: false, initialUser: SELLER } })
+    const card = await screen.findByTestId('seller-campaign')
+    expect(card).toHaveTextContent(/Desk deals\s*Deals\s*active\s*2 products/)
+    expect(within(card).getByRole('link', { name: 'View analytics' })).toHaveAttribute('href', '/seller/campaigns/c1')
+  })
+})
+
+describe("a campaign's analytics page", () => {
+  const days = (url) => Math.round((Date.now() - Date.parse(new URL(url).searchParams.get('from'))) / 86_400_000)
+  const lastResults = () => api.requests.filter((r) => r.path.endsWith('/results')).at(-1).url
+
+  it('shows the headline numbers, the funnel, web vs mobile and every product', async () => {
+    api = campaignService()
+    renderApp('/seller/campaigns/c1', { authProps: { persist: false, initialUser: SELLER } })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Desk deals' })).toBeInTheDocument()
+    const kpis = await screen.findByTestId('campaign-totals')
+    expect(kpis).toHaveTextContent(/Impressions\s*40.*Clicks\s*4\s*10\.0% click-through rate.*Add-to-carts\s*1\s*25\.0% of clicks.*Unique customers\s*30.*Sessions\s*35\s*1 converted/)
+
+    const funnel = screen.getByRole('region', { name: 'Funnel' })
+    expect(funnel).toHaveTextContent('10.0% of impressions clicked')
+    expect(funnel).toHaveTextContent('25.0% of clicks added to cart')
+
+    const devices = screen.getByTestId('by-client')
+    expect(within(devices).getByRole('img', { name: 'Impressions: web 30 (75.0%), mobile 10 (25.0%)' })).toBeInTheDocument()
+    expect(devices).toHaveTextContent('2 used both apps')
+
+    const rows = within(screen.getByRole('table')).getAllByRole('row').slice(1)
+    expect(rows[0]).toHaveTextContent(/1\s*Lumen LED Desk Lamp\s*Home\s*40\s*4\s*10\.0%\s*1\s*25\.0%/)
+    expect(rows[1]).toHaveClass('product-table__idle')
+    expect(screen.getByText('1 of 2 products had no activity in this period.')).toBeInTheDocument()
+  })
+
+  it('switches the period, and pauses the campaign', async () => {
     api = campaignService()
     const user = userEvent.setup()
-    renderApp('/seller', { authProps: { persist: false, initialUser: SELLER } })
-    const row = await screen.findByTestId('seller-campaign')
-    expect(row).toHaveTextContent('Desk deals · Deals · active')
-    await user.click(within(row).getByRole('button', { name: 'Analytics' }))
-    const table = await within(row).findByRole('table')
-    expect(within(row).getByTestId('campaign-totals')).toHaveTextContent(/Impressions\s*40\s*Clicks\s*4\s*CTR\s*10\.0%\s*Add-to-carts\s*1\s*Click-to-basket\s*25\.0%\s*Unique customers\s*30\s*Sessions\s*35\s*Converted sessions\s*1/)
-    expect(within(table).getAllByRole('row')[1]).toHaveTextContent(/Lumen LED Desk Lamp\s*40\s*4\s*10\.0%\s*1\s*25\.0%/)
-    const days = (url) => (Date.now() - Date.parse(new URL(url).searchParams.get('from'))) / 86_400_000
-    expect(Math.round(days(api.requests.filter((r) => r.path.endsWith('/results')).at(-1).url))).toBe(30)
-    await user.click(within(row).getByRole('button', { name: '7 days' }))
-    await within(row).findByRole('table')
-    expect(Math.round(days(api.requests.filter((r) => r.path.endsWith('/results')).at(-1).url))).toBe(7)
+    renderApp('/seller/campaigns/c1', { authProps: { persist: false, initialUser: SELLER } })
+    await screen.findByTestId('campaign-totals')
+    expect(days(lastResults())).toBe(30)
+    await user.click(screen.getByRole('button', { name: '7 days' }))
+    await screen.findByTestId('campaign-totals')
+    expect(days(lastResults())).toBe(7)
 
-    await user.click(within(row).getByRole('button', { name: 'Pause' }))
+    await user.click(screen.getByRole('button', { name: 'Pause' }))
     await waitFor(() => expect(api.requests.some((r) => r.method === 'PATCH')).toBe(true))
     expect(api.requests.find((r) => r.method === 'PATCH').body).toEqual({ status: 'paused' })
   })

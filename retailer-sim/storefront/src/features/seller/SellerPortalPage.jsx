@@ -1,20 +1,11 @@
 import { useCallback, useEffect, useId, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button } from '../../components/common/Button.jsx'
 import { Spinner } from '../../components/common/Spinner.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCatalog } from '../catalog/CatalogContext.jsx'
-import {
-  addCampaignProducts,
-  createCampaign,
-  fetchResults,
-  listMyCampaigns,
-  listPlacements,
-  removeCampaignProduct,
-  setCampaignStatus,
-} from './sellerService.js'
+import { createCampaign, listMyCampaigns, listPlacements, setCampaignStatus } from './sellerService.js'
 import './seller.css'
-
-const percent = (value) => `${(value * 100).toFixed(1)}%`
 
 /**
  * The marketplace's seller portal: a signed-in seller puts its own products in
@@ -79,9 +70,9 @@ function Portal({ sellerId }) {
         ) : campaigns.items.length === 0 ? (
           <p className="muted">No campaigns yet.</p>
         ) : (
-          <ul className="seller__list">
+          <ul className="campaign-cards">
             {campaigns.items.map((campaign) => (
-              <CampaignRow key={campaign.id} campaign={campaign} placementName={placementName(campaign.placement)} products={ownProducts} onChanged={reload} />
+              <CampaignCard key={campaign.id} campaign={campaign} placementName={placementName(campaign.placement)} onChanged={reload} />
             ))}
           </ul>
         )}
@@ -159,18 +150,15 @@ function CreateCampaignForm({ placements, products, onCreated }) {
   )
 }
 
-function CampaignRow({ campaign, placementName, products, onChanged }) {
-  const [open, setOpen] = useState(false)
+/** A campaign at a glance: its type and status, Pause/Resume, and the way to its analytics. */
+function CampaignCard({ campaign, placementName, onChanged }) {
   const [error, setError] = useState(null)
-  const [adding, setAdding] = useState('')
-  const name = (productId) => products.find((product) => product.id === productId)?.name ?? productId
-  const notIn = products.filter((product) => !campaign.productIds.includes(product.id))
   const paused = campaign.status === 'paused'
 
-  const act = async (action) => {
+  const toggle = async () => {
     setError(null)
     try {
-      await action()
+      await setCampaignStatus(campaign.id, paused ? 'active' : 'paused')
       onChanged()
     } catch (actionError) {
       setError(actionError.message || 'That didn’t work. Try again.')
@@ -178,150 +166,30 @@ function CampaignRow({ campaign, placementName, products, onChanged }) {
   }
 
   return (
-    <li className="seller__row" data-testid="seller-campaign">
-      <div className="seller__row-head">
-        <div>
-          <p>
-            <strong>{campaign.title}</strong> · {placementName} · {campaign.status}
-          </p>
-          <p className="muted">{campaign.productIds.length} products</p>
-        </div>
-        <div className="seller__actions">
-          {campaign.status === 'active' || paused ? (
-            <Button size="sm" variant="secondary" onClick={() => act(() => setCampaignStatus(campaign.id, paused ? 'active' : 'paused'))}>
-              {paused ? 'Resume' : 'Pause'}
-            </Button>
-          ) : null}
-          <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-            {open ? 'Hide analytics' : 'Analytics'}
+    <li className="campaign-card" data-testid="seller-campaign">
+      <div className="campaign-card__body">
+        <h3 className="campaign-card__title">{campaign.title}</h3>
+        <p className="analytics__meta">
+          <span className="tag">{placementName}</span>
+          <span className={`status status--${campaign.status}`}>{campaign.status}</span>
+          <span className="muted small">{campaign.productIds.length} products</span>
+        </p>
+      </div>
+      <div className="campaign-card__actions">
+        {campaign.status === 'active' || paused ? (
+          <Button size="sm" variant="ghost" onClick={toggle}>
+            {paused ? 'Resume' : 'Pause'}
           </Button>
-        </div>
+        ) : null}
+        <Link className="btn btn--primary btn--sm" to={`/seller/campaigns/${campaign.id}`}>
+          View analytics
+        </Link>
       </div>
       {error ? (
         <p className="form-error" role="alert">
           {error}
         </p>
       ) : null}
-      {open ? (
-        <div className="seller__details">
-          <Results campaignId={campaign.id} />
-          <h3>Products</h3>
-          <ul className="seller__campaign-products">
-            {campaign.productIds.map((productId) => (
-              <li key={productId}>
-                {name(productId)}{' '}
-                <Button size="sm" variant="link" onClick={() => act(() => removeCampaignProduct(campaign.id, productId))} aria-label={`Remove ${name(productId)}`}>
-                  Remove
-                </Button>
-              </li>
-            ))}
-          </ul>
-          {notIn.length > 0 ? (
-            <div className="seller__add">
-              <select aria-label="Product to add" value={adding} onChange={(event) => setAdding(event.target.value)}>
-                <option value="">Add a product…</option>
-                {notIn.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                  </option>
-                ))}
-              </select>
-              <Button size="sm" disabled={!adding} onClick={() => act(() => addCampaignProducts(campaign.id, [adding]).then(() => setAdding('')))}>
-                Add
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </li>
-  )
-}
-
-const PERIODS = [7, 30, 90]
-
-/** The campaign's analytics for the seller's store, from Basketline through the campaign service: its totals, then per product. */
-function Results({ campaignId }) {
-  const [days, setDays] = useState(30)
-  const [state, setState] = useState({ status: 'loading', totals: null, items: [], error: null })
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setState({ status: 'loading', totals: null, items: [], error: null })
-    fetchResults(campaignId, { days, signal: controller.signal })
-      .then(({ totals, items }) => setState({ status: 'ready', totals, items, error: null }))
-      .catch((error) => {
-        if (!controller.signal.aborted) setState({ status: 'error', totals: null, items: [], error: error.message })
-      })
-    return () => controller.abort()
-  }, [campaignId, days])
-
-  const periods = (
-    <div className="seller__periods" role="group" aria-label="Period">
-      {PERIODS.map((n) => (
-        <Button key={n} size="sm" variant={n === days ? 'primary' : 'ghost'} aria-pressed={n === days} onClick={() => setDays(n)}>
-          {n} days
-        </Button>
-      ))}
-    </div>
-  )
-  if (state.status === 'loading') {
-    return (
-      <>
-        {periods}
-        <p className="muted" role="status">
-          <Spinner size="sm" /> Loading analytics…
-        </p>
-      </>
-    )
-  }
-  if (state.status === 'error') return <p className="form-error" role="alert">Couldn’t load the analytics: {state.error}</p>
-  const { totals } = state
-  const cards = [
-    ['Impressions', totals.impressions],
-    ['Clicks', totals.clicks],
-    ['CTR', percent(totals.ctr)],
-    ['Add-to-carts', totals.addToCarts],
-    ['Click-to-basket', percent(totals.clickToBasket)],
-    ['Unique customers', totals.uniqueCustomers],
-    ['Sessions', totals.sessions],
-    ['Converted sessions', totals.convertedSessions],
-  ]
-  return (
-    <div className="seller__table-wrap">
-      {periods}
-      <dl className="seller__totals" data-testid="campaign-totals">
-        {cards.map(([label, value]) => (
-          <div key={label} className="seller__total">
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <table className="seller__results">
-        <caption>Per product, last {days} days</caption>
-        <thead>
-          <tr>
-            <th scope="col">Product</th>
-            <th scope="col">Impressions</th>
-            <th scope="col">Clicks</th>
-            <th scope="col">CTR</th>
-            <th scope="col">Add-to-carts</th>
-            <th scope="col">Click-to-basket</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.items.map((item) => (
-            <tr key={item.productId}>
-              <th scope="row">{item.name ?? item.productId}</th>
-              <td>{item.impressions}</td>
-              <td>{item.clicks}</td>
-              <td>{percent(item.ctr)}</td>
-              <td>{item.addToCarts}</td>
-              <td>{percent(item.clickToBasket)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   )
 }

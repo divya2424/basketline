@@ -3,7 +3,7 @@
 The simulated retailer's web shop, a React + Vite app. It stands in for a retailer's site (a Flipkart or a Walmart) that integrates [Basketline](../../README.md):
 
 - **Store:** the catalog and a campaign carousel per placement (the marketplace's sections: Spotlight, Top rated, …) from the retailer's own services, product pages and a cart, for visitors and signed-in customers.
-- **Seller portal** (`/seller`, signed in as a seller, e.g. `seller1`): the seller's campaigns of its own products, each in a placement; create, pause and resume them, add and remove products, and see each one's results per product (impressions, clicks, CTR, add-to-carts, click-to-basket over 30 days), which campaign-service reads from Basketline.
+- **Seller portal** (`/seller`, signed in as a seller, e.g. `seller1`): the seller's campaigns of its own products, each in a placement; create, pause and resume them, add and remove products, and open each one's analytics page (`/seller/campaigns/:id`): headline numbers, the funnel from impression to add-to-cart, web vs mobile, and every product's results, over 7, 30 or 90 days, which campaign-service reads from Basketline.
 - **Sign-in:** optional, against the retailer's own auth service (`retailer-auth-service`), not Basketline's.
 - **Stores:** `/stores` connects a new store to Basketline (the retailer's backend onboards it with Basketline's API and keeps its API key) and opens existing ones.
 - **Analytics events:** sent to Basketline through its SDK as shoppers browse. The SDK is the only way this site talks to Basketline.
@@ -114,7 +114,7 @@ src/
   features/catalog/   CatalogProvider: products + active campaigns from the API
   features/products/  ProductCard, ProductGrid; productData.js = sample data
   features/campaigns/ CampaignCarousel (one per placement); campaignData.js = sample placements and campaigns
-  features/seller/    the seller portal: its campaigns, and their results per product
+  features/seller/    the seller portal: its campaigns, and each one's analytics page
   features/cart/      CartContext, CartPage (saved in localStorage: basketline:cart:v2)
   features/auth/      sign-in, session, LoginModal
   features/stores/    StoresPage: connect a store to Basketline, open one

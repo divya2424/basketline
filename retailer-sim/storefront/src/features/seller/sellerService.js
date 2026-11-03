@@ -10,6 +10,11 @@ export async function listPlacements({ signal } = {}) {
   return (await apiRequest('/placements', { signal })).items
 }
 
+/** One campaign (public, like the storefront's). */
+export function fetchCampaign(campaignId, { signal } = {}) {
+  return apiRequest(`/campaigns/${campaignId}`, { signal })
+}
+
 /** The seller's campaigns, newest first. */
 export async function listMyCampaigns(sellerId, { signal } = {}) {
   return (await apiRequest(`/campaigns?sellerId=${encodeURIComponent(sellerId)}&limit=100`, { signal })).items

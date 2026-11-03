@@ -13,6 +13,7 @@ import { MarketplacePage } from '../features/marketplace/MarketplacePage.jsx'
 
 // The seller portal is for sellers only.
 const SellerPortalPage = lazy(() => import('../features/seller/SellerPortalPage.jsx').then((m) => ({ default: m.SellerPortalPage })))
+const CampaignAnalyticsPage = lazy(() => import('../features/seller/CampaignAnalyticsPage.jsx').then((m) => ({ default: m.CampaignAnalyticsPage })))
 
 // The product page and cart aren't needed for the first paint of the store.
 const CartPage = lazy(() => import('../features/cart/CartPage.jsx').then((m) => ({ default: m.CartPage })))
@@ -47,6 +48,7 @@ export function App({ cartProps, authProps, catalogProps, storesProps }) {
                   <Route path="/cart" element={<CartPage />} />
                   <Route path="/stores" element={<Navigate to="/" replace />} />
                   <Route path="/seller" element={<SellerPortalPage />} />
+                  <Route path="/seller/campaigns/:campaignId" element={<CampaignAnalyticsPage />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>

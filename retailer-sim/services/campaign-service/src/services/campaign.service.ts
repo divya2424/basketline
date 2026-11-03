@@ -11,7 +11,7 @@ import {
   writeAudit,
   type PublishEvents,
 } from '@basketline/platform'
-import { retailerEvent, type BasketlineSender, type CampaignStatus, type RetailerClaims, type RetailerEvent } from '@retailer-sim/shared'
+import { retailerEvent, type BasketlineSender, type CampaignMetric, type CampaignStatus, type RetailerClaims, type RetailerEvent } from '@retailer-sim/shared'
 import type { Db, DbOrTx } from '../db/client.ts'
 import {
   deleteAssociation,
@@ -262,6 +262,21 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         sessions: sessions!.count,
         convertedSessions: Number(sessions!.total_converted_sessions ?? 0),
       }
+      // The same per app (web, mobile), from the metrics' columns; a customer seen on both counts in each.
+      const column = (metric: CampaignMetric, name: string) => Number(metric[name] ?? 0)
+      const byClient = Object.fromEntries(
+        (['web', 'mobile'] as const).map((client) => [
+          client,
+          {
+            impressions: column(impressions!, `total_${client}_impressions`),
+            clicks: column(clicks!, `total_${client}_clicks`),
+            addToCarts: column(clickToBasket!, `total_${client}_click_to_basket`),
+            customers: column(uniqueCustomers!, `has_visited_in_${client}`),
+            sessions: column(sessions!, `total_${client}_sessions`),
+          },
+        ]),
+      )
+      const bothClients = column(uniqueCustomers!, 'has_visited_in_both')
       const reported = new Set(items.map((item) => item.productId))
       const quiet = campaign.productIds.filter((productId) => !reported.has(productId))
       const names = new Map((await findProductDetails(db, tenantId, quiet)).map((product) => [product.productId, product]))
@@ -276,7 +291,7 @@ export function createCampaignService({ db, publish, basketline }: { db: Db; pub
         addToCarts: 0,
         clickToBasket: 0,
       }))
-      return { campaignId: id, totals, items: [...items, ...zeros] }
+      return { campaignId: id, totals, byClient, bothClients, items: [...items, ...zeros] }
     },
 
     async update(tenantId: string, actorId: string, id: string, input: UpdateCampaignInput): Promise<Campaign> {
